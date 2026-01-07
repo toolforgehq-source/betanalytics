@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Calculator, BookOpen, User, LogOut } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import Logo from '@/components/Logo'
@@ -46,7 +47,9 @@ export default function ChatPageClient({
       <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <Logo />
+            <Link href="/">
+              <Logo />
+            </Link>
             
             <div className="flex items-center gap-2">
               <button
