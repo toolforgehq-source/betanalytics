@@ -67,10 +67,11 @@ export async function POST(request: Request) {
 
     const { messages: chatMessages } = await request.json()
 
-    let conversation = db.conversations.findByUserId(session.user.id)[0]
+    const conversations = await db.conversations.findByUserId(session.user.id)
+    let conversation = conversations[0]
 
     if (!conversation) {
-      conversation = db.conversations.create({
+      conversation = await db.conversations.create({
         userId: session.user.id,
         title: "New Conversation",
       })
@@ -89,24 +90,24 @@ export async function POST(request: Request) {
 
     const userMessage = chatMessages[chatMessages.length - 1]
     
-    db.messages.create({
+    await db.messages.create({
       conversationId: conversation.id,
       role: 'user',
       content: userMessage.content,
     })
     
-    db.messages.create({
+    await db.messages.create({
       conversationId: conversation.id,
       role: 'assistant',
       content: assistantMessage,
     })
 
-    db.conversations.update(conversation.id, { updatedAt: new Date() })
+    await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
 
     if (!subStatus.isSubscribed) {
-      const user = db.users.findById(session.user.id)
+      const user = await db.users.findById(session.user.id)
       if (user) {
-        db.users.update(session.user.id, { 
+        await db.users.update(session.user.id, { 
           questionCount: (user.questionCount || 0) + 1
         })
       }

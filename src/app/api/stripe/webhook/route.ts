@@ -35,14 +35,14 @@ export async function POST(request: Request) {
       const subscription = subscriptionResponse as Stripe.Subscription
       const subscriptionItem = subscription.items.data[0]
 
-      db.subscriptions.create({
+      await db.subscriptions.create({
         userId,
         stripeCustomerId: session.customer as string,
         stripeSubscriptionId: subscription.id,
         stripePriceId: subscriptionItem.price.id,
         status: subscription.status,
-        currentPeriodStart: new Date(subscriptionItem.current_period_start * 1000),
-        currentPeriodEnd: new Date(subscriptionItem.current_period_end * 1000),
+        currentPeriodStart: new Date(subscriptionItem.current_period_start * 1000).toISOString(),
+        currentPeriodEnd: new Date(subscriptionItem.current_period_end * 1000).toISOString(),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
       })
       break
@@ -52,10 +52,10 @@ export async function POST(request: Request) {
       const subscription = event.data.object as Stripe.Subscription
       const subscriptionItem = subscription.items.data[0]
 
-      db.subscriptions.updateByStripeSubscriptionId(subscription.id, {
+      await db.subscriptions.updateByStripeSubscriptionId(subscription.id, {
         status: subscription.status,
-        currentPeriodStart: new Date(subscriptionItem.current_period_start * 1000),
-        currentPeriodEnd: new Date(subscriptionItem.current_period_end * 1000),
+        currentPeriodStart: new Date(subscriptionItem.current_period_start * 1000).toISOString(),
+        currentPeriodEnd: new Date(subscriptionItem.current_period_end * 1000).toISOString(),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
       })
       break
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     case 'customer.subscription.deleted': {
       const subscription = event.data.object as Stripe.Subscription
 
-      db.subscriptions.updateByStripeSubscriptionId(subscription.id, {
+      await db.subscriptions.updateByStripeSubscriptionId(subscription.id, {
         status: 'canceled',
       })
       break

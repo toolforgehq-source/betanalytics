@@ -28,7 +28,7 @@ export async function POST(request: Request) {
       )
     }
 
-    const existingUser = db.users.findByEmail(email)
+    const existingUser = await db.users.findByEmail(email)
 
     if (existingUser) {
       return NextResponse.json(
@@ -39,7 +39,7 @@ export async function POST(request: Request) {
 
     const passwordHash = await hash(password, 12)
 
-    const newUser = db.users.create({
+    const newUser = await db.users.create({
       email: email.toLowerCase(),
       passwordHash,
       name: name || null,

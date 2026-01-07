@@ -11,13 +11,13 @@ export async function POST() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const user = db.users.findById(session.user.id)
+    const user = await db.users.findById(session.user.id)
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    const existingSub = db.subscriptions.findByUserId(session.user.id)
+    const existingSub = await db.subscriptions.findByUserId(session.user.id)
 
     if (existingSub?.status === 'active') {
       return NextResponse.json({ error: "Already subscribed" }, { status: 400 })

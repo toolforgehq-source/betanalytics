@@ -10,8 +10,8 @@ export async function POST() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    db.users.update(session.user.id, {
-      termsAcceptedAt: new Date(),
+    await db.users.update(session.user.id, {
+      termsAcceptedAt: new Date().toISOString(),
     })
 
     return NextResponse.json({ success: true })

@@ -11,7 +11,7 @@ export async function POST() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const subscription = db.subscriptions.findByUserId(session.user.id)
+    const subscription = await db.subscriptions.findByUserId(session.user.id)
 
     if (!subscription?.stripeCustomerId) {
       return NextResponse.json({ error: "No subscription found" }, { status: 404 })

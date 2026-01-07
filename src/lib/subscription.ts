@@ -12,7 +12,7 @@ export async function checkSubscription() {
     }
   }
 
-  const sub = db.subscriptions.findByUserId(session.user.id)
+  const sub = await db.subscriptions.findByUserId(session.user.id)
 
   if (sub && sub.status === 'active') {
     return {
@@ -22,7 +22,7 @@ export async function checkSubscription() {
     }
   }
 
-  const user = db.users.findById(session.user.id)
+  const user = await db.users.findById(session.user.id)
   const questionsUsed = user?.questionCount || 0
   const questionsRemaining = Math.max(0, 3 - questionsUsed)
 
@@ -40,6 +40,6 @@ export async function checkTermsAccepted() {
     return false
   }
 
-  const user = db.users.findById(session.user.id)
+  const user = await db.users.findById(session.user.id)
   return user?.termsAcceptedAt !== null
 }
