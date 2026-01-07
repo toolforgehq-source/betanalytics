@@ -1,13 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Calculator, BookOpen, User, LogOut, ArrowLeft } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
-import ChatInterface from '@/components/ChatInterface'
+import ChatInterface, { ChatInterfaceRef } from '@/components/ChatInterface'
 import HedgeCalculator from '@/components/HedgeCalculator'
 import TermsModal from '@/components/TermsModal'
 import { Activity } from 'lucide-react'
@@ -26,6 +26,18 @@ export default function ChatPageClient({
   const router = useRouter()
   const [showHedgeCalculator, setShowHedgeCalculator] = useState(false)
   const [termsAccepted, setTermsAccepted] = useState(initialTermsAccepted)
+  const chatRef = useRef<ChatInterfaceRef>(null)
+
+  const handleQuickAction = (message: string) => {
+    // Switch to chat view if hedge calculator is showing
+    if (showHedgeCalculator) {
+      setShowHedgeCalculator(false)
+    }
+    // Send the message after a brief delay to allow state to update
+    setTimeout(() => {
+      chatRef.current?.sendMessage(message)
+    }, 100)
+  }
 
   const handleAcceptTerms = async () => {
     try {
@@ -98,6 +110,7 @@ export default function ChatPageClient({
               <HedgeCalculator />
             ) : (
               <ChatInterface 
+                ref={chatRef}
                 isSubscribed={isSubscribed}
                 questionsRemaining={questionsRemaining}
               />
@@ -133,9 +146,9 @@ export default function ChatPageClient({
                   <QuickAction emoji="💬" text="Back to Chat" onClick={() => setShowHedgeCalculator(false)} />
                 ) : (
                   <>
-                    <QuickAction emoji="🎯" text="Best Bet Today" hint="Type in chat" />
-                    <QuickAction emoji="🎲" text="Build Parlay" hint="Type in chat" />
-                    <QuickAction emoji="💎" text="Arbitrage Finder" hint="Type in chat" />
+                    <QuickAction emoji="🎯" text="Best Bet Today" onClick={() => handleQuickAction("What's the best bet today?")} />
+                    <QuickAction emoji="🎲" text="Build Parlay" onClick={() => handleQuickAction("Build me a 3-leg parlay for PrizePicks")} />
+                    <QuickAction emoji="💎" text="Arbitrage Finder" onClick={() => handleQuickAction("Find arbitrage opportunities for me")} />
                   </>
                 )}
                 <QuickAction 
@@ -170,7 +183,7 @@ export default function ChatPageClient({
   )
 }
 
-function QuickAction({ emoji, text, onClick, hint, active }: { emoji: string; text: string; onClick?: () => void; hint?: string; active?: boolean }) {
+function QuickAction({ emoji, text, onClick, active }: { emoji: string; text: string; onClick?: () => void; active?: boolean }) {
   return (
     <button
       onClick={onClick}
@@ -181,7 +194,6 @@ function QuickAction({ emoji, text, onClick, hint, active }: { emoji: string; te
       }`}
     >
       <span>{emoji} {text}</span>
-      {hint && <span className="text-slate-500 text-xs ml-2">({hint})</span>}
     </button>
   )
 }

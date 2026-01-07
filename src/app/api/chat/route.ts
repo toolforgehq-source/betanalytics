@@ -4,10 +4,6 @@ import Anthropic from "@anthropic-ai/sdk"
 import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY!,
-})
-
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. You help users make informed betting decisions using multi-model statistical analysis.
 
 CRITICAL RULES:
@@ -53,8 +49,13 @@ export async function POST(request: Request) {
     // Check if API key is configured
     if (!process.env.ANTHROPIC_API_KEY) {
       console.error("ANTHROPIC_API_KEY is not configured")
-      return NextResponse.json({ error: "AI service not configured" }, { status: 500 })
+      return NextResponse.json({ error: "AI service not configured", details: "ANTHROPIC_API_KEY environment variable is not set" }, { status: 500 })
     }
+
+    // Initialize Anthropic client inside handler to ensure API key is available
+    const anthropic = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    })
 
     const session = await auth()
     

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { Send, AlertTriangle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
@@ -14,6 +14,10 @@ interface Message {
 interface ChatInterfaceProps {
   isSubscribed: boolean
   questionsRemaining: number
+}
+
+export interface ChatInterfaceRef {
+  sendMessage: (text: string) => void
 }
 
 const WELCOME_MESSAGE = `Welcome to Betanalytics.ai! 🎯
@@ -42,10 +46,10 @@ Ask me anything! Examples:
 "Should I take Lakers -5.5?"
 "Help me hedge my 4-leg parlay"`
 
-export default function ChatInterface({ 
+const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function ChatInterface({ 
   isSubscribed, 
   questionsRemaining: initialQuestionsRemaining 
-}: ChatInterfaceProps) {
+}, ref) {
   const router = useRouter()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -66,8 +70,8 @@ export default function ChatInterface({
     }])
   }, [])
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return
+  const sendMessageInternal = async (messageText: string) => {
+    if (!messageText.trim() || isLoading) return
 
     // -1 means unlimited (subscribed users), so only check if not subscribed
     if (!isSubscribed && questionsRemaining >= 0 && questionsRemaining <= 0) {
@@ -78,7 +82,7 @@ export default function ChatInterface({
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: input,
+      content: messageText,
       timestamp: new Date(),
     }
 
@@ -101,9 +105,15 @@ export default function ChatInterface({
       })
 
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error('Chat API error:', response.status, errorText)
-        throw new Error(`API error: ${response.status}`)
+        let errorDetails = ''
+        try {
+          const errorData = await response.json()
+          errorDetails = errorData.details || errorData.error || ''
+        } catch {
+          errorDetails = await response.text()
+        }
+        console.error('Chat API error:', response.status, errorDetails)
+        throw new Error(errorDetails || `API error: ${response.status}`)
       }
 
       const data = await response.json()
@@ -138,6 +148,17 @@ export default function ChatInterface({
       setIsLoading(false)
     }
   }
+
+  const handleSend = async () => {
+    await sendMessageInternal(input)
+  }
+
+  // Expose sendMessage method to parent components via ref
+  useImperativeHandle(ref, () => ({
+    sendMessage: (text: string) => {
+      sendMessageInternal(text)
+    }
+  }))
 
   const formatMessage = (content: string) => {
     return content.split('\n').map((line, i) => {
@@ -272,4 +293,6 @@ export default function ChatInterface({
       </div>
     </div>
   )
-}
+})
+
+export default ChatInterface
