@@ -1,21 +1,32 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Calculator, BookOpen, User, LogOut, ArrowLeft } from 'lucide-react'
+import { Calculator, BookOpen, User, LogOut, ArrowLeft, Activity, RefreshCw } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
 import ChatInterface, { ChatInterfaceRef } from '@/components/ChatInterface'
 import HedgeCalculator from '@/components/HedgeCalculator'
 import TermsModal from '@/components/TermsModal'
-import { Activity } from 'lucide-react'
+import { getTodaysLesson, getCurrentDayName } from '@/lib/education'
 
 interface ChatPageClientProps {
   isSubscribed: boolean
   questionsRemaining: number
   termsAccepted: boolean
+}
+
+interface AnalyticsData {
+  highConfidencePicks: number
+  sharpMoneySignals: number
+  modelConsensus: 'Strong' | 'Moderate' | 'Limited'
+  modelConsensusRatio: string
+  freshnessStatus: 'fresh' | 'aging' | 'stale'
+  timeSinceUpdate: string
+  gamesAnalyzed: number
+  isStale: boolean
 }
 
 export default function ChatPageClient({ 
@@ -26,7 +37,39 @@ export default function ChatPageClient({
   const router = useRouter()
   const [showHedgeCalculator, setShowHedgeCalculator] = useState(false)
   const [termsAccepted, setTermsAccepted] = useState(initialTermsAccepted)
+  const [showLessonModal, setShowLessonModal] = useState(false)
+  const [analyticsLoading, setAnalyticsLoading] = useState(true)
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null)
   const chatRef = useRef<ChatInterfaceRef>(null)
+
+  // Get today's lesson
+  const todaysLesson = getTodaysLesson()
+  const dayName = getCurrentDayName()
+
+  // Fetch analytics data on mount and periodically
+  useEffect(() => {
+    const fetchAnalytics = async () => {
+      try {
+        const apiUrl = new URL('/api/analytics', window.location.origin).toString()
+        const response = await fetch(apiUrl)
+        if (response.ok) {
+          const result = await response.json()
+          if (result.success) {
+            setAnalytics(result.data)
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch analytics:', error)
+      } finally {
+        setAnalyticsLoading(false)
+      }
+    }
+
+    fetchAnalytics()
+    // Refresh analytics every 5 minutes
+    const interval = setInterval(fetchAnalytics, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   const handleQuickAction = (message: string) => {
     // Switch to chat view if hedge calculator is showing
@@ -122,21 +165,48 @@ export default function ChatPageClient({
               <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <Activity className="w-5 h-5 text-blue-400" />
                 Today&apos;s Edge
+                {analytics && (
+                  <span className={`ml-auto w-2 h-2 rounded-full ${
+                    analytics.freshnessStatus === 'fresh' ? 'bg-green-400' :
+                    analytics.freshnessStatus === 'aging' ? 'bg-yellow-400' : 'bg-red-400'
+                  }`} title={`Data ${analytics.timeSinceUpdate}`} />
+                )}
               </h3>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400 text-sm">Model Consensus</span>
-                  <span className="text-green-400 font-semibold">4/4</span>
+              {analyticsLoading ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 text-sm">Loading...</span>
+                    <RefreshCw className="w-4 h-4 text-slate-500 animate-spin" />
+                  </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400 text-sm">High Confidence Picks</span>
-                  <span className="text-blue-400 font-semibold">8 available</span>
+              ) : analytics ? (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 text-sm">Model Consensus</span>
+                    <span className={`font-semibold ${
+                      analytics.modelConsensus === 'Strong' ? 'text-green-400' :
+                      analytics.modelConsensus === 'Moderate' ? 'text-yellow-400' : 'text-red-400'
+                    }`}>{analytics.modelConsensus}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 text-sm">High Confidence Picks</span>
+                    <span className="text-blue-400 font-semibold">{analytics.highConfidencePicks} available</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 text-sm">Sharp Money Signals</span>
+                    <span className="text-yellow-400 font-semibold">{analytics.sharpMoneySignals} detected</span>
+                  </div>
+                  <div className="pt-2 border-t border-slate-700/50">
+                    <p className="text-xs text-slate-500">
+                      Updated {analytics.timeSinceUpdate} ({analytics.gamesAnalyzed} games)
+                    </p>
+                  </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400 text-sm">Sharp Money Signals</span>
-                  <span className="text-yellow-400 font-semibold">3 detected</span>
+              ) : (
+                <div className="space-y-4">
+                  <p className="text-slate-400 text-sm">Unable to load analytics</p>
                 </div>
-              </div>
+              )}
             </div>
 
             <div className="bg-slate-900/30 backdrop-blur-sm border border-slate-800/50 rounded-2xl p-6">
@@ -163,20 +233,85 @@ export default function ChatPageClient({
             <div className="bg-gradient-to-br from-blue-900/20 to-cyan-900/20 backdrop-blur-sm border border-blue-500/30 rounded-2xl p-6">
               <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
                 <BookOpen className="w-5 h-5 text-blue-400" />
-                Today&apos;s Lesson
+                {dayName}&apos;s Lesson
               </h3>
               <p className="text-sm text-slate-300 mb-4">
-                <strong className="text-blue-300">Reverse Line Movement</strong>
+                <span className="text-lg mr-2">{todaysLesson.icon}</span>
+                <strong className="text-blue-300">{todaysLesson.title}</strong>
                 <br />
-                When lines move against public betting percentages, it signals sharp money. This is one of the most reliable edges in sports betting.
+                <span className="mt-2 block">{todaysLesson.content}</span>
               </p>
-              <button className="text-xs text-blue-400 hover:text-blue-300 font-semibold">
+              <button 
+                onClick={() => setShowLessonModal(true)}
+                className="text-xs text-blue-400 hover:text-blue-300 font-semibold"
+              >
                 Learn More →
               </button>
             </div>
           </div>
         </div>
       </main>
+
+      {showLessonModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <span className="text-2xl">{todaysLesson.icon}</span>
+                  {todaysLesson.title}
+                </h2>
+                <button 
+                  onClick={() => setShowLessonModal(false)}
+                  className="text-slate-400 hover:text-white text-2xl"
+                >
+                  &times;
+                </button>
+              </div>
+              
+              <div className="space-y-6 text-slate-300">
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-2">Overview</h3>
+                  <p className="whitespace-pre-line">{todaysLesson.extendedContent}</p>
+                </div>
+                
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-2">Common Mistakes to Avoid</h3>
+                  <ul className="space-y-2">
+                    {todaysLesson.commonMistakes.map((mistake, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="text-red-400">•</span>
+                        {mistake}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-2">How to Apply This</h3>
+                  <ul className="space-y-2">
+                    {todaysLesson.howToApply.map((tip, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="text-green-400">•</span>
+                        {tip}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              
+              <div className="mt-6 pt-4 border-t border-slate-700">
+                <button
+                  onClick={() => setShowLessonModal(false)}
+                  className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all"
+                >
+                  Got It!
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Footer />
     </div>
