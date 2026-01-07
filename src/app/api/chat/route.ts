@@ -122,7 +122,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ 
       message: assistantMessage,
       questionsRemaining: subStatus.isSubscribed 
-        ? Infinity 
+        ? -1 // -1 means unlimited (Infinity is not JSON-serializable)
         : Math.max(0, subStatus.questionsRemaining - 1)
     })
 

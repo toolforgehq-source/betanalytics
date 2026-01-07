@@ -69,7 +69,8 @@ export default function ChatInterface({
   const handleSend = async () => {
     if (!input.trim() || isLoading) return
 
-    if (!isSubscribed && questionsRemaining <= 0) {
+    // -1 means unlimited (subscribed users), so only check if not subscribed
+    if (!isSubscribed && questionsRemaining >= 0 && questionsRemaining <= 0) {
       router.push('/pricing')
       return
     }
@@ -253,11 +254,11 @@ export default function ChatInterface({
             }}
             placeholder="Ask me anything about sports betting..."
             className="flex-1 bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            disabled={!isSubscribed && questionsRemaining <= 0}
+            disabled={!isSubscribed && questionsRemaining >= 0 && questionsRemaining <= 0}
           />
           <button
             onClick={handleSend}
-            disabled={!input.trim() || isLoading || (!isSubscribed && questionsRemaining <= 0)}
+            disabled={!input.trim() || isLoading || (!isSubscribed && questionsRemaining >= 0 && questionsRemaining <= 0)}
             className="px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 disabled:from-slate-700 disabled:to-slate-600 disabled:cursor-not-allowed rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg"
           >
             <Send className="w-4 h-4" />

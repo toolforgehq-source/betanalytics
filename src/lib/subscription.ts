@@ -18,7 +18,7 @@ export async function checkSubscription() {
     return {
       isSubscribed: true,
       isFreeTrialAvailable: false,
-      questionsRemaining: Infinity,
+      questionsRemaining: -1, // -1 means unlimited (Infinity is not JSON-serializable)
     }
   }
 

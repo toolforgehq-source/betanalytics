@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Calculator, BookOpen, User, LogOut } from 'lucide-react'
+import { Calculator, BookOpen, User, LogOut, ArrowLeft } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
@@ -60,8 +60,17 @@ export default function ChatPageClient({
                     : 'bg-slate-800/50 hover:bg-slate-700/50'
                 }`}
               >
-                <Calculator className="w-4 h-4" />
-                Hedge Calculator
+                {showHedgeCalculator ? (
+                  <>
+                    <ArrowLeft className="w-4 h-4" />
+                    Back to Chat
+                  </>
+                ) : (
+                  <>
+                    <Calculator className="w-4 h-4" />
+                    Hedge Calculator
+                  </>
+                )}
               </button>
               <button
                 onClick={() => router.push('/account')}
@@ -120,10 +129,21 @@ export default function ChatPageClient({
             <div className="bg-slate-900/30 backdrop-blur-sm border border-slate-800/50 rounded-2xl p-6">
               <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
               <div className="space-y-3">
-                <QuickAction emoji="🎯" text="Best Bet Today" />
-                <QuickAction emoji="🎲" text="Build Parlay" />
-                <QuickAction emoji="💎" text="Arbitrage Finder" />
-                <QuickAction emoji="🛡️" text="Hedge Calculator" onClick={() => setShowHedgeCalculator(true)} />
+                {showHedgeCalculator ? (
+                  <QuickAction emoji="💬" text="Back to Chat" onClick={() => setShowHedgeCalculator(false)} />
+                ) : (
+                  <>
+                    <QuickAction emoji="🎯" text="Best Bet Today" hint="Type in chat" />
+                    <QuickAction emoji="🎲" text="Build Parlay" hint="Type in chat" />
+                    <QuickAction emoji="💎" text="Arbitrage Finder" hint="Type in chat" />
+                  </>
+                )}
+                <QuickAction 
+                  emoji={showHedgeCalculator ? "📊" : "🛡️"} 
+                  text={showHedgeCalculator ? "Using Calculator" : "Hedge Calculator"} 
+                  onClick={() => setShowHedgeCalculator(!showHedgeCalculator)} 
+                  active={showHedgeCalculator}
+                />
               </div>
             </div>
 
@@ -150,13 +170,18 @@ export default function ChatPageClient({
   )
 }
 
-function QuickAction({ emoji, text, onClick }: { emoji: string; text: string; onClick?: () => void }) {
+function QuickAction({ emoji, text, onClick, hint, active }: { emoji: string; text: string; onClick?: () => void; hint?: string; active?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className="w-full text-left px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-xl transition-colors text-sm border border-slate-700/30"
+      className={`w-full text-left px-4 py-3 rounded-xl transition-colors text-sm border ${
+        active 
+          ? 'bg-blue-500/20 border-blue-500/30 text-blue-300' 
+          : 'bg-slate-800/50 hover:bg-slate-700/50 border-slate-700/30'
+      }`}
     >
-      {emoji} {text}
+      <span>{emoji} {text}</span>
+      {hint && <span className="text-slate-500 text-xs ml-2">({hint})</span>}
     </button>
   )
 }
