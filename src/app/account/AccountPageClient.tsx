@@ -59,7 +59,7 @@ export default function AccountPageClient({
       <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <Link href="/">
+            <Link href="/chat">
               <Logo />
             </Link>
             
