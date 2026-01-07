@@ -50,6 +50,12 @@ Always be helpful, educational, and emphasize responsible gambling.`
 
 export async function POST(request: Request) {
   try {
+    // Check if API key is configured
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.error("ANTHROPIC_API_KEY is not configured")
+      return NextResponse.json({ error: "AI service not configured" }, { status: 500 })
+    }
+
     const session = await auth()
     
     if (!session?.user?.id) {
@@ -122,8 +128,9 @@ export async function POST(request: Request) {
 
   } catch (error) {
     console.error("Chat API error:", error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
-      { error: "Failed to process message" },
+      { error: "Failed to process message", details: errorMessage },
       { status: 500 }
     )
   }

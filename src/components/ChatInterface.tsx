@@ -99,6 +99,12 @@ export default function ChatInterface({
         }),
       })
 
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.error('Chat API error:', response.status, errorText)
+        throw new Error(`API error: ${response.status}`)
+      }
+
       const data = await response.json()
 
       if (data.requiresSubscription) {
@@ -123,7 +129,7 @@ export default function ChatInterface({
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.',
+        content: `Sorry, I encountered an error. Please try again. (${error instanceof Error ? error.message : 'Unknown error'})`,
         timestamp: new Date(),
       }
       setMessages(prev => [...prev, errorMessage])
