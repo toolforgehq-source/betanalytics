@@ -7,6 +7,8 @@ import { db } from "@/db"
 const THIRTY_DAYS = 30 * 24 * 60 * 60
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  // Explicit secret configuration - supports both AUTH_SECRET and NEXTAUTH_SECRET
+  secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
   providers: [
     Credentials({
       credentials: {
@@ -49,20 +51,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     maxAge: THIRTY_DAYS, // 30 days - users stay logged in
     updateAge: 24 * 60 * 60, // Refresh session every 24 hours
   },
-  cookies: {
-    sessionToken: {
-      name: process.env.NODE_ENV === 'production' 
-        ? `__Secure-next-auth.session-token`
-        : `next-auth.session-token`,
-      options: {
-        httpOnly: true,
-        sameSite: 'lax',
-        path: '/',
-        secure: process.env.NODE_ENV === 'production',
-        maxAge: THIRTY_DAYS, // 30 days cookie persistence
-      }
-    }
-  },
+  // Let NextAuth use default cookie settings - custom overrides can cause issues with v5
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
