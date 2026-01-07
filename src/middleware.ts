@@ -1,17 +1,14 @@
-import { auth } from "@/auth"
 import { NextResponse } from "next/server"
 
-export default auth((req) => {
-  const isLoggedIn = !!req.auth
-  const isOnChat = req.nextUrl.pathname.startsWith("/chat")
-  const isOnAccount = req.nextUrl.pathname.startsWith("/account")
+// Middleware runs in Edge runtime - do NOT import @/auth here as it includes
+// bcryptjs which doesn't work in Edge runtime and causes session reading to fail.
+// Auth protection is handled at the page level in /chat/page.tsx and /account/page.tsx
+// which run in Node runtime where bcryptjs works correctly.
 
-  if ((isOnChat || isOnAccount) && !isLoggedIn) {
-    return NextResponse.redirect(new URL("/login", req.url))
-  }
-
+export function middleware() {
+  // Just pass through - auth is handled at page level
   return NextResponse.next()
-})
+}
 
 export const config = {
   matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
