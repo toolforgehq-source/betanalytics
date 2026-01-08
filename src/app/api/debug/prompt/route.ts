@@ -136,17 +136,11 @@ export async function GET() {
   console.log('[DEBUG/PROMPT] Environment check:', JSON.stringify(envCheck))
   
   try {
-    // Fetch odds data - try cache first, then fetch fresh if empty
-    console.log('[DEBUG/PROMPT] Starting getCurrentOdds()...')
-    let oddsData = await getCurrentOdds()
-    console.log(`[DEBUG/PROMPT] getCurrentOdds() returned ${oddsData?.games?.length || 0} games`)
-    
-    // If cache returned empty, force fetch fresh data
-    if (!oddsData?.games?.length) {
-      console.log('[DEBUG/PROMPT] Cache empty, fetching fresh odds data...')
-      oddsData = await fetchAllOdds()
-      console.log(`[DEBUG/PROMPT] fetchAllOdds() returned ${oddsData?.games?.length || 0} games`)
-    }
+    // ALWAYS fetch fresh odds data to ensure we have current data
+    // This bypasses any caching issues in serverless environment
+    console.log('[DEBUG/PROMPT] Fetching fresh odds data with fetchAllOdds()...')
+    const oddsData = await fetchAllOdds()
+    console.log(`[DEBUG/PROMPT] fetchAllOdds() returned ${oddsData?.games?.length || 0} games`)
     
     // Fetch other data sources
     const [espnData, combinedData, formattedContext] = await Promise.all([
