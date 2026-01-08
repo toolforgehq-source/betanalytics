@@ -136,20 +136,28 @@ export async function GET() {
   console.log('[DEBUG/PROMPT] Environment check:', JSON.stringify(envCheck))
   
   try {
+    // Track timing for each step
+    const timings: Record<string, number> = {}
+    
     // ALWAYS fetch fresh odds data to ensure we have current data
     // This bypasses any caching issues in serverless environment
     console.log('[DEBUG/PROMPT] Fetching fresh odds data with fetchAllOdds()...')
+    const oddsStartTime = Date.now()
     const oddsData = await fetchAllOdds()
-    console.log(`[DEBUG/PROMPT] fetchAllOdds() returned ${oddsData?.games?.length || 0} games`)
+    timings.oddsFetchMs = Date.now() - oddsStartTime
+    console.log(`[DEBUG/PROMPT] fetchAllOdds() returned ${oddsData?.games?.length || 0} games in ${timings.oddsFetchMs}ms`)
     
     // Fetch other data sources
+    const otherStartTime = Date.now()
     const [espnData, combinedData, formattedContext] = await Promise.all([
       getCachedESPNData(),
       getCombinedSportsData(),
       formatCombinedDataForContext()
     ])
+    timings.otherFetchMs = Date.now() - otherStartTime
     
     const fetchTime = Date.now() - startTime
+    timings.totalMs = fetchTime
     
     // Build the full system prompt that would be sent to Claude
     const fullSystemPrompt = `${SYSTEM_PROMPT}
@@ -222,6 +230,7 @@ IMPORTANT: Use this REAL-TIME data to answer the user's question.
         return NextResponse.json({
           timestamp: new Date().toISOString(),
           fetchTimeMs: fetchTime,
+          timings,
       
           // Environment Check
           envCheck,
