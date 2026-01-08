@@ -31,39 +31,42 @@ export async function GET() {
       hasKvToken: !!process.env.KV_REST_API_TOKEN,
     }
     
+    const cachedGames = cachedResult?.games || []
+    const freshGames = freshResult?.games || []
+    
     return NextResponse.json({
       timestamp: new Date().toISOString(),
       envCheck,
       
       cachedResult: {
         fetchTimeMs: cachedTime,
-        gamesCount: cachedResult.games.length,
-        lastUpdated: cachedResult.lastUpdated,
-        isStale: cachedResult.isStale,
-        gamesBySport: groupBySport(cachedResult.games),
+        gamesCount: cachedGames.length,
+        lastUpdated: cachedResult?.lastUpdated || 'N/A',
+        isStale: cachedResult?.isStale || false,
+        gamesBySport: groupBySport(cachedGames),
       },
       
       freshResult: {
         fetchTimeMs: freshTime,
-        gamesCount: freshResult.games.length,
-        lastUpdated: freshResult.lastUpdated,
-        isStale: freshResult.isStale,
-        gamesBySport: groupBySport(freshResult.games),
-        sampleGames: freshResult.games.slice(0, 3).map(g => ({
+        gamesCount: freshGames.length,
+        lastUpdated: freshResult?.lastUpdated || 'N/A',
+        isStale: freshResult?.isStale || false,
+        gamesBySport: groupBySport(freshGames),
+        sampleGames: freshGames.slice(0, 3).map(g => ({
           id: g.id,
           sport: g.sportName,
           home: g.homeTeam,
           away: g.awayTeam,
-          hasOdds: g.spreads.length > 0 || g.totals.length > 0 || g.moneylines.length > 0
+          hasOdds: (g.spreads?.length || 0) > 0 || (g.totals?.length || 0) > 0 || (g.moneylines?.length || 0) > 0
         }))
       },
       
       diagnosis: {
-        cacheWorking: cachedResult.games.length > 0,
-        freshFetchWorking: freshResult.games.length > 0,
-        issue: cachedResult.games.length === 0 && freshResult.games.length > 0 
+        cacheWorking: cachedGames.length > 0,
+        freshFetchWorking: freshGames.length > 0,
+        issue: cachedGames.length === 0 && freshGames.length > 0 
           ? 'Cache is empty but fresh fetch works - cache may not be saving properly'
-          : cachedResult.games.length === 0 && freshResult.games.length === 0
+          : cachedGames.length === 0 && freshGames.length === 0
           ? 'Both cache and fresh fetch return 0 games - API key may be missing or invalid'
           : 'Both working correctly'
       }
