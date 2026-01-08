@@ -3,11 +3,15 @@ import { auth } from "@/auth"
 import Anthropic from "@anthropic-ai/sdk"
 import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
-import { getCurrentOdds, formatOddsForContext } from "@/lib/odds"
+import { formatCombinedDataForContext } from "@/lib/combined-data"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. You help users make informed betting decisions using multi-model statistical analysis.
 
-CRITICAL: You have access to REAL sports betting data from The Odds API. When users ask for betting recommendations:
+CRITICAL: You have access to REAL-TIME sports data from TWO sources:
+1. The Odds API - Current betting odds, spreads, totals, moneylines
+2. ESPN API - Current injuries, starting lineups, team records, roster information
+
+When users ask for betting recommendations:
 
 1. **Use actual games happening today** - Reference real matchups with current odds from the data provided
 2. **Give concrete recommendations** - Specific teams, spreads, totals with actual odds
@@ -135,19 +139,22 @@ export async function POST(request: Request) {
       })
     }
 
-    // Fetch current odds data and inject into system prompt
-    const oddsData = await getCurrentOdds()
-    const oddsContext = formatOddsForContext(oddsData)
-    const systemPromptWithOdds = `${SYSTEM_PROMPT}
+    // Fetch combined data from Odds API + ESPN API
+    const combinedContext = await formatCombinedDataForContext()
+    const systemPromptWithData = `${SYSTEM_PROMPT}
 
-${oddsContext}
+${combinedContext}
 
-Use this real data to answer the user's question. Always reference the actual games and odds shown above.`
+IMPORTANT: Use this REAL-TIME data to answer the user's question. 
+- Reference actual games and odds from The Odds API
+- Check ESPN injury data before making recommendations
+- Verify starting lineups (especially NHL goalies) from ESPN data
+- Never cite players who may have been traded - use current roster data`
 
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 2000,
-      system: systemPromptWithOdds,
+      system: systemPromptWithData,
       messages: chatMessages,
     })
 
