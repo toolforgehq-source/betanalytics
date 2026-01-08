@@ -215,8 +215,13 @@ async function fetchSportOdds(sportKey: string, sportName: string): Promise<Game
 function extractMarket(bookmakers: OddsApiBookmaker[], marketKey: string): BookmakerOdds[] {
   if (!bookmakers) return []
   
-  // Priority sportsbooks
-  const priorityBooks = ['draftkings', 'fanduel', 'betmgm', 'pointsbetus', 'bovada']
+  // Expanded list of sportsbooks to ensure we capture all games
+  const priorityBooks = [
+    'draftkings', 'fanduel', 'betmgm', 'pointsbetus', 'bovada',
+    'williamhill_us', 'caesars', 'betrivers', 'unibet_us', 'barstool',
+    'wynnbet', 'superbook', 'twinspires', 'betus', 'lowvig',
+    'mybookieag', 'betonlineag'
+  ]
   
   return bookmakers
     .filter(bm => priorityBooks.includes(bm.key))
@@ -247,6 +252,18 @@ function formatBookmakerName(key: string): string {
     'betmgm': 'BetMGM',
     'pointsbetus': 'PointsBet',
     'bovada': 'Bovada',
+    'williamhill_us': 'William Hill',
+    'caesars': 'Caesars',
+    'betrivers': 'BetRivers',
+    'unibet_us': 'Unibet',
+    'barstool': 'Barstool',
+    'wynnbet': 'WynnBET',
+    'superbook': 'SuperBook',
+    'twinspires': 'TwinSpires',
+    'betus': 'BetUS',
+    'lowvig': 'LowVig',
+    'mybookieag': 'MyBookie',
+    'betonlineag': 'BetOnline',
   }
   return names[key] || key
 }
@@ -436,7 +453,12 @@ Note: Some sports may be in offseason. Check back during their active seasons.`
   Array.from(gamesBySport.entries()).forEach(([sport, games]) => {
     lines.push(`--- ${sport} (${games.length} games) ---`)
     
-    for (const game of games.slice(0, 10)) { // Limit to 10 games per sport
+    // Sort games by commence time (soonest first) and show up to 20 games per sport
+    const sortedGames = [...games].sort((a, b) => 
+      new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
+    )
+    
+    for (const game of sortedGames.slice(0, 20)) { // Increased to 20 games per sport
       lines.push('')
       lines.push(`${game.awayTeam} @ ${game.homeTeam}`)
       lines.push(`Game Time: ${formatGameTime(game.commenceTime)}`)
