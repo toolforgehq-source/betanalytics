@@ -23,12 +23,13 @@ export default function AccountPageClient({
 }: AccountPageClientProps) {
   const [isLoadingPortal, setIsLoadingPortal] = useState(false)
 
-  const handleManageSubscription = async () => {
-    setIsLoadingPortal(true)
-    try {
-      // Use absolute URL to avoid issues with credentials in document.baseURI
-      const apiUrl = new URL('/api/stripe/portal', window.location.origin).toString()
-      const response = await fetch(apiUrl, { method: 'POST' })
+    const handleManageSubscription = async () => {
+      setIsLoadingPortal(true)
+      try {
+        const response = await fetch('/api/stripe/portal', { 
+          method: 'POST',
+          credentials: 'include'
+        })
       const data = await response.json()
       if (data.url) {
         window.location.href = data.url
@@ -40,11 +41,12 @@ export default function AccountPageClient({
     }
   }
 
-  const handleSubscribe = async () => {
-    try {
-      // Use absolute URL to avoid issues with credentials in document.baseURI
-      const apiUrl = new URL('/api/stripe/create-checkout', window.location.origin).toString()
-      const response = await fetch(apiUrl, { method: 'POST' })
+    const handleSubscribe = async () => {
+      try {
+        const response = await fetch('/api/stripe/create-checkout', { 
+          method: 'POST',
+          credentials: 'include'
+        })
       const data = await response.json()
       if (data.url) {
         window.location.href = data.url
