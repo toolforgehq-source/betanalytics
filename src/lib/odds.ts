@@ -1,22 +1,40 @@
 /**
  * The Odds API Integration with Redis Caching
  * 
- * Fetches real betting odds from The Odds API and caches them in Redis
- * to stay under the 500 requests/month free tier limit.
+ * Fetches real betting odds from The Odds API for ALL major sports
+ * and caches them in Redis to stay under API rate limits.
  * 
- * Fetch schedule: 3x daily (8am, 2pm, 8pm ET) = ~270 requests/month
+ * Sports covered: NBA, NFL, NCAAF, NHL, NCAAB, MLB, MMA, Soccer
+ * 
+ * Priority-based fetching to manage API usage:
+ * - HIGH: NBA, NFL, NCAAF (most popular, fetch every time)
+ * - MEDIUM: NHL, NCAAB, MLB (fetch every time when in season)
+ * - LOW: MMA, Soccer (fetch every time but lower priority)
  */
 
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4/sports'
 
-// Sports to fetch in priority order
-const SPORTS = [
-  { key: 'basketball_nba', name: 'NBA' },
-  { key: 'americanfootball_nfl', name: 'NFL' },
-  { key: 'icehockey_nhl', name: 'NHL' },
-  { key: 'basketball_ncaab', name: 'NCAAB' },
-  { key: 'baseball_mlb', name: 'MLB' },
+// ALL sports to fetch - verified from The Odds API documentation
+// https://the-odds-api.com/sports-odds-data/sports-apis.html
+const ALL_SPORTS = [
+  // HIGH PRIORITY - Most popular US sports
+  { key: 'basketball_nba', name: 'NBA', priority: 'high' },
+  { key: 'americanfootball_nfl', name: 'NFL', priority: 'high' },
+  { key: 'americanfootball_ncaaf', name: 'NCAAF', priority: 'high' },
+  
+  // MEDIUM PRIORITY - Popular seasonal sports
+  { key: 'icehockey_nhl', name: 'NHL', priority: 'medium' },
+  { key: 'basketball_ncaab', name: 'NCAAB', priority: 'medium' },
+  { key: 'baseball_mlb', name: 'MLB', priority: 'medium' },
+  
+  // LOW PRIORITY - Other popular sports
+  { key: 'mma_mixed_martial_arts', name: 'MMA/UFC', priority: 'low' },
+  { key: 'soccer_usa_mls', name: 'MLS', priority: 'low' },
+  { key: 'soccer_epl', name: 'English Premier League', priority: 'low' },
 ]
+
+// Legacy SPORTS array for backward compatibility
+const SPORTS = ALL_SPORTS
 
 // Cache expiry: 4 hours (in seconds)
 const CACHE_EXPIRY_SECONDS = 4 * 60 * 60
@@ -234,18 +252,86 @@ function formatBookmakerName(key: string): string {
 }
 
 /**
- * Fetch fresh odds from The Odds API for all sports
+ * Validate a game has all required data
+ */
+function validateGame(game: Game): boolean {
+  if (!game.id || !game.homeTeam || !game.awayTeam || !game.commenceTime) {
+    console.error('Invalid game structure:', game.id)
+    return false
+  }
+  
+  // Must have at least one market with odds
+  const hasOdds = game.spreads.length > 0 || game.totals.length > 0 || game.moneylines.length > 0
+  if (!hasOdds) {
+    console.error('Game has no odds:', game.id)
+    return false
+  }
+  
+  return true
+}
+
+/**
+ * Get sport display name from key
+ */
+function getSportTitle(sportKey: string): string {
+  const sport = ALL_SPORTS.find(s => s.key === sportKey)
+  return sport?.name || sportKey
+}
+
+/**
+ * Fetch fresh odds from The Odds API for ALL sports
+ * Uses parallel fetching for speed, with graceful error handling
  */
 export async function fetchAllOdds(): Promise<OddsData> {
-  const allGames: Game[] = []
+  const apiKey = process.env.ODDS_API_KEY
   
-  // Fetch odds for each sport (only NBA, NFL, NHL for now)
-  const sportsToFetch = SPORTS.slice(0, 3) // NBA, NFL, NHL
-  
-  for (const sport of sportsToFetch) {
-    const games = await fetchSportOdds(sport.key, sport.name)
-    allGames.push(...games)
+  if (!apiKey) {
+    console.error('ODDS_API_KEY not configured')
+    return {
+      games: [],
+      lastUpdated: new Date().toISOString(),
+      isStale: true,
+    }
   }
+  
+  console.log(`■ Fetching odds for ${ALL_SPORTS.length} sports...`)
+  
+  // Fetch ALL sports in parallel for speed
+  const fetchPromises = ALL_SPORTS.map(async (sport) => {
+    try {
+      const games = await fetchSportOdds(sport.key, sport.name)
+      console.log(`■ Fetched ${games.length} games for ${sport.key}`)
+      return { sport: sport.key, sportName: sport.name, games, error: null }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
+      console.error(`■ Failed to fetch ${sport.key}: ${errorMsg}`)
+      return { sport: sport.key, sportName: sport.name, games: [], error: errorMsg }
+    }
+  })
+  
+  const results = await Promise.all(fetchPromises)
+  
+  // Aggregate all games
+  const allGames: Game[] = []
+  const sportsSummary: Record<string, { count: number; error: string | null; status: string }> = {}
+  
+  for (const { sport, games, error } of results) {
+    sportsSummary[sport] = {
+      count: games.length,
+      error,
+      status: games.length > 0 ? 'active' : error ? 'error' : 'no_games'
+    }
+    
+    // Validate and add games
+    for (const game of games) {
+      if (validateGame(game)) {
+        allGames.push(game)
+      }
+    }
+  }
+  
+  console.log('■ Sports Summary:', JSON.stringify(sportsSummary))
+  console.log(`■ Total valid games: ${allGames.length}`)
   
   const oddsData: OddsData = {
     games: allGames,
@@ -308,7 +394,20 @@ export async function getCurrentOdds(): Promise<OddsData> {
  */
 export function formatOddsForContext(oddsData: OddsData): string {
   if (!oddsData.games.length) {
-    return `No games currently available. Last checked: ${formatTimestamp(oddsData.lastUpdated)}`
+    return `No games currently available. Last checked: ${formatTimestamp(oddsData.lastUpdated)}
+
+SPORTS COVERED (currently no active games):
+- NBA (basketball_nba)
+- NFL (americanfootball_nfl)
+- NCAAF (americanfootball_ncaaf)
+- NHL (icehockey_nhl)
+- NCAAB (basketball_ncaab)
+- MLB (baseball_mlb) - seasonal
+- MMA/UFC (mma_mixed_martial_arts)
+- MLS (soccer_usa_mls) - seasonal
+- English Premier League (soccer_epl)
+
+Note: Some sports may be in offseason. Check back during their active seasons.`
   }
   
   const lines: string[] = []
@@ -324,8 +423,18 @@ export function formatOddsForContext(oddsData: OddsData): string {
     gamesBySport.set(game.sportName, existing)
   }
   
+  // Show summary of available sports first
+  lines.push(`AVAILABLE SPORTS TODAY:`)
+  const sportCounts: string[] = []
   Array.from(gamesBySport.entries()).forEach(([sport, games]) => {
-    lines.push(`--- ${sport} ---`)
+    sportCounts.push(`${sport}: ${games.length} games`)
+  })
+  lines.push(sportCounts.join(' | '))
+  lines.push(`Total: ${oddsData.games.length} games across ${gamesBySport.size} sports`)
+  lines.push('')
+  
+  Array.from(gamesBySport.entries()).forEach(([sport, games]) => {
+    lines.push(`--- ${sport} (${games.length} games) ---`)
     
     for (const game of games.slice(0, 10)) { // Limit to 10 games per sport
       lines.push('')
