@@ -35,7 +35,8 @@ interface SportDebugInfo {
   }>
 }
 
-export async function GET(req: NextRequest) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function GET(_req: NextRequest) {
   const apiKey = process.env.ODDS_API_KEY
   
   if (!apiKey) {

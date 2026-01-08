@@ -33,8 +33,7 @@ const ALL_SPORTS = [
   { key: 'soccer_epl', name: 'English Premier League', priority: 'low' },
 ]
 
-// Legacy SPORTS array for backward compatibility
-const SPORTS = ALL_SPORTS
+// ALL_SPORTS is used directly, no legacy alias needed
 
 // Cache expiry: 4 hours (in seconds)
 const CACHE_EXPIRY_SECONDS = 4 * 60 * 60
@@ -290,7 +289,7 @@ function validateGame(game: Game): boolean {
 /**
  * Get sport display name from key
  */
-function getSportTitle(sportKey: string): string {
+export function getSportTitle(sportKey: string): string {
   const sport = ALL_SPORTS.find(s => s.key === sportKey)
   return sport?.name || sportKey
 }
