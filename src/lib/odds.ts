@@ -379,9 +379,9 @@ export async function getCurrentOdds(): Promise<OddsData> {
   // First, try to get cached data
   console.log('[getCurrentOdds] Checking cache...')
   const cached = await getCachedOdds()
-  console.log(`[getCurrentOdds] Cache result: ${cached ? cached.games.length + ' games' : 'null'}`)
+  console.log(`[getCurrentOdds] Cache result: ${cached ? (cached.games?.length || 0) + ' games' : 'null'}`)
   
-  if (cached) {
+  if (cached && cached.games) {
     // Check if cache is still fresh (less than 4 hours old)
     const lastUpdated = new Date(cached.lastUpdated)
     const now = new Date()
