@@ -9,7 +9,7 @@
  * accurate betting recommendations without relying on training data.
  */
 
-import { getCurrentOdds, formatOddsForContext, type Game } from './odds'
+import { getCurrentOdds, fetchAllOdds, formatOddsForContext, type Game } from './odds'
 import { getCachedESPNData, formatESPNForContext, type ESPNGameData, type ESPNInjury, type ESPNProbable } from './espn'
 
 export interface EnrichedGame extends Game {
@@ -88,10 +88,16 @@ function mapSportToLeague(sportName: string): string {
  */
 export async function getCombinedSportsData(): Promise<CombinedSportsData> {
   // Fetch both sources in parallel
-  const [oddsData, espnData] = await Promise.all([
+  let [oddsData, espnData] = await Promise.all([
     getCurrentOdds(),
     getCachedESPNData()
   ])
+  
+  // If cache returned empty odds, force fetch fresh data
+  if (!oddsData?.games?.length) {
+    console.log('[getCombinedSportsData] Cache empty, fetching fresh odds...')
+    oddsData = await fetchAllOdds()
+  }
   
   // Enrich odds games with ESPN data
   const enrichedGames: EnrichedGame[] = oddsData.games.map(oddsGame => {
@@ -133,10 +139,16 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
  * This is the main function to use in the chat API
  */
 export async function formatCombinedDataForContext(): Promise<string> {
-  const [oddsData, espnData] = await Promise.all([
+  let [oddsData, espnData] = await Promise.all([
     getCurrentOdds(),
     getCachedESPNData()
   ])
+  
+  // If cache returned empty odds, force fetch fresh data
+  if (!oddsData?.games?.length) {
+    console.log('[formatCombinedDataForContext] Cache empty, fetching fresh odds...')
+    oddsData = await fetchAllOdds()
+  }
   
   const lines: string[] = []
   

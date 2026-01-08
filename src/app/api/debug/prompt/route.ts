@@ -12,7 +12,7 @@
  */
 
 import { NextResponse } from "next/server"
-import { getCurrentOdds } from "@/lib/odds"
+import { getCurrentOdds, fetchAllOdds } from "@/lib/odds"
 import { getCachedESPNData, fetchAllESPNData } from "@/lib/espn"
 import { formatCombinedDataForContext, getCombinedSportsData } from "@/lib/combined-data"
 
@@ -136,10 +136,17 @@ export async function GET() {
   console.log('[DEBUG/PROMPT] Environment check:', JSON.stringify(envCheck))
   
   try {
-    // Fetch odds data first to debug
+    // Fetch odds data - try cache first, then fetch fresh if empty
     console.log('[DEBUG/PROMPT] Starting getCurrentOdds()...')
-    const oddsData = await getCurrentOdds()
-    console.log(`[DEBUG/PROMPT] getCurrentOdds() returned ${oddsData.games.length} games`)
+    let oddsData = await getCurrentOdds()
+    console.log(`[DEBUG/PROMPT] getCurrentOdds() returned ${oddsData?.games?.length || 0} games`)
+    
+    // If cache returned empty, force fetch fresh data
+    if (!oddsData?.games?.length) {
+      console.log('[DEBUG/PROMPT] Cache empty, fetching fresh odds data...')
+      oddsData = await fetchAllOdds()
+      console.log(`[DEBUG/PROMPT] fetchAllOdds() returned ${oddsData?.games?.length || 0} games`)
+    }
     
     // Fetch other data sources
     const [espnData, combinedData, formattedContext] = await Promise.all([
