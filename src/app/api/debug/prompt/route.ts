@@ -126,10 +126,23 @@ Always be helpful, educational, and emphasize responsible gambling.`
 export async function GET() {
   const startTime = Date.now()
   
+  // Check environment variables
+  const envCheck = {
+    hasOddsApiKey: !!process.env.ODDS_API_KEY,
+    oddsApiKeyLength: process.env.ODDS_API_KEY?.length || 0,
+    hasKvUrl: !!process.env.KV_REST_API_URL,
+    hasKvToken: !!process.env.KV_REST_API_TOKEN,
+  }
+  console.log('[DEBUG/PROMPT] Environment check:', JSON.stringify(envCheck))
+  
   try {
-    // Fetch all data sources
-    const [oddsData, espnData, combinedData, formattedContext] = await Promise.all([
-      getCurrentOdds(),
+    // Fetch odds data first to debug
+    console.log('[DEBUG/PROMPT] Starting getCurrentOdds()...')
+    const oddsData = await getCurrentOdds()
+    console.log(`[DEBUG/PROMPT] getCurrentOdds() returned ${oddsData.games.length} games`)
+    
+    // Fetch other data sources
+    const [espnData, combinedData, formattedContext] = await Promise.all([
       getCachedESPNData(),
       getCombinedSportsData(),
       formatCombinedDataForContext()
@@ -203,12 +216,15 @@ IMPORTANT: Use this REAL-TIME data to answer the user's question.
     // Sample combined game data (first game with ESPN data)
     const sampleCombinedGame = combinedData.games.find(g => g.espnData)
     
-    return NextResponse.json({
-      timestamp: new Date().toISOString(),
-      fetchTimeMs: fetchTime,
+        return NextResponse.json({
+          timestamp: new Date().toISOString(),
+          fetchTimeMs: fetchTime,
       
-      // API Status
-      apiStatus: {
+          // Environment Check
+          envCheck,
+      
+          // API Status
+          apiStatus: {
         oddsApi: {
           success: !oddsData.isStale,
           lastUpdated: oddsData.lastUpdated,

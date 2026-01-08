@@ -119,21 +119,31 @@ async function getRedisClient() {
  */
 async function getCachedOdds(): Promise<OddsData | null> {
   const redis = await getRedisClient()
-  if (!redis) return null
+  if (!redis) {
+    console.log('[getCachedOdds] Redis not configured')
+    return null
+  }
   
   try {
+    console.log(`[getCachedOdds] Fetching from Redis: ${redis.url}/get/${ODDS_CACHE_KEY}`)
     const response = await fetch(`${redis.url}/get/${ODDS_CACHE_KEY}`, {
       headers: { Authorization: `Bearer ${redis.token}` }
     })
     
-    if (!response.ok) return null
+    if (!response.ok) {
+      console.log(`[getCachedOdds] Redis response not OK: ${response.status}`)
+      return null
+    }
     
     const data = await response.json()
+    console.log(`[getCachedOdds] Redis response has result: ${!!data.result}, type: ${typeof data.result}`)
     if (!data.result) return null
     
-    return JSON.parse(data.result) as OddsData
+    const parsed = JSON.parse(data.result) as OddsData
+    console.log(`[getCachedOdds] Parsed ${parsed.games?.length || 0} games from cache`)
+    return parsed
   } catch (error) {
-    console.error('Error getting cached odds:', error)
+    console.error('[getCachedOdds] Error getting cached odds:', error)
     return null
   }
 }
@@ -367,16 +377,20 @@ export async function fetchAllOdds(): Promise<OddsData> {
  */
 export async function getCurrentOdds(): Promise<OddsData> {
   // First, try to get cached data
+  console.log('[getCurrentOdds] Checking cache...')
   const cached = await getCachedOdds()
+  console.log(`[getCurrentOdds] Cache result: ${cached ? cached.games.length + ' games' : 'null'}`)
   
   if (cached) {
     // Check if cache is still fresh (less than 4 hours old)
     const lastUpdated = new Date(cached.lastUpdated)
     const now = new Date()
     const hoursSinceUpdate = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60)
+    console.log(`[getCurrentOdds] Cache age: ${hoursSinceUpdate.toFixed(2)} hours`)
     
     if (hoursSinceUpdate < 4) {
       // Cache is fresh, return it
+      console.log(`[getCurrentOdds] Returning cached data with ${cached.games.length} games`)
       return cached
     }
     
