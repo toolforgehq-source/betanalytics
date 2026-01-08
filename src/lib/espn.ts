@@ -419,8 +419,8 @@ export async function getCachedESPNData(): Promise<ESPNData> {
  * Includes CURRENT ROSTERS so Claude knows who actually plays for each team
  */
 export function formatESPNForContext(espnData: ESPNData): string {
-  if (!espnData.games.length) {
-    return `No ESPN game data currently available.${espnData.error ? ` Error: ${espnData.error}` : ''}`
+  if (!espnData?.games?.length) {
+    return `No ESPN game data currently available.${espnData?.error ? ` Error: ${espnData.error}` : ''}`
   }
   
   const lines: string[] = []

@@ -144,8 +144,8 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('=== REAL-TIME SPORTS DATA ===')
   lines.push('')
   lines.push('You have access to CURRENT data from two sources:')
-  lines.push(`1. BETTING ODDS (The Odds API) - Last updated: ${formatTimestamp(oddsData.lastUpdated)}${oddsData.isStale ? ' ⚠️ STALE' : ''}`)
-  lines.push(`2. INJURIES & LINEUPS (ESPN API) - Last updated: ${formatTimestamp(espnData.lastUpdated)}${espnData.error ? ' ⚠️ ' + espnData.error : ''}`)
+  lines.push(`1. BETTING ODDS (The Odds API) - Last updated: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}${oddsData?.isStale ? ' ⚠️ STALE' : ''}`)
+  lines.push(`2. INJURIES & LINEUPS (ESPN API) - Last updated: ${formatTimestamp(espnData?.lastUpdated || new Date().toISOString())}${espnData?.error ? ' ⚠️ ' + espnData.error : ''}`)
   lines.push('')
   
   // Critical instructions for Claude

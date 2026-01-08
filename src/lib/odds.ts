@@ -423,8 +423,8 @@ export async function getCurrentOdds(): Promise<OddsData> {
  * Creates a readable summary of today's games and odds
  */
 export function formatOddsForContext(oddsData: OddsData): string {
-  if (!oddsData.games.length) {
-    return `No games currently available. Last checked: ${formatTimestamp(oddsData.lastUpdated)}
+  if (!oddsData?.games?.length) {
+    return `No games currently available. Last checked: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}
 
 SPORTS COVERED (currently no active games):
 - NBA (basketball_nba)
