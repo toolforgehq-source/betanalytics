@@ -190,7 +190,8 @@ async function fetchSportOdds(sportKey: string, sportName: string): Promise<Game
     const url = `${ODDS_API_BASE}/${sportKey}/odds/?apiKey=${apiKey}&regions=us&markets=h2h,spreads,totals&oddsFormat=american`
     
     const response = await fetch(url, {
-      headers: { 'Accept': 'application/json' }
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store', // Disable Next.js fetch caching to ensure fresh data
     })
     
     if (!response.ok) {

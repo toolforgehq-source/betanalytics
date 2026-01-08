@@ -114,7 +114,8 @@ async function fetchTeamRoster(sport: string, league: string, teamId: string, te
     const url = `${ESPN_API_BASE}/${sport}/${league}/teams/${teamId}/roster`
     
     const response = await fetch(url, {
-      headers: { 'Accept': 'application/json' }
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store', // Disable Next.js fetch caching
     })
     
     if (!response.ok) {
@@ -189,7 +190,8 @@ async function fetchESPNScoreboard(sport: string, league: string, leagueName: st
     const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard`
     
     const response = await fetch(url, {
-      headers: { 'Accept': 'application/json' }
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store', // Disable Next.js fetch caching
     })
     
     if (!response.ok) {
