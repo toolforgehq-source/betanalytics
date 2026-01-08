@@ -51,7 +51,7 @@ export default function ChatPageClient({
     const fetchAnalytics = async () => {
       try {
         const apiUrl = new URL('/api/analytics', window.location.origin).toString()
-        const response = await fetch(apiUrl)
+        const response = await fetch(apiUrl, { credentials: 'include' })
         if (response.ok) {
           const result = await response.json()
           if (result.success) {
@@ -86,7 +86,7 @@ export default function ChatPageClient({
     try {
       // Use absolute URL to avoid issues with credentials in document.baseURI
       const apiUrl = new URL('/api/terms/accept', window.location.origin).toString()
-      await fetch(apiUrl, { method: 'POST' })
+      await fetch(apiUrl, { method: 'POST', credentials: 'include' })
       setTermsAccepted(true)
     } catch (error) {
       console.error('Failed to accept terms:', error)

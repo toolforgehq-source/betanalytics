@@ -96,6 +96,7 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ 
           messages: [...messages, userMessage].slice(1).map(m => ({
             role: m.role,
