@@ -161,7 +161,7 @@ IMPORTANT: Use this REAL-TIME data to answer the user's question.
 - Verify starting lineups (especially NHL goalies) from ESPN data
 - Never cite players who may have been traded - use current roster data`
 
-    // Extract roster data for verification
+    // Extract roster data for verification (with null checks)
     const rostersIncluded: Array<{
       team: string
       sport: string
@@ -169,49 +169,51 @@ IMPORTANT: Use this REAL-TIME data to answer the user's question.
       keyPlayers: string[]
     }> = []
     
-    for (const game of espnData.games) {
-      if (game.homeTeam.roster) {
+    for (const game of espnData.games || []) {
+      if (game.homeTeam?.roster?.keyPlayers) {
+        const kp = game.homeTeam.roster.keyPlayers
         rostersIncluded.push({
           team: game.homeTeam.name,
           sport: game.league,
-          qbs: game.homeTeam.roster.keyPlayers.qbs,
+          qbs: kp.qbs || [],
           keyPlayers: [
-            ...game.homeTeam.roster.keyPlayers.qbs,
-            ...game.homeTeam.roster.keyPlayers.rbs.slice(0, 3),
-            ...game.homeTeam.roster.keyPlayers.wrs.slice(0, 5),
-            ...(game.homeTeam.roster.keyPlayers.goalies || [])
+            ...(kp.qbs || []),
+            ...(kp.rbs || []).slice(0, 3),
+            ...(kp.wrs || []).slice(0, 5),
+            ...(kp.goalies || [])
           ]
         })
       }
-      if (game.awayTeam.roster) {
+      if (game.awayTeam?.roster?.keyPlayers) {
+        const kp = game.awayTeam.roster.keyPlayers
         rostersIncluded.push({
           team: game.awayTeam.name,
           sport: game.league,
-          qbs: game.awayTeam.roster.keyPlayers.qbs,
+          qbs: kp.qbs || [],
           keyPlayers: [
-            ...game.awayTeam.roster.keyPlayers.qbs,
-            ...game.awayTeam.roster.keyPlayers.rbs.slice(0, 3),
-            ...game.awayTeam.roster.keyPlayers.wrs.slice(0, 5),
-            ...(game.awayTeam.roster.keyPlayers.goalies || [])
+            ...(kp.qbs || []),
+            ...(kp.rbs || []).slice(0, 3),
+            ...(kp.wrs || []).slice(0, 5),
+            ...(kp.goalies || [])
           ]
         })
       }
     }
     
-    // Count games by sport
+    // Count games by sport (with null checks)
     const gamesBySport: Record<string, number> = {}
-    for (const game of oddsData.games) {
+    for (const game of oddsData?.games || []) {
       gamesBySport[game.sportName] = (gamesBySport[game.sportName] || 0) + 1
     }
     
-    // Count ESPN games by league
+    // Count ESPN games by league (with null checks)
     const espnGamesByLeague: Record<string, number> = {}
-    for (const game of espnData.games) {
+    for (const game of espnData?.games || []) {
       espnGamesByLeague[game.league] = (espnGamesByLeague[game.league] || 0) + 1
     }
     
-    // Find games with combined data (both odds and ESPN)
-    const gamesWithBothSources = combinedData.games.filter(g => g.espnData).length
+    // Find games with combined data (both odds and ESPN) (with null checks)
+    const gamesWithBothSources = (combinedData?.games || []).filter(g => g.espnData).length
     
     // Sample combined game data (first game with ESPN data)
     const sampleCombinedGame = combinedData.games.find(g => g.espnData)
@@ -226,29 +228,29 @@ IMPORTANT: Use this REAL-TIME data to answer the user's question.
           // API Status
           apiStatus: {
         oddsApi: {
-          success: !oddsData.isStale,
-          lastUpdated: oddsData.lastUpdated,
-          totalGames: oddsData.games.length,
+          success: !oddsData?.isStale,
+          lastUpdated: oddsData?.lastUpdated || 'N/A',
+          totalGames: oddsData?.games?.length || 0,
           gamesBySport,
-          isStale: oddsData.isStale
+          isStale: oddsData?.isStale || false
         },
         espnApi: {
-          success: !espnData.error,
-          lastUpdated: espnData.lastUpdated,
-          totalGames: espnData.games.length,
+          success: !espnData?.error,
+          lastUpdated: espnData?.lastUpdated || 'N/A',
+          totalGames: espnData?.games?.length || 0,
           gamesByLeague: espnGamesByLeague,
-          error: espnData.error,
+          error: espnData?.error || null,
           rostersIncluded: rostersIncluded.length
         }
       },
       
       // Data Combination Stats
       dataCombination: {
-        totalOddsGames: oddsData.games.length,
-        totalEspnGames: espnData.games.length,
+        totalOddsGames: oddsData?.games?.length || 0,
+        totalEspnGames: espnData?.games?.length || 0,
         gamesWithBothSources,
-        matchRate: oddsData.games.length > 0 
-          ? `${Math.round((gamesWithBothSources / oddsData.games.length) * 100)}%`
+        matchRate: (oddsData?.games?.length || 0) > 0 
+          ? `${Math.round((gamesWithBothSources / (oddsData?.games?.length || 1)) * 100)}%`
           : '0%'
       },
       
