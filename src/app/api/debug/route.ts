@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
 import { headers, cookies } from "next/headers"
+import { checkSubscription, checkTermsAccepted } from "@/lib/subscription"
 
 export const dynamic = "force-dynamic"
 
@@ -23,6 +24,21 @@ export async function GET(req: NextRequest) {
     } : null
   } catch (error) {
     sessionError = error instanceof Error ? error.message : 'Unknown error'
+  }
+
+  // Get subscription info
+  let subscriptionInfo = null
+  let subscriptionError = null
+  try {
+    const subStatus = await checkSubscription()
+    const termsAccepted = await checkTermsAccepted()
+    subscriptionInfo = {
+      isSubscribed: subStatus.isSubscribed,
+      questionsRemaining: subStatus.questionsRemaining,
+      termsAccepted,
+    }
+  } catch (error) {
+    subscriptionError = error instanceof Error ? error.message : 'Unknown error'
   }
 
   // Get relevant headers
@@ -56,6 +72,8 @@ export async function GET(req: NextRequest) {
     timestamp: new Date().toISOString(),
     session: sessionInfo,
     sessionError,
+    subscription: subscriptionInfo,
+    subscriptionError,
     headers: relevantHeaders,
     cookies: cookieNames,
     build: buildInfo,
