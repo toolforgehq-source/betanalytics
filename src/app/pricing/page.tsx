@@ -1,33 +1,52 @@
-'use client'
-
-import { useRouter } from 'next/navigation'
+import { auth } from "@/auth"
 import Link from 'next/link'
 import { CheckCircle } from 'lucide-react'
 import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
+import PricingClient from './PricingClient'
 
-export default function PricingPage() {
-  const router = useRouter()
+// Force dynamic rendering to prevent caching issues with auth
+export const dynamic = "force-dynamic"
+
+export default async function PricingPage() {
+  const session = await auth()
+  const isLoggedIn = !!session?.user
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white flex flex-col">
       <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <Link href="/">
+            <Link href={isLoggedIn ? "/chat" : "/"}>
               <Logo />
             </Link>
             
             <div className="flex items-center gap-4">
-              <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
-                Sign In
-              </Link>
-              <Link 
-                href="/signup" 
-                className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
-              >
-                Start Free Trial
-              </Link>
+              {isLoggedIn ? (
+                <>
+                  <Link href="/chat" className="text-slate-300 hover:text-white transition-colors">
+                    Back to Chat
+                  </Link>
+                  <Link 
+                    href="/account" 
+                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
+                  >
+                    My Account
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
+                    Sign In
+                  </Link>
+                  <Link 
+                    href="/signup" 
+                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
+                  >
+                    Start Free Trial
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -65,15 +84,7 @@ export default function PricingPage() {
               <Feature text="Real-time alerts (coming soon)" />
             </div>
 
-            <button
-              onClick={() => router.push('/signup')}
-              className="w-full py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/30"
-            >
-              Start Free Trial
-            </button>
-            <p className="text-center text-sm text-slate-400 mt-4">
-              3 questions free. No credit card required to start.
-            </p>
+            <PricingClient isLoggedIn={isLoggedIn} />
           </div>
 
           <div className="mt-12 text-center">
