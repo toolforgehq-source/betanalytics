@@ -88,12 +88,13 @@ function mapSportToLeague(sportName: string): string {
  */
 export async function getCombinedSportsData(): Promise<CombinedSportsData> {
   // Fetch both sources in parallel
-  let [oddsData, espnData] = await Promise.all([
+  const [initialOddsData, espnData] = await Promise.all([
     getCurrentOdds(),
     getCachedESPNData()
   ])
   
   // If cache returned empty odds, force fetch fresh data
+  let oddsData = initialOddsData
   if (!oddsData?.games?.length) {
     console.log('[getCombinedSportsData] Cache empty, fetching fresh odds...')
     oddsData = await fetchAllOdds()
@@ -139,12 +140,13 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
  * This is the main function to use in the chat API
  */
 export async function formatCombinedDataForContext(): Promise<string> {
-  let [oddsData, espnData] = await Promise.all([
+  const [initialOddsData, espnData] = await Promise.all([
     getCurrentOdds(),
     getCachedESPNData()
   ])
   
   // If cache returned empty odds, force fetch fresh data
+  let oddsData = initialOddsData
   if (!oddsData?.games?.length) {
     console.log('[formatCombinedDataForContext] Cache empty, fetching fresh odds...')
     oddsData = await fetchAllOdds()

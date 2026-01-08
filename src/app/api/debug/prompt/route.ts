@@ -12,7 +12,7 @@
  */
 
 import { NextResponse } from "next/server"
-import { getCurrentOdds, fetchAllOdds } from "@/lib/odds"
+import { fetchAllOdds } from "@/lib/odds"
 import { getCachedESPNData, fetchAllESPNData } from "@/lib/espn"
 import { formatCombinedDataForContext, getCombinedSportsData } from "@/lib/combined-data"
 
