@@ -140,12 +140,19 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
  * This is the main function to use in the chat API
  */
 export async function formatCombinedDataForContext(): Promise<string> {
-  // Fetch odds, ESPN data, and player props in parallel
-  const [initialOddsData, espnData, nbaProps] = await Promise.all([
+  // Fetch odds, ESPN data, and player props for ALL sports in parallel
+  const [initialOddsData, espnData, nbaProps, nflProps, nhlProps, ncaafProps, ncaabProps] = await Promise.all([
     getCurrentOdds(),
     getCachedESPNData(),
-    fetchSportPlayerProps('basketball_nba').catch(() => [] as GamePlayerProps[])
+    fetchSportPlayerProps('basketball_nba').catch(() => [] as GamePlayerProps[]),
+    fetchSportPlayerProps('americanfootball_nfl').catch(() => [] as GamePlayerProps[]),
+    fetchSportPlayerProps('icehockey_nhl').catch(() => [] as GamePlayerProps[]),
+    fetchSportPlayerProps('americanfootball_ncaaf').catch(() => [] as GamePlayerProps[]),
+    fetchSportPlayerProps('basketball_ncaab').catch(() => [] as GamePlayerProps[])
   ])
+  
+  // Combine all props from all sports
+  const allProps = [...nbaProps, ...nflProps, ...nhlProps, ...ncaafProps, ...ncaabProps]
   
   // If cache returned empty odds, force fetch fresh data
   let oddsData = initialOddsData
@@ -162,7 +169,7 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('You have access to CURRENT data from THREE sources:')
   lines.push(`1. BETTING ODDS (The Odds API) - Last updated: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}${oddsData?.isStale ? ' ⚠️ STALE' : ''}`)
   lines.push(`2. INJURIES & LINEUPS (ESPN API) - Last updated: ${formatTimestamp(espnData?.lastUpdated || new Date().toISOString())}${espnData?.error ? ' ⚠️ ' + espnData.error : ''}`)
-  lines.push(`3. PLAYER PROPS (The Odds API) - ${nbaProps.length} games with props available`)
+  lines.push(`3. PLAYER PROPS (The Odds API) - NBA: ${nbaProps.length}, NFL: ${nflProps.length}, NHL: ${nhlProps.length}, NCAAF: ${ncaafProps.length}, NCAAB: ${ncaabProps.length} games`)
   lines.push('')
   
   // Critical instructions for Claude
@@ -187,9 +194,9 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push(formatOddsForContext(oddsData))
   lines.push('')
   
-  // Add player props data
-  if (nbaProps.length > 0) {
-    lines.push(formatPlayerPropsForContext(nbaProps))
+  // Add player props data for ALL sports
+  if (allProps.length > 0) {
+    lines.push(formatPlayerPropsForContext(allProps))
   } else {
     lines.push('\n=== PLAYER PROPS ===')
     lines.push('No player props currently available. Props are typically posted by sportsbooks in the morning/early afternoon.')

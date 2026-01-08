@@ -801,7 +801,15 @@ export function formatPlayerPropsForContext(propsData: GamePlayerProps[]): strin
   lines.push(``)
   
   for (const game of propsData) {
-    lines.push(`--- ${game.awayTeam} @ ${game.homeTeam} ---`)
+    // Add sport label for clarity
+    let sportLabel = 'GAME'
+    if (game.sport.includes('basketball_nba')) sportLabel = 'NBA'
+    else if (game.sport.includes('basketball_ncaab')) sportLabel = 'NCAAB'
+    else if (game.sport.includes('football_nfl')) sportLabel = 'NFL'
+    else if (game.sport.includes('football_ncaaf')) sportLabel = 'NCAAF'
+    else if (game.sport.includes('hockey')) sportLabel = 'NHL'
+    
+    lines.push(`--- [${sportLabel}] ${game.awayTeam} @ ${game.homeTeam} ---`)
     lines.push(`Game Time: ${formatGameTime(game.commenceTime)}`)
     lines.push(`Players Expected to Play (${game.playersWithProps.length}): ${game.playersWithProps.join(', ')}`)
     lines.push(``)
@@ -817,14 +825,39 @@ export function formatPlayerPropsForContext(propsData: GamePlayerProps[]): strin
     // Show top props for each player (limit to first 10 players)
     const playerEntries = Array.from(propsByPlayer.entries()).slice(0, 10)
     for (const [playerName, playerProps] of playerEntries) {
+      const propStrings: string[] = []
+      
+      // Basketball props (NBA, NCAAB)
       const pointsProp = playerProps.find(p => p.market === 'player_points')
       const reboundsProp = playerProps.find(p => p.market === 'player_rebounds')
       const assistsProp = playerProps.find(p => p.market === 'player_assists')
+      const threesProp = playerProps.find(p => p.market === 'player_threes')
       
-      const propStrings: string[] = []
-      if (pointsProp) propStrings.push(`Pts O/U ${pointsProp.line} (${formatOdds(pointsProp.overOdds)}/${formatOdds(pointsProp.underOdds)})`)
+      // Football props (NFL, NCAAF)
+      const passYdsProp = playerProps.find(p => p.market === 'player_pass_yds')
+      const rushYdsProp = playerProps.find(p => p.market === 'player_rush_yds')
+      const passTdsProp = playerProps.find(p => p.market === 'player_pass_tds')
+      const recYdsProp = playerProps.find(p => p.market === 'player_reception_yds')
+      
+      // Hockey props (NHL)
+      const hockeyPointsProp = playerProps.find(p => p.market === 'player_points' && game.sport.includes('hockey'))
+      const hockeyAssistsProp = playerProps.find(p => p.market === 'player_assists' && game.sport.includes('hockey'))
+      
+      // Format basketball props
+      if (pointsProp && !game.sport.includes('hockey')) propStrings.push(`Pts O/U ${pointsProp.line} (${formatOdds(pointsProp.overOdds)}/${formatOdds(pointsProp.underOdds)})`)
       if (reboundsProp) propStrings.push(`Reb O/U ${reboundsProp.line}`)
-      if (assistsProp) propStrings.push(`Ast O/U ${assistsProp.line}`)
+      if (assistsProp && !game.sport.includes('hockey')) propStrings.push(`Ast O/U ${assistsProp.line}`)
+      if (threesProp) propStrings.push(`3PT O/U ${threesProp.line}`)
+      
+      // Format football props
+      if (passYdsProp) propStrings.push(`Pass Yds O/U ${passYdsProp.line} (${formatOdds(passYdsProp.overOdds)}/${formatOdds(passYdsProp.underOdds)})`)
+      if (rushYdsProp) propStrings.push(`Rush Yds O/U ${rushYdsProp.line}`)
+      if (passTdsProp) propStrings.push(`Pass TDs O/U ${passTdsProp.line}`)
+      if (recYdsProp) propStrings.push(`Rec Yds O/U ${recYdsProp.line}`)
+      
+      // Format hockey props
+      if (hockeyPointsProp) propStrings.push(`Pts O/U ${hockeyPointsProp.line} (${formatOdds(hockeyPointsProp.overOdds)}/${formatOdds(hockeyPointsProp.underOdds)})`)
+      if (hockeyAssistsProp) propStrings.push(`Ast O/U ${hockeyAssistsProp.line}`)
       
       if (propStrings.length > 0) {
         lines.push(`  ${playerName}: ${propStrings.join(' | ')}`)
