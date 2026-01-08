@@ -604,3 +604,240 @@ function formatGameTime(isoString: string): string {
     timeZoneName: 'short',
   })
 }
+
+// ============================================
+// PLAYER PROPS INTEGRATION
+// ============================================
+
+export interface PlayerProp {
+  playerName: string
+  market: string // e.g., 'player_points', 'player_rebounds', 'player_assists'
+  line: number
+  overOdds: number
+  underOdds: number
+  bookmaker: string
+}
+
+export interface GamePlayerProps {
+  gameId: string
+  homeTeam: string
+  awayTeam: string
+  commenceTime: string
+  sport: string
+  props: PlayerProp[]
+  playersWithProps: string[] // List of unique player names with props (indicates expected to play)
+}
+
+// Player prop markets available (used for reference)
+// NBA: player_points, player_rebounds, player_assists, player_threes
+// NFL: player_pass_tds, player_rush_yds, player_reception_yds
+// NHL: player_points, player_assists
+
+/**
+ * Fetch player props for a specific game event
+ * This tells us which players sportsbooks expect to play (if they have props, they're expected to play)
+ */
+export async function fetchGamePlayerProps(eventId: string, sportKey: string): Promise<GamePlayerProps | null> {
+  const apiKey = process.env.ODDS_API_KEY
+  
+  if (!apiKey) {
+    console.error('[fetchGamePlayerProps] ODDS_API_KEY not configured')
+    return null
+  }
+  
+  try {
+    // Determine which prop markets to fetch based on sport
+    let markets: string[]
+    if (sportKey.includes('basketball')) {
+      markets = ['player_points', 'player_rebounds', 'player_assists', 'player_threes']
+    } else if (sportKey.includes('football')) {
+      markets = ['player_pass_tds', 'player_rush_yds', 'player_reception_yds']
+    } else if (sportKey.includes('hockey')) {
+      markets = ['player_points', 'player_assists']
+    } else {
+      markets = ['player_points']
+    }
+    
+    const marketsParam = markets.join(',')
+    const url = `${ODDS_API_BASE}/${sportKey}/events/${eventId}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&oddsFormat=american`
+    
+    console.log(`[fetchGamePlayerProps] Fetching props for event ${eventId}`)
+    
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+    
+    if (!response.ok) {
+      console.error(`[fetchGamePlayerProps] API error: ${response.status}`)
+      return null
+    }
+    
+    const data = await response.json()
+    
+    // Extract player props from the response
+    const props: PlayerProp[] = []
+    const playersSet = new Set<string>()
+    
+    if (data.bookmakers) {
+      for (const bookmaker of data.bookmakers) {
+        for (const market of bookmaker.markets || []) {
+          // Group outcomes by player (Over/Under pairs)
+          const playerOutcomes = new Map<string, { over?: { price: number; point: number }; under?: { price: number; point: number } }>()
+          
+          for (const outcome of market.outcomes || []) {
+            const playerName = outcome.description
+            if (!playerName) continue
+            
+            if (!playerOutcomes.has(playerName)) {
+              playerOutcomes.set(playerName, {})
+            }
+            
+            const playerData = playerOutcomes.get(playerName)!
+            if (outcome.name === 'Over') {
+              playerData.over = { price: outcome.price, point: outcome.point }
+            } else if (outcome.name === 'Under') {
+              playerData.under = { price: outcome.price, point: outcome.point }
+            }
+          }
+          
+          // Create props from paired outcomes
+          Array.from(playerOutcomes.entries()).forEach(([playerName, outcomes]) => {
+            if (outcomes.over && outcomes.under) {
+              playersSet.add(playerName)
+              props.push({
+                playerName,
+                market: market.key,
+                line: outcomes.over.point,
+                overOdds: outcomes.over.price,
+                underOdds: outcomes.under.price,
+                bookmaker: formatBookmakerName(bookmaker.key),
+              })
+            }
+          })
+        }
+      }
+    }
+    
+    return {
+      gameId: eventId,
+      homeTeam: data.home_team || '',
+      awayTeam: data.away_team || '',
+      commenceTime: data.commence_time || '',
+      sport: sportKey,
+      props,
+      playersWithProps: Array.from(playersSet),
+    }
+  } catch (error) {
+    console.error(`[fetchGamePlayerProps] Error:`, error)
+    return null
+  }
+}
+
+/**
+ * Fetch player props for all games of a sport (for today's games)
+ * Returns list of players expected to play based on sportsbook prop availability
+ */
+export async function fetchSportPlayerProps(sportKey: string): Promise<GamePlayerProps[]> {
+  const apiKey = process.env.ODDS_API_KEY
+  
+  if (!apiKey) {
+    console.error('[fetchSportPlayerProps] ODDS_API_KEY not configured')
+    return []
+  }
+  
+  try {
+    // First get the list of events for this sport
+    const eventsUrl = `${ODDS_API_BASE}/${sportKey}/events?apiKey=${apiKey}`
+    const eventsResponse = await fetch(eventsUrl, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+    
+    if (!eventsResponse.ok) {
+      console.error(`[fetchSportPlayerProps] Events API error: ${eventsResponse.status}`)
+      return []
+    }
+    
+    const events = await eventsResponse.json()
+    
+    // Filter to today's games only (within next 24 hours)
+    const now = new Date()
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+    
+    const todaysEvents = events.filter((event: { commence_time: string }) => {
+      const gameTime = new Date(event.commence_time)
+      return gameTime >= now && gameTime <= tomorrow
+    })
+    
+    console.log(`[fetchSportPlayerProps] Found ${todaysEvents.length} games today for ${sportKey}`)
+    
+    // Fetch props for each game (limit to first 5 to manage API usage)
+    const propsPromises = todaysEvents.slice(0, 5).map((event: { id: string }) => 
+      fetchGamePlayerProps(event.id, sportKey)
+    )
+    
+    const results = await Promise.all(propsPromises)
+    return results.filter((r): r is GamePlayerProps => r !== null)
+  } catch (error) {
+    console.error(`[fetchSportPlayerProps] Error:`, error)
+    return []
+  }
+}
+
+/**
+ * Format player props for Claude's context
+ * Includes confidence indicators based on prop availability
+ */
+export function formatPlayerPropsForContext(propsData: GamePlayerProps[]): string {
+  if (!propsData.length) {
+    return `\n=== PLAYER PROPS ===\nNo player props currently available. Props are typically posted by sportsbooks in the morning/early afternoon for evening games.\n`
+  }
+  
+  const lines: string[] = []
+  lines.push(`\n=== PLAYER PROPS (${propsData.length} games) ===`)
+  lines.push(`IMPORTANT: If a player has props listed, sportsbooks expect them to play.`)
+  lines.push(`This is HIGH CONFIDENCE data for "expected to play" status.`)
+  lines.push(``)
+  
+  for (const game of propsData) {
+    lines.push(`--- ${game.awayTeam} @ ${game.homeTeam} ---`)
+    lines.push(`Game Time: ${formatGameTime(game.commenceTime)}`)
+    lines.push(`Players Expected to Play (${game.playersWithProps.length}): ${game.playersWithProps.join(', ')}`)
+    lines.push(``)
+    
+    // Group props by player
+    const propsByPlayer = new Map<string, PlayerProp[]>()
+    for (const prop of game.props) {
+      const existing = propsByPlayer.get(prop.playerName) || []
+      existing.push(prop)
+      propsByPlayer.set(prop.playerName, existing)
+    }
+    
+    // Show top props for each player (limit to first 10 players)
+    const playerEntries = Array.from(propsByPlayer.entries()).slice(0, 10)
+    for (const [playerName, playerProps] of playerEntries) {
+      const pointsProp = playerProps.find(p => p.market === 'player_points')
+      const reboundsProp = playerProps.find(p => p.market === 'player_rebounds')
+      const assistsProp = playerProps.find(p => p.market === 'player_assists')
+      
+      const propStrings: string[] = []
+      if (pointsProp) propStrings.push(`Pts O/U ${pointsProp.line} (${formatOdds(pointsProp.overOdds)}/${formatOdds(pointsProp.underOdds)})`)
+      if (reboundsProp) propStrings.push(`Reb O/U ${reboundsProp.line}`)
+      if (assistsProp) propStrings.push(`Ast O/U ${assistsProp.line}`)
+      
+      if (propStrings.length > 0) {
+        lines.push(`  ${playerName}: ${propStrings.join(' | ')}`)
+      }
+    }
+    lines.push(``)
+  }
+  
+  lines.push(`\nPROP RECOMMENDATION RULES:`)
+  lines.push(`- If player has props listed above → HIGH confidence they'll play, can recommend props`)
+  lines.push(`- If player NOT listed but is a star (LeBron, Curry, etc.) → MEDIUM confidence, recommend with disclaimer`)
+  lines.push(`- If player NOT listed and not a star → LOW confidence, suggest waiting for lineup confirmation`)
+  lines.push(``)
+  
+  return lines.join('\n')
+}

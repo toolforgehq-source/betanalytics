@@ -9,7 +9,7 @@
  * accurate betting recommendations without relying on training data.
  */
 
-import { getCurrentOdds, fetchAllOdds, formatOddsForContext, type Game } from './odds'
+import { getCurrentOdds, fetchAllOdds, formatOddsForContext, fetchSportPlayerProps, formatPlayerPropsForContext, type Game, type GamePlayerProps } from './odds'
 import { getCachedESPNData, formatESPNForContext, type ESPNGameData, type ESPNInjury, type ESPNProbable } from './espn'
 
 export interface EnrichedGame extends Game {
@@ -140,9 +140,11 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
  * This is the main function to use in the chat API
  */
 export async function formatCombinedDataForContext(): Promise<string> {
-  const [initialOddsData, espnData] = await Promise.all([
+  // Fetch odds, ESPN data, and player props in parallel
+  const [initialOddsData, espnData, nbaProps] = await Promise.all([
     getCurrentOdds(),
-    getCachedESPNData()
+    getCachedESPNData(),
+    fetchSportPlayerProps('basketball_nba').catch(() => [] as GamePlayerProps[])
   ])
   
   // If cache returned empty odds, force fetch fresh data
@@ -157,9 +159,10 @@ export async function formatCombinedDataForContext(): Promise<string> {
   // Header with data freshness info
   lines.push('=== REAL-TIME SPORTS DATA ===')
   lines.push('')
-  lines.push('You have access to CURRENT data from two sources:')
+  lines.push('You have access to CURRENT data from THREE sources:')
   lines.push(`1. BETTING ODDS (The Odds API) - Last updated: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}${oddsData?.isStale ? ' ⚠️ STALE' : ''}`)
   lines.push(`2. INJURIES & LINEUPS (ESPN API) - Last updated: ${formatTimestamp(espnData?.lastUpdated || new Date().toISOString())}${espnData?.error ? ' ⚠️ ' + espnData.error : ''}`)
+  lines.push(`3. PLAYER PROPS (The Odds API) - ${nbaProps.length} games with props available`)
   lines.push('')
   
   // Critical instructions for Claude
@@ -171,9 +174,28 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('- If key player is injured, factor that into your analysis')
   lines.push('')
   
+  // Player props confidence rules
+  lines.push('PLAYER PROPS CONFIDENCE RULES:')
+  lines.push('- If a player has props listed below → HIGH confidence they will play (sportsbooks expect them to play)')
+  lines.push('- If player is a star (LeBron, Curry, etc.) but no props yet → MEDIUM confidence, recommend with disclaimer')
+  lines.push('- If player is NOT listed and not a star → LOW confidence, suggest waiting for lineup confirmation')
+  lines.push('- For MORNING requests (before props posted): Focus on star players, add "verify lineup before game" disclaimer')
+  lines.push('- For AFTERNOON/EVENING requests: Use props data for high-confidence recommendations')
+  lines.push('')
+  
   // Add odds data
   lines.push(formatOddsForContext(oddsData))
   lines.push('')
+  
+  // Add player props data
+  if (nbaProps.length > 0) {
+    lines.push(formatPlayerPropsForContext(nbaProps))
+  } else {
+    lines.push('\n=== PLAYER PROPS ===')
+    lines.push('No player props currently available. Props are typically posted by sportsbooks in the morning/early afternoon.')
+    lines.push('For prop recommendations without props data: Focus on star players who always start when healthy.')
+    lines.push('')
+  }
   
   // Add ESPN data
   lines.push(formatESPNForContext(espnData))
