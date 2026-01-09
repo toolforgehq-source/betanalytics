@@ -90,12 +90,42 @@ function removeVig(impliedProb1: number, impliedProb2: number): { prob1: number;
 }
 
 /**
+ * Check if a game has a 3-way market (includes Draw option)
+ * Soccer and some other sports have win/draw/win markets
+ */
+function isThreeWayMarket(game: Game): boolean {
+  if (!game.moneylines || game.moneylines.length === 0) return false
+  
+  // Check if any bookmaker has a "Draw" outcome
+  for (const ml of game.moneylines) {
+    const hasDrawOutcome = ml.outcomes.some(o => 
+      o.name.toLowerCase() === 'draw' || 
+      o.name.toLowerCase() === 'tie' ||
+      o.name.toLowerCase() === 'x'
+    )
+    if (hasDrawOutcome) return true
+    
+    // Also check if there are more than 2 outcomes
+    if (ml.outcomes.length > 2) return true
+  }
+  
+  return false
+}
+
+/**
  * Calculate consensus no-vig probability for a team from multiple books
+ * Only works for 2-way markets (excludes soccer 3-way markets)
  */
 function calculateConsensusProbability(
   game: Game,
   team: string
 ): { consensusProb: number; bookPrices: { book: string; price: number; impliedProb: number; noVigProb: number }[] } | null {
+  // CRITICAL: Skip 3-way markets (soccer win/draw/win)
+  // Our 2-way no-vig calculation doesn't work for 3-way markets
+  if (isThreeWayMarket(game)) {
+    return null
+  }
+  
   const bookPrices: { book: string; price: number; impliedProb: number; noVigProb: number }[] = []
   
   const isHomeTeam = team === game.homeTeam
@@ -104,6 +134,9 @@ function calculateConsensusProbability(
   for (const ml of game.moneylines) {
     // Only use reputable books for consensus
     if (!CONSENSUS_BOOKS.includes(ml.bookmaker)) continue
+    
+    // Skip if not exactly 2 outcomes (safety check)
+    if (ml.outcomes.length !== 2) continue
     
     const teamOutcome = ml.outcomes.find(o => o.name === team)
     const opponentOutcome = ml.outcomes.find(o => o.name === opponent)

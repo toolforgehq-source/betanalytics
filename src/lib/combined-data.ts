@@ -22,6 +22,7 @@ import { getWeatherForGames, formatWeatherForContext } from './weather'
 import { getCachedSoccerStats, formatSoccerStatsForContext } from './soccer-stats'
 import { getLineMovement, formatLineMovementForContext } from './line-movement'
 import { getCachedBestBet, computeBestBets, formatBestBetForContext } from './bet-ranking'
+import { getTrackRecord, formatTrackRecordForContext } from './pick-tracking'
 
 export interface EnrichedGame extends Game {
   espnData?: {
@@ -199,12 +200,13 @@ export async function formatCombinedDataForContext(): Promise<string> {
     .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.sportName))
     .map(g => ({ id: g.id, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.sportName }))
   
-  // Fetch weather, soccer stats, line movement, and best bet in parallel
-  const [weatherMap, soccerStats, lineMovement, cachedBestBet] = await Promise.all([
+  // Fetch weather, soccer stats, line movement, best bet, and track record in parallel
+  const [weatherMap, soccerStats, lineMovement, cachedBestBet, trackRecord] = await Promise.all([
     getWeatherForGames(outdoorGames).catch(() => new Map()),
     getCachedSoccerStats().catch(() => ({ leagues: [], lastUpdated: new Date().toISOString(), error: 'Failed to fetch' })),
     getLineMovement(oddsData.games).catch(() => []),
-    getCachedBestBet().catch(() => null)
+    getCachedBestBet().catch(() => null),
+    getTrackRecord().catch(() => null)
   ])
   
   // If no cached best bet, compute it now
@@ -212,7 +214,11 @@ export async function formatCombinedDataForContext(): Promise<string> {
   
   const lines: string[] = []
   
-  // BEST BET FIRST - This is the most important section
+  // TRACK RECORD FIRST - Build trust with users
+  lines.push(formatTrackRecordForContext(trackRecord))
+  lines.push('')
+  
+  // BEST BET SECOND - This is the most important recommendation
   lines.push(formatBestBetForContext(bestBetResult))
   lines.push('')
   lines.push('')

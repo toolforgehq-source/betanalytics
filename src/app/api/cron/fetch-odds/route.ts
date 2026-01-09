@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { fetchAllOdds } from "@/lib/odds"
 import { computeBestBets, cacheBestBet } from "@/lib/bet-ranking"
+import { storePick, getAllPicks } from "@/lib/pick-tracking"
 
 /**
  * Cron endpoint to fetch fresh odds data and compute best bet
@@ -12,6 +13,7 @@ import { computeBestBets, cacheBestBet } from "@/lib/bet-ranking"
  * 
  * This keeps the odds cache fresh while staying under the 500 requests/month limit.
  * Also computes and caches the deterministic "Best Bet of the Day".
+ * Stores picks for track record tracking.
  */
 export async function GET(request: Request) {
   try {
@@ -47,6 +49,39 @@ export async function GET(request: Request) {
     
     console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)
     
+    // Store the best bet pick for track record (if we have one and it's a new game)
+    let pickStored = false
+    if (bestBetResult.bestBet) {
+      const existingPicks = await getAllPicks()
+      const alreadyHavePick = existingPicks.some(p => 
+        p.gameId === bestBetResult.bestBet!.gameId && 
+        p.pickType === 'best_bet' &&
+        p.status === 'pending'
+      )
+      
+      if (!alreadyHavePick) {
+        const bet = bestBetResult.bestBet
+        await storePick({
+          gameId: bet.gameId,
+          sport: bet.sport,
+          sportName: bet.sportName,
+          homeTeam: bet.homeTeam,
+          awayTeam: bet.awayTeam,
+          gameTime: bet.commenceTime,
+          pickType: 'best_bet',
+          team: bet.team,
+          betType: bet.betType,
+          odds: bet.bestPrice,
+          consensusProbability: bet.consensusProbability,
+          impliedProbability: bet.impliedProbability,
+          edge: bet.edge,
+          bestBook: bet.bestBook
+        })
+        pickStored = true
+        console.log(`Stored pick for track record: ${bet.team}`)
+      }
+    }
+    
     return NextResponse.json({
       success: true,
       gamesCount: oddsData.games.length,
@@ -58,6 +93,7 @@ export async function GET(request: Request) {
         edge: bestBetResult.bestBet.edge
       } : null,
       qualifiedBets: bestBetResult.gamesQualified,
+      pickStored,
       message: `Successfully fetched odds for ${oddsData.games.length} games, best bet: ${bestBetResult.bestBet?.team || 'none'}`
     })
     
