@@ -538,6 +538,27 @@ export async function fetchAllOdds(): Promise<OddsData> {
  * Get current odds - returns cached data if fresh, fetches new if stale
  * This is the main function to call from the chat API
  */
+/**
+ * Check if cached games have upcoming events
+ * Returns true if there are games starting within the next 48 hours
+ * This prevents serving "yesterday's games" even if cache TTL hasn't expired
+ */
+function hasUpcomingGames(games: Game[]): boolean {
+  if (!games || games.length === 0) return false
+  
+  const now = new Date()
+  const fortyEightHoursFromNow = new Date(now.getTime() + 48 * 60 * 60 * 1000)
+  
+  // Check if any game starts between now and 48 hours from now
+  const upcomingGames = games.filter(game => {
+    const gameTime = new Date(game.commenceTime)
+    return gameTime > now && gameTime < fortyEightHoursFromNow
+  })
+  
+  console.log(`[hasUpcomingGames] Found ${upcomingGames.length} games in next 48 hours out of ${games.length} total`)
+  return upcomingGames.length > 0
+}
+
 export async function getCurrentOdds(): Promise<OddsData> {
   // First, try to get cached data
   console.log('[getCurrentOdds] Checking cache...')
@@ -545,19 +566,28 @@ export async function getCurrentOdds(): Promise<OddsData> {
   console.log(`[getCurrentOdds] Cache result: ${cached ? (cached.games?.length || 0) + ' games' : 'null'}`)
   
   if (cached && cached.games) {
-    // Check if cache is still fresh (less than 4 hours old)
+    // Check if cache is still fresh (less than 2 hours old) - reduced from 4 hours
     const lastUpdated = new Date(cached.lastUpdated)
     const now = new Date()
     const hoursSinceUpdate = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60)
     console.log(`[getCurrentOdds] Cache age: ${hoursSinceUpdate.toFixed(2)} hours`)
     
-    if (hoursSinceUpdate < 4) {
-      // Cache is fresh, return it
+    // SMART STALENESS CHECK:
+    // 1. Time-based: Cache must be less than 2 hours old
+    // 2. Content-based: Cache must have upcoming games (not yesterday's completed games)
+    const isFreshByTime = hoursSinceUpdate < 2
+    const hasUpcoming = hasUpcomingGames(cached.games)
+    
+    console.log(`[getCurrentOdds] Fresh by time: ${isFreshByTime}, Has upcoming games: ${hasUpcoming}`)
+    
+    if (isFreshByTime && hasUpcoming) {
+      // Cache is fresh AND has upcoming games, return it
       console.log(`[getCurrentOdds] Returning cached data with ${cached.games.length} games`)
       return cached
     }
     
-    // Cache is stale, try to fetch new data
+    // Cache is stale (by time OR by content), try to fetch new data
+    console.log(`[getCurrentOdds] Cache stale - fetching fresh data...`)
     try {
       return await fetchAllOdds()
     } catch (error) {
