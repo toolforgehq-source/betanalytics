@@ -1,12 +1,19 @@
 /**
  * Combined Sports Data Module
  * 
- * Merges data from two sources:
- * 1. The Odds API - betting odds, spreads, totals, moneylines
+ * Merges data from multiple sources for comprehensive multi-sport coverage:
+ * 1. The Odds API - betting odds, spreads, totals, moneylines (45+ sports)
  * 2. ESPN API - injuries, lineups, rosters, team records
+ * 3. Player Props - from The Odds API for NBA, NFL, NHL, NCAAF, NCAAB
  * 
  * This gives Claude complete, real-time information to make
  * accurate betting recommendations without relying on training data.
+ * 
+ * COMPREHENSIVE COVERAGE:
+ * - Tier 1: NBA, NFL, NHL, NCAAB, NCAAF, MLB
+ * - Tier 2: EPL, La Liga, Bundesliga, Serie A, Ligue 1, MLS, Champions League
+ * - Tier 3: UFC/MMA, Boxing
+ * - Tier 4: Golf, Tennis, Cricket, Rugby, AFL, F1, NASCAR, and more
  */
 
 import { getCurrentOdds, fetchAllOdds, formatOddsForContext, fetchSportPlayerProps, formatPlayerPropsForContext, type Game, type GamePlayerProps } from './odds'
@@ -67,18 +74,40 @@ function matchGames(oddsGame: Game, espnGame: ESPNGameData): boolean {
 
 /**
  * Map Odds API sport names to ESPN league names
+ * Comprehensive mapping for all supported sports
  */
 function mapSportToLeague(sportName: string): string {
   const mapping: Record<string, string> = {
+    // Tier 1 - Major US Sports
     'NBA': 'NBA',
     'NFL': 'NFL',
     'NCAAF': 'NCAAF',
     'NHL': 'NHL',
     'NCAAB': 'NCAAB',
     'MLB': 'MLB',
-    'MMA/UFC': 'MMA',
-    'MLS': 'MLS',
+    // Tier 2 - Soccer
     'English Premier League': 'EPL',
+    'La Liga': 'ESP.1',
+    'Bundesliga': 'GER.1',
+    'Serie A': 'ITA.1',
+    'Ligue 1': 'FRA.1',
+    'MLS': 'MLS',
+    'UEFA Champions League': 'UEFA.CHAMPIONS',
+    'UEFA Europa League': 'UEFA.EUROPA',
+    'Liga MX': 'MEX.1',
+    'Brazil Serie A': 'BRA.1',
+    'Argentina Primera': 'ARG.1',
+    // Tier 3 - Combat Sports
+    'UFC/MMA': 'MMA',
+    'Boxing': 'BOXING',
+    // Tier 4 - Other Sports
+    'Euroleague': 'EUROLEAGUE',
+    'NBL (Australia)': 'NBL',
+    'AHL': 'AHL',
+    'SHL (Sweden)': 'SHL',
+    'NRL': 'NRL',
+    'AFL': 'AFL',
+    'Six Nations': 'SIXNATIONS',
   }
   return mapping[sportName] || sportName
 }

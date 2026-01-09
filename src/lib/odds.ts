@@ -1,36 +1,111 @@
 /**
  * The Odds API Integration with Redis Caching
  * 
- * Fetches real betting odds from The Odds API for ALL major sports
+ * Fetches real betting odds from The Odds API for 25+ sports
  * and caches them in Redis to stay under API rate limits.
  * 
- * Sports covered: NBA, NFL, NCAAF, NHL, NCAAB, MLB, MMA, Soccer
+ * COMPREHENSIVE MULTI-SPORT COVERAGE:
+ * - Tier 1: NBA, NFL, NHL, NCAAB, NCAAF, MLB (daily US sports)
+ * - Tier 2: Soccer (EPL, La Liga, Bundesliga, Serie A, Ligue 1, MLS, Champions League)
+ * - Tier 3: Combat Sports (UFC/MMA, Boxing)
+ * - Tier 4: Other Sports (Golf, Tennis, Cricket, Rugby, AFL, Esports)
  * 
- * Priority-based fetching to manage API usage:
- * - HIGH: NBA, NFL, NCAAF (most popular, fetch every time)
- * - MEDIUM: NHL, NCAAB, MLB (fetch every time when in season)
- * - LOW: MMA, Soccer (fetch every time but lower priority)
+ * Uses Promise.allSettled for graceful degradation when sources fail.
  */
 
 const ODDS_API_BASE = 'https://api.the-odds-api.com/v4/sports'
 
-// ALL sports to fetch - verified from The Odds API documentation
-// https://the-odds-api.com/sports-odds-data/sports-apis.html
+// Comprehensive sports coverage - organized by tier
+// Tier 1: Daily major US sports (highest priority)
+// Tier 2: Major soccer leagues (high priority)
+// Tier 3: Combat sports and events (medium priority)
+// Tier 4: Other sports (lower priority but still covered)
+
 const ALL_SPORTS = [
-  // HIGH PRIORITY - Most popular US sports
-  { key: 'basketball_nba', name: 'NBA', priority: 'high' },
-  { key: 'americanfootball_nfl', name: 'NFL', priority: 'high' },
-  { key: 'americanfootball_ncaaf', name: 'NCAAF', priority: 'high' },
+  // ============================================
+  // TIER 1: MAJOR US SPORTS (Daily Coverage)
+  // ============================================
+  { key: 'basketball_nba', name: 'NBA', tier: 1, category: 'basketball' },
+  { key: 'americanfootball_nfl', name: 'NFL', tier: 1, category: 'football' },
+  { key: 'icehockey_nhl', name: 'NHL', tier: 1, category: 'hockey' },
+  { key: 'basketball_ncaab', name: 'NCAAB', tier: 1, category: 'basketball' },
+  { key: 'americanfootball_ncaaf', name: 'NCAAF', tier: 1, category: 'football' },
+  { key: 'baseball_mlb', name: 'MLB', tier: 1, category: 'baseball' },
   
-  // MEDIUM PRIORITY - Popular seasonal sports
-  { key: 'icehockey_nhl', name: 'NHL', priority: 'medium' },
-  { key: 'basketball_ncaab', name: 'NCAAB', priority: 'medium' },
-  { key: 'baseball_mlb', name: 'MLB', priority: 'medium' },
+  // ============================================
+  // TIER 2: MAJOR SOCCER LEAGUES
+  // ============================================
+  { key: 'soccer_epl', name: 'English Premier League', tier: 2, category: 'soccer' },
+  { key: 'soccer_spain_la_liga', name: 'La Liga', tier: 2, category: 'soccer' },
+  { key: 'soccer_germany_bundesliga', name: 'Bundesliga', tier: 2, category: 'soccer' },
+  { key: 'soccer_italy_serie_a', name: 'Serie A', tier: 2, category: 'soccer' },
+  { key: 'soccer_france_ligue_one', name: 'Ligue 1', tier: 2, category: 'soccer' },
+  { key: 'soccer_usa_mls', name: 'MLS', tier: 2, category: 'soccer' },
+  { key: 'soccer_uefa_champs_league', name: 'UEFA Champions League', tier: 2, category: 'soccer' },
+  { key: 'soccer_uefa_europa_league', name: 'UEFA Europa League', tier: 2, category: 'soccer' },
+  { key: 'soccer_mexico_ligamx', name: 'Liga MX', tier: 2, category: 'soccer' },
+  { key: 'soccer_brazil_campeonato', name: 'Brazil Serie A', tier: 2, category: 'soccer' },
+  { key: 'soccer_argentina_primera_division', name: 'Argentina Primera', tier: 2, category: 'soccer' },
   
-  // LOW PRIORITY - Other popular sports
-  { key: 'mma_mixed_martial_arts', name: 'MMA/UFC', priority: 'low' },
-  { key: 'soccer_usa_mls', name: 'MLS', priority: 'low' },
-  { key: 'soccer_epl', name: 'English Premier League', priority: 'low' },
+  // ============================================
+  // TIER 3: COMBAT SPORTS & EVENTS
+  // ============================================
+  { key: 'mma_mixed_martial_arts', name: 'UFC/MMA', tier: 3, category: 'combat' },
+  { key: 'boxing_boxing', name: 'Boxing', tier: 3, category: 'combat' },
+  
+  // ============================================
+  // TIER 4: OTHER MAJOR SPORTS
+  // ============================================
+  // Basketball (International)
+  { key: 'basketball_euroleague', name: 'Euroleague', tier: 4, category: 'basketball' },
+  { key: 'basketball_nbl', name: 'NBL (Australia)', tier: 4, category: 'basketball' },
+  
+  // Hockey (International)
+  { key: 'icehockey_sweden_hockey_league', name: 'SHL (Sweden)', tier: 4, category: 'hockey' },
+  { key: 'icehockey_liiga', name: 'Liiga (Finland)', tier: 4, category: 'hockey' },
+  { key: 'icehockey_ahl', name: 'AHL', tier: 4, category: 'hockey' },
+  
+  // Golf (Majors & Tours)
+  { key: 'golf_masters_tournament_winner', name: 'Masters', tier: 4, category: 'golf' },
+  { key: 'golf_pga_championship_winner', name: 'PGA Championship', tier: 4, category: 'golf' },
+  { key: 'golf_us_open_winner', name: 'US Open (Golf)', tier: 4, category: 'golf' },
+  { key: 'golf_the_open_championship_winner', name: 'The Open', tier: 4, category: 'golf' },
+  
+  // Tennis
+  { key: 'tennis_atp_aus_open', name: 'Australian Open', tier: 4, category: 'tennis' },
+  { key: 'tennis_atp_french_open', name: 'French Open', tier: 4, category: 'tennis' },
+  { key: 'tennis_atp_wimbledon', name: 'Wimbledon', tier: 4, category: 'tennis' },
+  { key: 'tennis_atp_us_open', name: 'US Open (Tennis)', tier: 4, category: 'tennis' },
+  
+  // Cricket
+  { key: 'cricket_big_bash', name: 'Big Bash', tier: 4, category: 'cricket' },
+  { key: 'cricket_international_t20', name: 'International T20', tier: 4, category: 'cricket' },
+  { key: 'cricket_odi', name: 'ODI Cricket', tier: 4, category: 'cricket' },
+  { key: 'cricket_ipl', name: 'IPL', tier: 4, category: 'cricket' },
+  
+  // Rugby
+  { key: 'rugbyleague_nrl', name: 'NRL', tier: 4, category: 'rugby' },
+  { key: 'rugbyunion_six_nations', name: 'Six Nations', tier: 4, category: 'rugby' },
+  
+  // Australian Rules
+  { key: 'aussierules_afl', name: 'AFL', tier: 4, category: 'aussierules' },
+  
+  // Motor Sports (futures only typically)
+  { key: 'motorsport_formula_one', name: 'Formula 1', tier: 4, category: 'motorsport' },
+  { key: 'motorsport_nascar', name: 'NASCAR', tier: 4, category: 'motorsport' },
+  
+  // Additional Soccer Leagues
+  { key: 'soccer_netherlands_eredivisie', name: 'Eredivisie', tier: 4, category: 'soccer' },
+  { key: 'soccer_portugal_primeira_liga', name: 'Primeira Liga', tier: 4, category: 'soccer' },
+  { key: 'soccer_belgium_first_div', name: 'Belgian First Div', tier: 4, category: 'soccer' },
+  { key: 'soccer_turkey_super_league', name: 'Turkish Super Lig', tier: 4, category: 'soccer' },
+  { key: 'soccer_australia_aleague', name: 'A-League', tier: 4, category: 'soccer' },
+  { key: 'soccer_japan_j_league', name: 'J-League', tier: 4, category: 'soccer' },
+  { key: 'soccer_korea_kleague1', name: 'K-League', tier: 4, category: 'soccer' },
+  { key: 'soccer_conmebol_copa_libertadores', name: 'Copa Libertadores', tier: 4, category: 'soccer' },
+  
+  // Lacrosse
+  { key: 'lacrosse_ncaa', name: 'NCAA Lacrosse', tier: 4, category: 'lacrosse' },
 ]
 
 // ALL_SPORTS is used directly, no legacy alias needed
@@ -69,6 +144,33 @@ export interface OddsData {
   games: Game[]
   lastUpdated: string
   isStale: boolean
+  coverage?: CoverageReport
+}
+
+// Coverage report for transparency about what data is available
+export interface SportCoverage {
+  key: string
+  name: string
+  tier: number
+  category: string
+  gamesAvailable: number
+  propsAvailable: boolean
+  status: 'active' | 'no_games' | 'error' | 'offseason'
+  error?: string
+}
+
+export interface CoverageReport {
+  timestamp: string
+  totalSports: number
+  activeSports: number
+  totalGames: number
+  sportsCoverage: SportCoverage[]
+  summary: {
+    tier1: { sports: number; games: number }
+    tier2: { sports: number; games: number }
+    tier3: { sports: number; games: number }
+    tier4: { sports: number; games: number }
+  }
 }
 
 // API Response types from The Odds API
@@ -307,7 +409,7 @@ export function getSportTitle(sportKey: string): string {
 
 /**
  * Fetch fresh odds from The Odds API for ALL sports
- * Uses parallel fetching for speed, with graceful error handling
+ * Uses Promise.allSettled for graceful degradation - one failing sport won't break others
  */
 export async function fetchAllOdds(): Promise<OddsData> {
   const apiKey = process.env.ODDS_API_KEY
@@ -321,49 +423,109 @@ export async function fetchAllOdds(): Promise<OddsData> {
     }
   }
   
-  console.log(`■ Fetching odds for ${ALL_SPORTS.length} sports...`)
+  console.log(`■ Fetching odds for ${ALL_SPORTS.length} sports using Promise.allSettled...`)
   
-  // Fetch ALL sports in parallel for speed
+  // Fetch ALL sports in parallel using Promise.allSettled for graceful degradation
   const fetchPromises = ALL_SPORTS.map(async (sport) => {
-    try {
-      const games = await fetchSportOdds(sport.key, sport.name)
-      console.log(`■ Fetched ${games.length} games for ${sport.key}`)
-      return { sport: sport.key, sportName: sport.name, games, error: null }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error'
-      console.error(`■ Failed to fetch ${sport.key}: ${errorMsg}`)
-      return { sport: sport.key, sportName: sport.name, games: [], error: errorMsg }
+    const games = await fetchSportOdds(sport.key, sport.name)
+    return { 
+      sport: sport.key, 
+      sportName: sport.name, 
+      tier: sport.tier,
+      category: sport.category,
+      games 
     }
   })
   
-  const results = await Promise.all(fetchPromises)
+  // Use Promise.allSettled so one failing sport doesn't break the entire fetch
+  const settledResults = await Promise.allSettled(fetchPromises)
   
-  // Aggregate all games
+  // Aggregate all games and build coverage report
   const allGames: Game[] = []
-  const sportsSummary: Record<string, { count: number; error: string | null; status: string }> = {}
+  const sportsCoverage: SportCoverage[] = []
+  const tierSummary = {
+    tier1: { sports: 0, games: 0 },
+    tier2: { sports: 0, games: 0 },
+    tier3: { sports: 0, games: 0 },
+    tier4: { sports: 0, games: 0 },
+  }
   
-  for (const { sport, games, error } of results) {
-    sportsSummary[sport] = {
-      count: games.length,
-      error,
-      status: games.length > 0 ? 'active' : error ? 'error' : 'no_games'
-    }
+  for (let i = 0; i < settledResults.length; i++) {
+    const result = settledResults[i]
+    const sportConfig = ALL_SPORTS[i]
     
-    // Validate and add games
-    for (const game of games) {
-      if (validateGame(game)) {
-        allGames.push(game)
+    if (result.status === 'fulfilled') {
+      const { sport, sportName, tier, category, games } = result.value
+      
+      // Determine status
+      let status: 'active' | 'no_games' | 'error' | 'offseason' = 'no_games'
+      if (games.length > 0) {
+        status = 'active'
       }
+      
+      sportsCoverage.push({
+        key: sport,
+        name: sportName,
+        tier,
+        category,
+        gamesAvailable: games.length,
+        propsAvailable: false, // Will be updated by props fetch
+        status,
+      })
+      
+      // Update tier summary
+      const tierKey = `tier${tier}` as keyof typeof tierSummary
+      if (games.length > 0) {
+        tierSummary[tierKey].sports++
+        tierSummary[tierKey].games += games.length
+      }
+      
+      // Validate and add games
+      for (const game of games) {
+        if (validateGame(game)) {
+          allGames.push(game)
+        }
+      }
+      
+      console.log(`■ ${sportName}: ${games.length} games`)
+    } else {
+      // Promise rejected - sport fetch failed
+      const errorMsg = result.reason instanceof Error ? result.reason.message : 'Unknown error'
+      console.error(`■ Failed to fetch ${sportConfig.key}: ${errorMsg}`)
+      
+      sportsCoverage.push({
+        key: sportConfig.key,
+        name: sportConfig.name,
+        tier: sportConfig.tier,
+        category: sportConfig.category,
+        gamesAvailable: 0,
+        propsAvailable: false,
+        status: 'error',
+        error: errorMsg,
+      })
     }
   }
   
-  console.log('■ Sports Summary:', JSON.stringify(sportsSummary))
-  console.log(`■ Total valid games: ${allGames.length}`)
+  // Build coverage report
+  const activeSports = sportsCoverage.filter(s => s.status === 'active').length
+  const coverage: CoverageReport = {
+    timestamp: new Date().toISOString(),
+    totalSports: ALL_SPORTS.length,
+    activeSports,
+    totalGames: allGames.length,
+    sportsCoverage,
+    summary: tierSummary,
+  }
+  
+  console.log(`■ Coverage: ${activeSports}/${ALL_SPORTS.length} sports active, ${allGames.length} total games`)
+  console.log(`■ Tier 1: ${tierSummary.tier1.sports} sports, ${tierSummary.tier1.games} games`)
+  console.log(`■ Tier 2: ${tierSummary.tier2.sports} sports, ${tierSummary.tier2.games} games`)
   
   const oddsData: OddsData = {
     games: allGames,
     lastUpdated: new Date().toISOString(),
     isStale: false,
+    coverage,
   }
   
   // Cache the fresh data
@@ -420,28 +582,87 @@ export async function getCurrentOdds(): Promise<OddsData> {
 }
 
 /**
+ * Format coverage report for Claude's context
+ * Shows what sports were checked and what data is available
+ */
+export function formatCoverageForContext(coverage: CoverageReport | undefined): string {
+  if (!coverage) {
+    return `\n=== COVERAGE REPORT ===\nNo coverage data available.\n`
+  }
+  
+  const lines: string[] = []
+  lines.push(`\n=== DATA COVERAGE REPORT ===`)
+  lines.push(`Last Updated: ${formatTimestamp(coverage.timestamp)}`)
+  lines.push(`Sports Checked: ${coverage.totalSports} | Active: ${coverage.activeSports} | Total Games: ${coverage.totalGames}`)
+  lines.push(``)
+  
+  // Tier summary
+  lines.push(`TIER SUMMARY:`)
+  lines.push(`  Tier 1 (Major US): ${coverage.summary.tier1.sports} sports active, ${coverage.summary.tier1.games} games`)
+  lines.push(`  Tier 2 (Soccer): ${coverage.summary.tier2.sports} sports active, ${coverage.summary.tier2.games} games`)
+  lines.push(`  Tier 3 (Combat): ${coverage.summary.tier3.sports} sports active, ${coverage.summary.tier3.games} games`)
+  lines.push(`  Tier 4 (Other): ${coverage.summary.tier4.sports} sports active, ${coverage.summary.tier4.games} games`)
+  lines.push(``)
+  
+  // Active sports
+  const activeSports = coverage.sportsCoverage.filter(s => s.status === 'active')
+  if (activeSports.length > 0) {
+    lines.push(`ACTIVE SPORTS WITH GAMES:`)
+    for (const sport of activeSports) {
+      lines.push(`  - ${sport.name}: ${sport.gamesAvailable} games`)
+    }
+    lines.push(``)
+  }
+  
+  // Sports with no games (offseason or no events)
+  const noGamesSports = coverage.sportsCoverage.filter(s => s.status === 'no_games')
+  if (noGamesSports.length > 0) {
+    lines.push(`SPORTS CHECKED (no games today):`)
+    const noGamesNames = noGamesSports.map(s => s.name).join(', ')
+    lines.push(`  ${noGamesNames}`)
+    lines.push(``)
+  }
+  
+  // Errors
+  const errorSports = coverage.sportsCoverage.filter(s => s.status === 'error')
+  if (errorSports.length > 0) {
+    lines.push(`SPORTS WITH ERRORS:`)
+    for (const sport of errorSports) {
+      lines.push(`  - ${sport.name}: ${sport.error || 'Unknown error'}`)
+    }
+    lines.push(``)
+  }
+  
+  return lines.join('\n')
+}
+
+/**
  * Format odds data for Claude's context
  * Creates a readable summary of today's games and odds
  */
 export function formatOddsForContext(oddsData: OddsData): string {
+  // Always include coverage report first for transparency
+  let coverageSection = ''
+  if (oddsData?.coverage) {
+    coverageSection = formatCoverageForContext(oddsData.coverage)
+  }
+  
   if (!oddsData?.games?.length) {
-    return `No games currently available. Last checked: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}
+    return `${coverageSection}
+=== CURRENT BETTING ODDS ===
+No games currently available. Last checked: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}
 
-SPORTS COVERED (currently no active games):
-- NBA (basketball_nba)
-- NFL (americanfootball_nfl)
-- NCAAF (americanfootball_ncaaf)
-- NHL (icehockey_nhl)
-- NCAAB (basketball_ncaab)
-- MLB (baseball_mlb) - seasonal
-- MMA/UFC (mma_mixed_martial_arts)
-- MLS (soccer_usa_mls) - seasonal
-- English Premier League (soccer_epl)
+COMPREHENSIVE SPORTS COVERAGE (${ALL_SPORTS.length} sports monitored):
+Tier 1 - Major US Sports: NBA, NFL, NHL, NCAAB, NCAAF, MLB
+Tier 2 - Soccer: EPL, La Liga, Bundesliga, Serie A, Ligue 1, MLS, Champions League, Europa League, Liga MX, Brazil Serie A, Argentina Primera
+Tier 3 - Combat Sports: UFC/MMA, Boxing
+Tier 4 - Other: Euroleague, NBL, AHL, SHL, Golf Majors, Tennis Grand Slams, Cricket (Big Bash, T20, ODI, IPL), Rugby (NRL, Six Nations), AFL, F1, NASCAR, and more
 
-Note: Some sports may be in offseason. Check back during their active seasons.`
+Note: Some sports may be in offseason or have no events scheduled today. The coverage report above shows exactly what was checked.`
   }
   
   const lines: string[] = []
+  lines.push(coverageSection)
   lines.push(`=== CURRENT BETTING ODDS ===`)
   lines.push(`Last Updated: ${formatTimestamp(oddsData.lastUpdated)}${oddsData.isStale ? ' (STALE - may be outdated)' : ''}`)
   lines.push('')
@@ -455,24 +676,35 @@ Note: Some sports may be in offseason. Check back during their active seasons.`
   }
   
   // Show summary of available sports first
-  lines.push(`AVAILABLE SPORTS TODAY:`)
+  lines.push(`AVAILABLE SPORTS TODAY (${gamesBySport.size} sports with games):`)
   const sportCounts: string[] = []
   Array.from(gamesBySport.entries()).forEach(([sport, games]) => {
-    sportCounts.push(`${sport}: ${games.length} games`)
+    sportCounts.push(`${sport}: ${games.length}`)
   })
   lines.push(sportCounts.join(' | '))
-  lines.push(`Total: ${oddsData.games.length} games across ${gamesBySport.size} sports`)
+  lines.push(`Total: ${oddsData.games.length} games`)
   lines.push('')
   
-  Array.from(gamesBySport.entries()).forEach(([sport, games]) => {
+  // Sort sports by tier (Tier 1 first)
+  const sportOrder = ['NBA', 'NFL', 'NHL', 'NCAAB', 'NCAAF', 'MLB', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1', 'MLS', 'UEFA Champions League', 'UFC/MMA', 'Boxing']
+  const sortedSports = Array.from(gamesBySport.entries()).sort((a, b) => {
+    const aIndex = sportOrder.indexOf(a[0])
+    const bIndex = sportOrder.indexOf(b[0])
+    if (aIndex === -1 && bIndex === -1) return a[0].localeCompare(b[0])
+    if (aIndex === -1) return 1
+    if (bIndex === -1) return -1
+    return aIndex - bIndex
+  })
+  
+  for (const [sport, games] of sortedSports) {
     lines.push(`--- ${sport} (${games.length} games) ---`)
     
-    // Sort games by commence time (soonest first) and show up to 20 games per sport
+    // Sort games by commence time (soonest first) and show up to 15 games per sport
     const sortedGames = [...games].sort((a, b) => 
       new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
     )
     
-    for (const game of sortedGames.slice(0, 20)) { // Increased to 20 games per sport
+    for (const game of sortedGames.slice(0, 15)) {
       lines.push('')
       lines.push(`${game.awayTeam} @ ${game.homeTeam}`)
       lines.push(`Game Time: ${formatGameTime(game.commenceTime)}`)
@@ -496,8 +728,12 @@ Note: Some sports may be in offseason. Check back during their active seasons.`
       }
     }
     
+    if (games.length > 15) {
+      lines.push(`... and ${games.length - 15} more ${sport} games`)
+    }
+    
     lines.push('')
-  })
+  }
   
   return lines.join('\n')
 }
