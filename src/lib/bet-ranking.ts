@@ -45,6 +45,22 @@ export interface RankedBet {
   calculatedAt: string
 }
 
+export interface FallbackBet {
+  gameId: string
+  sport: string
+  sportName: string
+  homeTeam: string
+  awayTeam: string
+  commenceTime: string
+  team: string
+  consensusProbability: number
+  bestPrice: number
+  bestBook: string
+  impliedProbability: number
+  edge: number
+  disqualifyReasons: string[]
+}
+
 export interface BestBetResult {
   bestBet: RankedBet | null
   runnerUp: RankedBet | null
@@ -53,6 +69,9 @@ export interface BestBetResult {
   gamesAnalyzed: number
   gamesQualified: number
   reason: string | null  // Why no best bet if null
+  // Fallback data when no bets qualify
+  closestMisses: FallbackBet[]  // Games that nearly qualified (reasonable odds, small edge)
+  mostLikelyWinners: FallbackBet[]  // Highest probability games (may have negative edge)
 }
 
 export interface ParlayResult {
@@ -278,17 +297,86 @@ function analyzeGame(game: Game): RankedBet[] {
 }
 
 /**
+ * Analyze a single game WITHOUT filters - returns all bets with disqualify reasons
+ * Used for computing fallback data (closest misses, most likely winners)
+ */
+function analyzeGameUnfiltered(game: Game): FallbackBet[] {
+  const fallbackBets: FallbackBet[] = []
+  
+  // Skip games that have already started
+  if (new Date(game.commenceTime) < new Date()) {
+    return []
+  }
+  
+  // Must have moneyline odds
+  if (!game.moneylines || game.moneylines.length === 0) {
+    return []
+  }
+  
+  // Skip 3-way markets (soccer)
+  if (isThreeWayMarket(game)) {
+    return []
+  }
+  
+  // Analyze both teams
+  for (const team of [game.homeTeam, game.awayTeam]) {
+    const consensus = calculateConsensusProbability(game, team)
+    if (!consensus) continue
+    
+    const bestPrice = findBestPrice(game, team)
+    if (!bestPrice) continue
+    
+    const edge = consensus.consensusProb - bestPrice.impliedProb
+    const disqualifyReasons: string[] = []
+    
+    // Check why it doesn't qualify
+    if (bestPrice.price < MAX_JUICE_ODDS) {
+      disqualifyReasons.push(`Juice ${bestPrice.price} worse than -250 max`)
+    }
+    if (consensus.consensusProb < MIN_PROBABILITY) {
+      disqualifyReasons.push(`Probability ${(consensus.consensusProb * 100).toFixed(1)}% < 55% min`)
+    }
+    if (edge < MIN_EDGE) {
+      disqualifyReasons.push(`Edge ${(edge * 100).toFixed(1)}% < 3% min`)
+    }
+    
+    fallbackBets.push({
+      gameId: game.id,
+      sport: game.sport,
+      sportName: game.sportName,
+      homeTeam: game.homeTeam,
+      awayTeam: game.awayTeam,
+      commenceTime: game.commenceTime,
+      team,
+      consensusProbability: Math.round(consensus.consensusProb * 1000) / 10,
+      bestPrice: bestPrice.price,
+      bestBook: bestPrice.book,
+      impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
+      edge: Math.round(edge * 1000) / 10,
+      disqualifyReasons
+    })
+  }
+  
+  return fallbackBets
+}
+
+/**
  * Compute the Best Bet of the Day from all available games
  * This is the main entry point - call this on each cron refresh
  */
 export function computeBestBets(games: Game[]): BestBetResult {
   const now = new Date().toISOString()
   const allRankedBets: RankedBet[] = []
+  const allUnfilteredBets: FallbackBet[] = []
   
   // Analyze all games
   for (const game of games) {
     const bets = analyzeGame(game)
     allRankedBets.push(...bets)
+    
+    // Also collect unfiltered bets for fallback data
+    const unfilteredBets = analyzeGameUnfiltered(game)
+    allUnfilteredBets.push(...unfilteredBets)
   }
   
   // Sort by score (desc), then by game time (asc) for stable tiebreaker
@@ -309,6 +397,26 @@ export function computeBestBets(games: Game[]): BestBetResult {
     }
   }
   
+  // Compute fallback data (only relevant when no bets qualify)
+  let closestMisses: FallbackBet[] = []
+  let mostLikelyWinners: FallbackBet[] = []
+  
+  if (!bestBet && allUnfilteredBets.length > 0) {
+    // Closest misses: games with reasonable odds (-250 or better) and small positive or neutral edge
+    // These are games that ALMOST qualified
+    closestMisses = allUnfilteredBets
+      .filter(b => b.bestPrice >= MAX_JUICE_ODDS && b.edge >= -1) // Reasonable odds, edge >= -1%
+      .sort((a, b) => b.edge - a.edge) // Sort by edge (highest first)
+      .slice(0, 3)
+    
+    // Most likely winners: highest probability games (may have negative edge)
+    // Filter to reasonable odds only (-250 or better) to avoid extreme favorites
+    mostLikelyWinners = allUnfilteredBets
+      .filter(b => b.bestPrice >= MAX_JUICE_ODDS) // Reasonable odds only
+      .sort((a, b) => b.consensusProbability - a.consensusProbability) // Sort by probability
+      .slice(0, 3)
+  }
+  
   return {
     bestBet,
     runnerUp,
@@ -316,7 +424,9 @@ export function computeBestBets(games: Game[]): BestBetResult {
     calculatedAt: now,
     gamesAnalyzed: games.length,
     gamesQualified: allRankedBets.length,
-    reason
+    reason,
+    closestMisses,
+    mostLikelyWinners
   }
 }
 
@@ -333,10 +443,49 @@ export function formatBestBetForContext(result: BestBetResult): string {
   if (!result.bestBet) {
     lines.push(`NO BEST BET AVAILABLE: ${result.reason}`)
     lines.push('')
-    lines.push('When user asks for "best bet", explain that no games currently meet our criteria:')
-    lines.push('- Minimum 55% win probability (market consensus)')
-    lines.push('- Minimum 3% edge (better price than fair value)')
-    lines.push('- Maximum -250 juice (reasonable odds)')
+    lines.push('When user asks for "best bet", respond with this two-tier message:')
+    lines.push('')
+    lines.push('TIER 1 - EXPLAIN WHY NO PICK:')
+    lines.push('"No high-confidence value bets today. Our criteria (55% win probability, 3% edge, max -250 juice) ensure we only recommend +EV plays."')
+    lines.push('')
+    lines.push('"Today\'s market: All high-probability games are heavy favorites with negative edge (you\'d be paying a premium, not getting value)."')
+    lines.push('')
+    lines.push('TIER 2 - OFFER FALLBACK OPTIONS:')
+    lines.push('"If you still want action, I can show you:"')
+    lines.push('- "Closest misses - Games that nearly qualified (reasonable odds, small edge)"')
+    lines.push('- "Most likely winners - High probability picks, but NOT value bets (informational only, not recommendations)"')
+    lines.push('')
+    lines.push('"Which would you like to see?"')
+    lines.push('')
+    
+    // Include fallback data for when user asks
+    if (result.closestMisses.length > 0) {
+      lines.push('=== CLOSEST MISSES (for user who asks) ===')
+      lines.push('IMPORTANT: These are NOT recommendations. Label them as "informational only".')
+      for (const miss of result.closestMisses) {
+        lines.push(`- ${miss.team} ML @ ${formatOdds(miss.bestPrice)} (${miss.bestBook})`)
+        lines.push(`  Game: ${miss.awayTeam} @ ${miss.homeTeam} | ${miss.sportName}`)
+        lines.push(`  Probability: ${miss.consensusProbability}% | Edge: ${miss.edge}%`)
+        lines.push(`  Why disqualified: ${miss.disqualifyReasons.join(', ')}`)
+      }
+      lines.push('')
+    }
+    
+    if (result.mostLikelyWinners.length > 0) {
+      lines.push('=== MOST LIKELY WINNERS (for user who asks) ===')
+      lines.push('IMPORTANT: These are NOT recommendations. They may have NEGATIVE edge.')
+      lines.push('Label them as "informational only - not a betting recommendation".')
+      for (const winner of result.mostLikelyWinners) {
+        lines.push(`- ${winner.team} ML @ ${formatOdds(winner.bestPrice)} (${winner.bestBook})`)
+        lines.push(`  Game: ${winner.awayTeam} @ ${winner.homeTeam} | ${winner.sportName}`)
+        lines.push(`  Probability: ${winner.consensusProbability}% | Edge: ${winner.edge}%`)
+        if (winner.edge < 0) {
+          lines.push(`  WARNING: Negative edge - you are paying a premium for this bet`)
+        }
+      }
+      lines.push('')
+    }
+    
     return lines.join('\n')
   }
   
@@ -550,7 +699,19 @@ export function formatParlayForContext(parlay: ParlayResult): string {
   if (!parlay.safeParlay) {
     lines.push(`NO PARLAY AVAILABLE: ${parlay.reason}`)
     lines.push('')
-    lines.push('When user asks for a parlay, explain that not enough games meet our criteria.')
+    lines.push('When user asks for a parlay, respond with this two-tier message:')
+    lines.push('')
+    lines.push('TIER 1 - EXPLAIN WHY NO PARLAY:')
+    lines.push('"No parlay available today. Parlays require at least 2 games that meet our value criteria (55% probability, 3% edge, max -250 juice)."')
+    lines.push('')
+    lines.push('"Today\'s market doesn\'t have enough qualifying games to build a responsible parlay."')
+    lines.push('')
+    lines.push('TIER 2 - OFFER ALTERNATIVES:')
+    lines.push('"If you still want a parlay, I can show you:"')
+    lines.push('- "Most likely winners parlay - High probability picks combined, but may have negative edge (informational only)"')
+    lines.push('')
+    lines.push('"Would you like to see that? Note: This is NOT a recommendation - just informational."')
+    lines.push('')
     return lines.join('\n')
   }
   
@@ -932,7 +1093,20 @@ export function formatBestPropForContext(result: BestPropResult): string {
   if (!result.bestProp) {
     lines.push(`NO BEST PROP AVAILABLE: ${result.reason}`)
     lines.push('')
-    lines.push('When user asks for a prop bet, explain that no props currently meet our criteria.')
+    lines.push('When user asks for a prop bet, respond with this two-tier message:')
+    lines.push('')
+    lines.push('TIER 1 - EXPLAIN WHY NO PROP:')
+    lines.push('"No high-confidence prop bets today. Our criteria (55% probability, 3% edge, max -250 juice) ensure we only recommend +EV player props."')
+    lines.push('')
+    lines.push('"Today\'s prop market doesn\'t have any lines with enough edge to recommend."')
+    lines.push('')
+    lines.push('TIER 2 - OFFER ALTERNATIVES:')
+    lines.push('"If you still want a prop bet, I can show you:"')
+    lines.push('- "Closest misses - Props that nearly qualified (reasonable odds, small edge)"')
+    lines.push('- "Popular props - High-volume props that many bettors are taking (informational only)"')
+    lines.push('')
+    lines.push('"Which would you like to see? Note: These are NOT recommendations - just informational."')
+    lines.push('')
     return lines.join('\n')
   }
   
