@@ -10,7 +10,7 @@ import {
   computeBestProp,
   cacheBestProp
 } from "@/lib/bet-ranking"
-import { storePick, getAllPicks } from "@/lib/pick-tracking"
+import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
 
 /**
  * Cron endpoint to fetch fresh odds data and compute best bet
@@ -116,6 +116,11 @@ export async function GET(request: Request) {
       }
     }
     
+    // Auto-grade any pending picks that have completed
+    console.log("Auto-grading pending picks...")
+    const gradingResult = await autoGradePicks()
+    console.log(`Auto-grading complete: ${gradingResult.graded} graded, ${gradingResult.errors} errors`)
+    
     return NextResponse.json({
       success: true,
       gamesCount: oddsData.games.length,
@@ -128,7 +133,12 @@ export async function GET(request: Request) {
       } : null,
       qualifiedBets: bestBetResult.gamesQualified,
       pickStored,
-      message: `Successfully fetched odds for ${oddsData.games.length} games, best bet: ${bestBetResult.bestBet?.team || 'none'}`
+      grading: {
+        picksGraded: gradingResult.graded,
+        errors: gradingResult.errors,
+        pendingPicks: gradingResult.pending
+      },
+      message: `Successfully fetched odds for ${oddsData.games.length} games, best bet: ${bestBetResult.bestBet?.team || 'none'}, graded ${gradingResult.graded} picks`
     })
     
   } catch (error) {

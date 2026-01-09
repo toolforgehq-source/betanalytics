@@ -375,3 +375,199 @@ export async function getPendingPicksToGrade(): Promise<StoredPick[]> {
     return now > gameEnd
   })
 }
+
+// ============================================
+// AUTO-GRADING SYSTEM
+// ============================================
+
+/**
+ * Score data from The Odds API
+ */
+interface GameScore {
+  id: string
+  sport_key: string
+  sport_title: string
+  commence_time: string
+  completed: boolean
+  home_team: string
+  away_team: string
+  scores: { name: string; score: string }[] | null
+  last_update: string | null
+}
+
+/**
+ * Fetch scores for a specific sport from The Odds API
+ */
+async function fetchSportScores(sportKey: string): Promise<GameScore[]> {
+  const apiKey = process.env.ODDS_API_KEY
+  if (!apiKey) {
+    console.error('[fetchSportScores] ODDS_API_KEY not configured')
+    return []
+  }
+  
+  try {
+    // Fetch scores from the last 3 days
+    const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${apiKey}&daysFrom=3`
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store'
+    })
+    
+    if (!response.ok) {
+      console.error(`[fetchSportScores] API error for ${sportKey}: ${response.status}`)
+      return []
+    }
+    
+    return await response.json()
+  } catch (error) {
+    console.error(`[fetchSportScores] Error fetching ${sportKey} scores:`, error)
+    return []
+  }
+}
+
+/**
+ * Determine if a moneyline pick won based on final scores
+ */
+function gradeMoneylinePick(
+  pick: StoredPick,
+  homeScore: number,
+  awayScore: number
+): 'won' | 'lost' | 'push' {
+  const pickedTeam = pick.team
+  const isHome = pickedTeam === pick.homeTeam
+  
+  if (homeScore === awayScore) {
+    // Tie game (rare in most sports, but possible in soccer)
+    return 'push'
+  }
+  
+  const homeWon = homeScore > awayScore
+  
+  if (isHome) {
+    return homeWon ? 'won' : 'lost'
+  } else {
+    return homeWon ? 'lost' : 'won'
+  }
+}
+
+/**
+ * Auto-grade all pending picks using scores from The Odds API
+ * Returns the number of picks graded
+ */
+export async function autoGradePicks(): Promise<{
+  graded: number
+  errors: number
+  pending: number
+  details: string[]
+}> {
+  const result = {
+    graded: 0,
+    errors: 0,
+    pending: 0,
+    details: [] as string[]
+  }
+  
+  // Get all pending picks that should be graded
+  const pendingPicks = await getPendingPicksToGrade()
+  
+  if (pendingPicks.length === 0) {
+    result.details.push('No pending picks to grade')
+    return result
+  }
+  
+  result.pending = pendingPicks.length
+  result.details.push(`Found ${pendingPicks.length} pending picks to grade`)
+  
+  // Group picks by sport to minimize API calls
+  const picksBySport = new Map<string, StoredPick[]>()
+  for (const pick of pendingPicks) {
+    const existing = picksBySport.get(pick.sport) || []
+    existing.push(pick)
+    picksBySport.set(pick.sport, existing)
+  }
+  
+  // Fetch scores for each sport and grade picks
+  const sportEntries = Array.from(picksBySport.entries())
+  for (const [sport, picks] of sportEntries) {
+    result.details.push(`Fetching scores for ${sport}...`)
+    const scores = await fetchSportScores(sport)
+    
+    if (scores.length === 0) {
+      result.details.push(`No scores available for ${sport}`)
+      continue
+    }
+    
+    // Create a map of game ID to score data
+    const scoreMap = new Map<string, GameScore>()
+    for (const score of scores) {
+      scoreMap.set(score.id, score)
+    }
+    
+    // Grade each pick
+    for (const pick of picks) {
+      const gameScore = scoreMap.get(pick.gameId)
+      
+      if (!gameScore) {
+        result.details.push(`No score found for game ${pick.gameId} (${pick.awayTeam} @ ${pick.homeTeam})`)
+        continue
+      }
+      
+      if (!gameScore.completed) {
+        result.details.push(`Game ${pick.gameId} not yet completed`)
+        continue
+      }
+      
+      if (!gameScore.scores || gameScore.scores.length < 2) {
+        result.details.push(`Invalid scores for game ${pick.gameId}`)
+        result.errors++
+        continue
+      }
+      
+      // Extract scores
+      const homeScoreData = gameScore.scores.find(s => s.name === gameScore.home_team)
+      const awayScoreData = gameScore.scores.find(s => s.name === gameScore.away_team)
+      
+      if (!homeScoreData || !awayScoreData) {
+        result.details.push(`Could not match team names for game ${pick.gameId}`)
+        result.errors++
+        continue
+      }
+      
+      const homeScore = parseInt(homeScoreData.score, 10)
+      const awayScore = parseInt(awayScoreData.score, 10)
+      
+      if (isNaN(homeScore) || isNaN(awayScore)) {
+        result.details.push(`Invalid score values for game ${pick.gameId}`)
+        result.errors++
+        continue
+      }
+      
+      // Grade based on bet type
+      let gradeResult: 'won' | 'lost' | 'push'
+      let actualResult: string
+      
+      if (pick.betType === 'moneyline') {
+        gradeResult = gradeMoneylinePick(pick, homeScore, awayScore)
+        actualResult = `${gameScore.away_team} ${awayScore} - ${gameScore.home_team} ${homeScore}`
+      } else {
+        // For now, only grade moneyline bets
+        // Spread and total grading would require storing the line at time of pick
+        result.details.push(`Skipping ${pick.betType} bet for ${pick.gameId} (only moneyline auto-grading supported)`)
+        continue
+      }
+      
+      // Update the pick
+      const success = await gradePick(pick.id, gradeResult, actualResult)
+      
+      if (success) {
+        result.graded++
+        result.details.push(`Graded ${pick.team}: ${gradeResult.toUpperCase()} (${actualResult})`)
+      } else {
+        result.errors++
+        result.details.push(`Failed to grade pick ${pick.id}`)
+      }
+    }
+  }
+  
+  return result
+}
