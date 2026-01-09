@@ -21,7 +21,17 @@ import { getCachedESPNData, formatESPNForContext, type ESPNGameData, type ESPNIn
 import { getWeatherForGames, formatWeatherForContext } from './weather'
 import { getCachedSoccerStats, formatSoccerStatsForContext } from './soccer-stats'
 import { getLineMovement, formatLineMovementForContext } from './line-movement'
-import { getCachedBestBet, computeBestBets, formatBestBetForContext } from './bet-ranking'
+import { 
+  getCachedBestBet, 
+  computeBestBets, 
+  formatBestBetForContext,
+  getCachedParlay,
+  computeParlayOfTheDay,
+  formatParlayForContext,
+  getCachedSportBets,
+  computeSportBestBets,
+  formatSportBestBetsForContext
+} from './bet-ranking'
 import { getTrackRecord, formatTrackRecordForContext } from './pick-tracking'
 
 export interface EnrichedGame extends Game {
@@ -200,17 +210,25 @@ export async function formatCombinedDataForContext(): Promise<string> {
     .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.sportName))
     .map(g => ({ id: g.id, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.sportName }))
   
-  // Fetch weather, soccer stats, line movement, best bet, and track record in parallel
-  const [weatherMap, soccerStats, lineMovement, cachedBestBet, trackRecord] = await Promise.all([
+  // Fetch weather, soccer stats, line movement, best bet, parlay, sport bets, and track record in parallel
+  const [weatherMap, soccerStats, lineMovement, cachedBestBet, cachedParlay, cachedSportBets, trackRecord] = await Promise.all([
     getWeatherForGames(outdoorGames).catch(() => new Map()),
     getCachedSoccerStats().catch(() => ({ leagues: [], lastUpdated: new Date().toISOString(), error: 'Failed to fetch' })),
     getLineMovement(oddsData.games).catch(() => []),
     getCachedBestBet().catch(() => null),
+    getCachedParlay().catch(() => null),
+    getCachedSportBets().catch(() => null),
     getTrackRecord().catch(() => null)
   ])
   
   // If no cached best bet, compute it now
   const bestBetResult = cachedBestBet || computeBestBets(oddsData.games)
+  
+  // If no cached parlay, compute it now
+  const parlayResult = cachedParlay || computeParlayOfTheDay(bestBetResult.allRankedBets)
+  
+  // If no cached sport bets, compute them now
+  const sportBets = cachedSportBets || computeSportBestBets(bestBetResult.allRankedBets)
   
   const lines: string[] = []
   
@@ -221,6 +239,13 @@ export async function formatCombinedDataForContext(): Promise<string> {
   // BEST BET SECOND - This is the most important recommendation
   lines.push(formatBestBetForContext(bestBetResult))
   lines.push('')
+  
+  // PARLAY OF THE DAY - For users who want multi-leg bets
+  lines.push(formatParlayForContext(parlayResult))
+  lines.push('')
+  
+  // SPORT-SPECIFIC BEST BETS - For users asking about specific sports
+  lines.push(formatSportBestBetsForContext(sportBets))
   lines.push('')
   
   // Header with data freshness info

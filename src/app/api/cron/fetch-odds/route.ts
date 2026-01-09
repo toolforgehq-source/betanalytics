@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server"
 import { fetchAllOdds } from "@/lib/odds"
-import { computeBestBets, cacheBestBet } from "@/lib/bet-ranking"
+import { 
+  computeBestBets, 
+  cacheBestBet, 
+  computeParlayOfTheDay, 
+  cacheParlay,
+  computeSportBestBets,
+  cacheSportBets
+} from "@/lib/bet-ranking"
 import { storePick, getAllPicks } from "@/lib/pick-tracking"
 
 /**
@@ -48,6 +55,18 @@ export async function GET(request: Request) {
     await cacheBestBet(bestBetResult)
     
     console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)
+    
+    // Compute and cache parlay of the day
+    console.log("Computing parlay of the day...")
+    const parlayResult = computeParlayOfTheDay(bestBetResult.allRankedBets)
+    await cacheParlay(parlayResult)
+    console.log(`Parlay computed: ${parlayResult.safeParlay ? '2-leg safe parlay ready' : 'no parlay available'}`)
+    
+    // Compute and cache sport-specific best bets
+    console.log("Computing sport-specific best bets...")
+    const sportBets = computeSportBestBets(bestBetResult.allRankedBets)
+    await cacheSportBets(sportBets)
+    console.log(`Sport bets computed: ${Object.keys(sportBets).length} sports`)
     
     // Store the best bet pick for track record (if we have one and it's a new game)
     let pickStored = false

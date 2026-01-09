@@ -55,6 +55,18 @@ export interface BestBetResult {
   reason: string | null  // Why no best bet if null
 }
 
+export interface ParlayResult {
+  safeParlay: RankedBet[] | null      // 2-leg parlay with highest combined probability
+  aggressiveParlay: RankedBet[] | null // 3-leg parlay with good value
+  combinedProbability: number | null   // Combined probability of safe parlay
+  calculatedAt: string
+  reason: string | null
+}
+
+export interface SportBestBets {
+  [sportName: string]: RankedBet | null
+}
+
 // Minimum thresholds
 const MIN_PROBABILITY = 0.55      // 55% minimum win probability
 const MIN_EDGE = 0.03             // 3% minimum edge
@@ -450,6 +462,259 @@ export async function getCachedBestBet(): Promise<BestBetResult | null> {
     return JSON.parse(data.result) as BestBetResult
   } catch (error) {
     console.error('[getCachedBestBet] Error getting cached best bet:', error)
+    return null
+  }
+}
+
+/**
+ * Compute Parlay of the Day from ranked bets
+ * Safe Parlay: 2 legs from different games with highest combined probability
+ * Aggressive Parlay: 3 legs with good value
+ */
+export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult {
+  const now = new Date().toISOString()
+  
+  if (allRankedBets.length < 2) {
+    return {
+      safeParlay: null,
+      aggressiveParlay: null,
+      combinedProbability: null,
+      calculatedAt: now,
+      reason: 'Not enough qualified bets for a parlay (need at least 2)'
+    }
+  }
+  
+  // Filter to only include bets from different games
+  // Sort by probability (highest first)
+  const sortedBets = [...allRankedBets].sort((a, b) => b.consensusProbability - a.consensusProbability)
+  
+  // Build safe parlay (2 legs) - pick top 2 from different games
+  const safeParlay: RankedBet[] = []
+  const usedGameIds = new Set<string>()
+  
+  for (const bet of sortedBets) {
+    if (usedGameIds.has(bet.gameId)) continue
+    safeParlay.push(bet)
+    usedGameIds.add(bet.gameId)
+    if (safeParlay.length === 2) break
+  }
+  
+  // Build aggressive parlay (3 legs) - continue from safe parlay
+  const aggressiveParlay = [...safeParlay]
+  for (const bet of sortedBets) {
+    if (usedGameIds.has(bet.gameId)) continue
+    aggressiveParlay.push(bet)
+    usedGameIds.add(bet.gameId)
+    if (aggressiveParlay.length === 3) break
+  }
+  
+  // Calculate combined probability (multiply individual probabilities)
+  const safeCombinedProb = safeParlay.length === 2
+    ? (safeParlay[0].consensusProbability / 100) * (safeParlay[1].consensusProbability / 100) * 100
+    : null
+  
+  return {
+    safeParlay: safeParlay.length === 2 ? safeParlay : null,
+    aggressiveParlay: aggressiveParlay.length === 3 ? aggressiveParlay : null,
+    combinedProbability: safeCombinedProb ? Math.round(safeCombinedProb * 10) / 10 : null,
+    calculatedAt: now,
+    reason: safeParlay.length < 2 ? 'Not enough bets from different games' : null
+  }
+}
+
+/**
+ * Compute best bet for each sport
+ */
+export function computeSportBestBets(allRankedBets: RankedBet[]): SportBestBets {
+  const sportBets: SportBestBets = {}
+  
+  // Group by sport and pick the best for each
+  for (const bet of allRankedBets) {
+    if (!sportBets[bet.sportName] || bet.score > sportBets[bet.sportName]!.score) {
+      sportBets[bet.sportName] = bet
+    }
+  }
+  
+  return sportBets
+}
+
+/**
+ * Format parlay result for Claude's context
+ */
+export function formatParlayForContext(parlay: ParlayResult): string {
+  const lines: string[] = []
+  
+  lines.push('=== PRE-COMPUTED PARLAY OF THE DAY ===')
+  lines.push('')
+  
+  if (!parlay.safeParlay) {
+    lines.push(`NO PARLAY AVAILABLE: ${parlay.reason}`)
+    lines.push('')
+    lines.push('When user asks for a parlay, explain that not enough games meet our criteria.')
+    return lines.join('\n')
+  }
+  
+  lines.push('SAFE PARLAY (2 Legs) - Recommended:')
+  lines.push(`Combined Win Probability: ${parlay.combinedProbability}%`)
+  lines.push('')
+  
+  for (let i = 0; i < parlay.safeParlay.length; i++) {
+    const leg = parlay.safeParlay[i]
+    lines.push(`Leg ${i + 1}: ${leg.team} ML (${leg.consensusProbability}%)`)
+    lines.push(`  Game: ${leg.awayTeam} @ ${leg.homeTeam}`)
+    lines.push(`  Best Price: ${formatOdds(leg.bestPrice)} at ${leg.bestBook}`)
+  }
+  
+  if (parlay.aggressiveParlay) {
+    lines.push('')
+    lines.push('AGGRESSIVE PARLAY (3 Legs) - Higher Risk/Reward:')
+    const aggCombinedProb = parlay.aggressiveParlay.reduce((acc, leg) => acc * (leg.consensusProbability / 100), 1) * 100
+    lines.push(`Combined Win Probability: ${Math.round(aggCombinedProb * 10) / 10}%`)
+    lines.push('')
+    
+    for (let i = 0; i < parlay.aggressiveParlay.length; i++) {
+      const leg = parlay.aggressiveParlay[i]
+      lines.push(`Leg ${i + 1}: ${leg.team} ML (${leg.consensusProbability}%)`)
+    }
+  }
+  
+  lines.push('')
+  lines.push('IMPORTANT: When user asks for a parlay, present the SAFE PARLAY above.')
+  lines.push('Explain that parlay odds vary by sportsbook - recommend placing at one book.')
+  
+  return lines.join('\n')
+}
+
+/**
+ * Format sport-specific best bets for Claude's context
+ */
+export function formatSportBestBetsForContext(sportBets: SportBestBets): string {
+  const lines: string[] = []
+  
+  lines.push('=== SPORT-SPECIFIC BEST BETS ===')
+  lines.push('')
+  lines.push('When user asks for "best NBA bet" or "best NFL bet", use these:')
+  lines.push('')
+  
+  const sports = Object.keys(sportBets).sort()
+  
+  if (sports.length === 0) {
+    lines.push('No sport-specific bets available.')
+    return lines.join('\n')
+  }
+  
+  for (const sport of sports) {
+    const bet = sportBets[sport]
+    if (!bet) continue
+    
+    lines.push(`${sport.toUpperCase()}:`)
+    lines.push(`  ${bet.team} ML @ ${formatOdds(bet.bestPrice)}`)
+    lines.push(`  Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
+    lines.push(`  Probability: ${bet.consensusProbability}% | Edge: ${bet.edge}%`)
+    lines.push('')
+  }
+  
+  return lines.join('\n')
+}
+
+// Cache keys for parlay and sport bets
+const PARLAY_CACHE_KEY = 'betanalytics:parlay'
+const SPORT_BETS_CACHE_KEY = 'betanalytics:sport-bets'
+
+/**
+ * Cache parlay result
+ */
+export async function cacheParlay(parlay: ParlayResult): Promise<void> {
+  const redis = await getRedisClient()
+  if (!redis) return
+  
+  try {
+    await fetch(`${redis.url}/set/${PARLAY_CACHE_KEY}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(JSON.stringify(parlay))
+    })
+    
+    await fetch(`${redis.url}/expire/${PARLAY_CACHE_KEY}/${4 * 60 * 60}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+  } catch (error) {
+    console.error('[cacheParlay] Error:', error)
+  }
+}
+
+/**
+ * Get cached parlay
+ */
+export async function getCachedParlay(): Promise<ParlayResult | null> {
+  const redis = await getRedisClient()
+  if (!redis) return null
+  
+  try {
+    const response = await fetch(`${redis.url}/get/${PARLAY_CACHE_KEY}`, {
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    if (!response.ok) return null
+    const data = await response.json()
+    if (!data.result) return null
+    
+    return JSON.parse(data.result) as ParlayResult
+  } catch (error) {
+    console.error('[getCachedParlay] Error:', error)
+    return null
+  }
+}
+
+/**
+ * Cache sport-specific bets
+ */
+export async function cacheSportBets(sportBets: SportBestBets): Promise<void> {
+  const redis = await getRedisClient()
+  if (!redis) return
+  
+  try {
+    await fetch(`${redis.url}/set/${SPORT_BETS_CACHE_KEY}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(JSON.stringify(sportBets))
+    })
+    
+    await fetch(`${redis.url}/expire/${SPORT_BETS_CACHE_KEY}/${4 * 60 * 60}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+  } catch (error) {
+    console.error('[cacheSportBets] Error:', error)
+  }
+}
+
+/**
+ * Get cached sport-specific bets
+ */
+export async function getCachedSportBets(): Promise<SportBestBets | null> {
+  const redis = await getRedisClient()
+  if (!redis) return null
+  
+  try {
+    const response = await fetch(`${redis.url}/get/${SPORT_BETS_CACHE_KEY}`, {
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    if (!response.ok) return null
+    const data = await response.json()
+    if (!data.result) return null
+    
+    return JSON.parse(data.result) as SportBestBets
+  } catch (error) {
+    console.error('[getCachedSportBets] Error:', error)
     return null
   }
 }
