@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server"
 import { fetchAllOdds } from "@/lib/odds"
+import { computeBestBets, cacheBestBet } from "@/lib/bet-ranking"
 
 /**
- * Cron endpoint to fetch fresh odds data
+ * Cron endpoint to fetch fresh odds data and compute best bet
  * 
  * This endpoint is called by Vercel Cron Jobs at scheduled times:
  * - 8:00 AM ET (13:00 UTC)
@@ -10,7 +11,7 @@ import { fetchAllOdds } from "@/lib/odds"
  * - 8:00 PM ET (01:00 UTC next day)
  * 
  * This keeps the odds cache fresh while staying under the 500 requests/month limit.
- * Math: 3 sports × 3 times/day = 9 requests/day = ~270 requests/month
+ * Also computes and caches the deterministic "Best Bet of the Day".
  */
 export async function GET(request: Request) {
   try {
@@ -39,11 +40,25 @@ export async function GET(request: Request) {
     
     console.log(`Fetched ${oddsData.games.length} games at ${oddsData.lastUpdated}`)
     
+    // Compute and cache the best bet
+    console.log("Computing best bet...")
+    const bestBetResult = computeBestBets(oddsData.games)
+    await cacheBestBet(bestBetResult)
+    
+    console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)
+    
     return NextResponse.json({
       success: true,
       gamesCount: oddsData.games.length,
       lastUpdated: oddsData.lastUpdated,
-      message: `Successfully fetched odds for ${oddsData.games.length} games`
+      bestBet: bestBetResult.bestBet ? {
+        team: bestBetResult.bestBet.team,
+        game: `${bestBetResult.bestBet.awayTeam} @ ${bestBetResult.bestBet.homeTeam}`,
+        probability: bestBetResult.bestBet.consensusProbability,
+        edge: bestBetResult.bestBet.edge
+      } : null,
+      qualifiedBets: bestBetResult.gamesQualified,
+      message: `Successfully fetched odds for ${oddsData.games.length} games, best bet: ${bestBetResult.bestBet?.team || 'none'}`
     })
     
   } catch (error) {

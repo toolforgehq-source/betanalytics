@@ -21,6 +21,7 @@ import { getCachedESPNData, formatESPNForContext, type ESPNGameData, type ESPNIn
 import { getWeatherForGames, formatWeatherForContext } from './weather'
 import { getCachedSoccerStats, formatSoccerStatsForContext } from './soccer-stats'
 import { getLineMovement, formatLineMovementForContext } from './line-movement'
+import { getCachedBestBet, computeBestBets, formatBestBetForContext } from './bet-ranking'
 
 export interface EnrichedGame extends Game {
   espnData?: {
@@ -198,14 +199,23 @@ export async function formatCombinedDataForContext(): Promise<string> {
     .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.sportName))
     .map(g => ({ id: g.id, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.sportName }))
   
-  // Fetch weather, soccer stats, and line movement in parallel
-  const [weatherMap, soccerStats, lineMovement] = await Promise.all([
+  // Fetch weather, soccer stats, line movement, and best bet in parallel
+  const [weatherMap, soccerStats, lineMovement, cachedBestBet] = await Promise.all([
     getWeatherForGames(outdoorGames).catch(() => new Map()),
     getCachedSoccerStats().catch(() => ({ leagues: [], lastUpdated: new Date().toISOString(), error: 'Failed to fetch' })),
-    getLineMovement(oddsData.games).catch(() => [])
+    getLineMovement(oddsData.games).catch(() => []),
+    getCachedBestBet().catch(() => null)
   ])
   
+  // If no cached best bet, compute it now
+  const bestBetResult = cachedBestBet || computeBestBets(oddsData.games)
+  
   const lines: string[] = []
+  
+  // BEST BET FIRST - This is the most important section
+  lines.push(formatBestBetForContext(bestBetResult))
+  lines.push('')
+  lines.push('')
   
   // Header with data freshness info
   lines.push('=== REAL-TIME SPORTS DATA ===')
