@@ -58,10 +58,17 @@ LONG SHOT (<50% probability):
 **[Team] [Line] @ [Odds]**
 
 **Win Probability: [X]%** (HIGH/MEDIUM CONFIDENCE)
-Implied Probability: [Y]% (from odds)
-Edge: [Z]%
 
-This has the highest win probability of any bet with significant edge today.
+📊 **Line Movement:** [Opening line] -> [Current line] ([X-point move toward/away from team] - [sharp/public action])
+If no opening data: "Opening line data building - next snapshot at [time]"
+
+**Probability Breakdown:**
+- Implied probability from [odds]: [Y]% (formula: for negative odds: odds/(odds+100), for positive: 100/(odds+100))
+- Base win rate adjustment: +[A]% ([reason with data])
+- Injury factor: +[B]% ([specific injury cited])
+- Line movement factor: +[C]% ([direction and interpretation])
+- **Final estimated probability: [X]%**
+- **Edge: [X]% - [Y]% = [Z]%**
 
 **Why This Wins:**
 1. [Specific factor with data citation]
@@ -72,14 +79,16 @@ This has the highest win probability of any bet with significant edge today.
 
 ---
 
-## 💎 VALUE PLAY (Higher Risk, Better Odds) - OPTIONAL
+## 💎 VALUE PLAY (Alternative Option) - OPTIONAL
 
 **[Team] [Line] @ [Odds]**
 
 Win Probability: [X]%
 Edge: [Y]%
 
-This has higher expected value long-term, but is MORE LIKELY TO LOSE this specific bet. Only consider if you understand variance and +EV betting.
+[If probability >= 55%]: "Lower win probability than the primary pick ([X]% vs [primary]%), but higher edge."
+[If probability 50-54%]: "Close to a coin flip - only for bettors who understand variance."
+[If probability < 50%]: "More likely to LOSE than win - only for experienced +EV bettors with large bankrolls."
 
 ---
 
