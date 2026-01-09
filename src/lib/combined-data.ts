@@ -224,11 +224,11 @@ export async function formatCombinedDataForContext(): Promise<string> {
   // If no cached best bet, compute it now
   const bestBetResult = cachedBestBet || computeBestBets(oddsData.games)
   
-  // If no cached parlay, compute it now
-  const parlayResult = cachedParlay || computeParlayOfTheDay(bestBetResult.allRankedBets)
+  // If no cached parlay, compute it now (handle case where allRankedBets might be undefined)
+  const parlayResult = cachedParlay || computeParlayOfTheDay(bestBetResult?.allRankedBets || [])
   
-  // If no cached sport bets, compute them now
-  const sportBets = cachedSportBets || computeSportBestBets(bestBetResult.allRankedBets)
+  // If no cached sport bets, compute them now (handle case where allRankedBets might be undefined)
+  const sportBets = cachedSportBets || computeSportBestBets(bestBetResult?.allRankedBets || [])
   
   const lines: string[] = []
   
