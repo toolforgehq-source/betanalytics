@@ -18,6 +18,7 @@
 
 import { getCurrentOdds, fetchAllOdds, formatOddsForContext, fetchSportPlayerProps, formatPlayerPropsForContext, type Game, type GamePlayerProps } from './odds'
 import { getCachedESPNData, formatESPNForContext, type ESPNGameData, type ESPNInjury, type ESPNProbable } from './espn'
+import { getWeatherForGames, formatWeatherForContext } from './weather'
 
 export interface EnrichedGame extends Game {
   espnData?: {
@@ -190,15 +191,23 @@ export async function formatCombinedDataForContext(): Promise<string> {
     oddsData = await fetchAllOdds()
   }
   
+  // Fetch weather for outdoor games (NFL, NCAAF, MLB, MLS, Soccer)
+  const outdoorGames = oddsData.games
+    .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.sportName))
+    .map(g => ({ id: g.id, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.sportName }))
+  
+  const weatherMap = await getWeatherForGames(outdoorGames).catch(() => new Map())
+  
   const lines: string[] = []
   
   // Header with data freshness info
   lines.push('=== REAL-TIME SPORTS DATA ===')
   lines.push('')
-  lines.push('You have access to CURRENT data from THREE sources:')
+  lines.push('You have access to CURRENT data from FOUR sources:')
   lines.push(`1. BETTING ODDS (The Odds API) - Last updated: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}${oddsData?.isStale ? ' ⚠️ STALE' : ''}`)
   lines.push(`2. INJURIES & LINEUPS (ESPN API) - Last updated: ${formatTimestamp(espnData?.lastUpdated || new Date().toISOString())}${espnData?.error ? ' ⚠️ ' + espnData.error : ''}`)
   lines.push(`3. PLAYER PROPS (The Odds API) - NBA: ${nbaProps.length}, NFL: ${nflProps.length}, NHL: ${nhlProps.length}, NCAAF: ${ncaafProps.length}, NCAAB: ${ncaabProps.length} games`)
+  lines.push(`4. WEATHER (OpenWeatherMap) - ${weatherMap.size} outdoor games with weather data`)
   lines.push('')
   
   // Critical instructions for Claude
@@ -208,6 +217,7 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('- ALWAYS reference current team records')
   lines.push('- NEVER cite players who may have been traded - use ESPN data to verify rosters')
   lines.push('- If key player is injured, factor that into your analysis')
+  lines.push('- For OUTDOOR games (NFL, MLB, MLS): ALWAYS check weather conditions below')
   lines.push('')
   
   // Player props confidence rules
@@ -222,6 +232,11 @@ export async function formatCombinedDataForContext(): Promise<string> {
   // Add odds data
   lines.push(formatOddsForContext(oddsData))
   lines.push('')
+  
+  // Add weather data for outdoor games
+  if (weatherMap.size > 0) {
+    lines.push(formatWeatherForContext(weatherMap, outdoorGames))
+  }
   
   // Add player props data for ALL sports
   if (allProps.length > 0) {
