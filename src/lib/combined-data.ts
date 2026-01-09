@@ -20,6 +20,7 @@ import { getCurrentOdds, fetchAllOdds, formatOddsForContext, fetchSportPlayerPro
 import { getCachedESPNData, formatESPNForContext, type ESPNGameData, type ESPNInjury, type ESPNProbable } from './espn'
 import { getWeatherForGames, formatWeatherForContext } from './weather'
 import { getCachedSoccerStats, formatSoccerStatsForContext } from './soccer-stats'
+import { getLineMovement, formatLineMovementForContext } from './line-movement'
 
 export interface EnrichedGame extends Game {
   espnData?: {
@@ -197,10 +198,11 @@ export async function formatCombinedDataForContext(): Promise<string> {
     .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.sportName))
     .map(g => ({ id: g.id, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.sportName }))
   
-  // Fetch weather and soccer stats in parallel
-  const [weatherMap, soccerStats] = await Promise.all([
+  // Fetch weather, soccer stats, and line movement in parallel
+  const [weatherMap, soccerStats, lineMovement] = await Promise.all([
     getWeatherForGames(outdoorGames).catch(() => new Map()),
-    getCachedSoccerStats().catch(() => ({ leagues: [], lastUpdated: new Date().toISOString(), error: 'Failed to fetch' }))
+    getCachedSoccerStats().catch(() => ({ leagues: [], lastUpdated: new Date().toISOString(), error: 'Failed to fetch' })),
+    getLineMovement(oddsData.games).catch(() => [])
   ])
   
   const lines: string[] = []
@@ -208,12 +210,13 @@ export async function formatCombinedDataForContext(): Promise<string> {
   // Header with data freshness info
   lines.push('=== REAL-TIME SPORTS DATA ===')
   lines.push('')
-  lines.push('You have access to CURRENT data from FIVE sources:')
+  lines.push('You have access to CURRENT data from SIX sources:')
   lines.push(`1. BETTING ODDS (The Odds API) - Last updated: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}${oddsData?.isStale ? ' ⚠️ STALE' : ''}`)
   lines.push(`2. INJURIES & LINEUPS (ESPN API) - Last updated: ${formatTimestamp(espnData?.lastUpdated || new Date().toISOString())}${espnData?.error ? ' ⚠️ ' + espnData.error : ''}`)
   lines.push(`3. PLAYER PROPS (The Odds API) - NBA: ${nbaProps.length}, NFL: ${nflProps.length}, NHL: ${nhlProps.length}, NCAAF: ${ncaafProps.length}, NCAAB: ${ncaabProps.length} games`)
   lines.push(`4. WEATHER (OpenWeatherMap) - ${weatherMap.size} outdoor games with weather data`)
   lines.push(`5. SOCCER STANDINGS (Football-data.org) - ${soccerStats.leagues.length} leagues with standings${soccerStats.error ? ' ⚠️ ' + soccerStats.error : ''}`)
+  lines.push(`6. LINE MOVEMENT - ${lineMovement.length} games with opening vs current lines tracked`)
   lines.push('')
   
   // Critical instructions for Claude
@@ -247,6 +250,11 @@ export async function formatCombinedDataForContext(): Promise<string> {
   // Add soccer standings data
   if (soccerStats.leagues.length > 0) {
     lines.push(formatSoccerStatsForContext(soccerStats))
+  }
+  
+  // Add line movement data
+  if (lineMovement.length > 0) {
+    lines.push(formatLineMovementForContext(lineMovement))
   }
   
   // Add player props data for ALL sports
