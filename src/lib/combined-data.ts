@@ -30,7 +30,10 @@ import {
   formatParlayForContext,
   getCachedSportBets,
   computeSportBestBets,
-  formatSportBestBetsForContext
+  formatSportBestBetsForContext,
+  getCachedBestProp,
+  computeBestProp,
+  formatBestPropForContext
 } from './bet-ranking'
 import { getTrackRecord, formatTrackRecordForContext } from './pick-tracking'
 
@@ -210,14 +213,15 @@ export async function formatCombinedDataForContext(): Promise<string> {
     .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.sportName))
     .map(g => ({ id: g.id, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.sportName }))
   
-  // Fetch weather, soccer stats, line movement, best bet, parlay, sport bets, and track record in parallel
-  const [weatherMap, soccerStats, lineMovement, cachedBestBet, cachedParlay, cachedSportBets, trackRecord] = await Promise.all([
+  // Fetch weather, soccer stats, line movement, best bet, parlay, sport bets, best prop, and track record in parallel
+  const [weatherMap, soccerStats, lineMovement, cachedBestBet, cachedParlay, cachedSportBets, cachedBestProp, trackRecord] = await Promise.all([
     getWeatherForGames(outdoorGames).catch(() => new Map()),
     getCachedSoccerStats().catch(() => ({ leagues: [], lastUpdated: new Date().toISOString(), error: 'Failed to fetch' })),
     getLineMovement(oddsData.games).catch(() => []),
     getCachedBestBet().catch(() => null),
     getCachedParlay().catch(() => null),
     getCachedSportBets().catch(() => null),
+    getCachedBestProp().catch(() => null),
     getTrackRecord().catch(() => null)
   ])
   
@@ -229,6 +233,9 @@ export async function formatCombinedDataForContext(): Promise<string> {
   
   // If no cached sport bets, compute them now (handle case where allRankedBets might be undefined)
   const sportBets = cachedSportBets || computeSportBestBets(bestBetResult?.allRankedBets || [])
+  
+  // If no cached best prop, compute it now
+  const bestPropResult = cachedBestProp || computeBestProp(allProps)
   
   const lines: string[] = []
   
@@ -246,6 +253,10 @@ export async function formatCombinedDataForContext(): Promise<string> {
   
   // SPORT-SPECIFIC BEST BETS - For users asking about specific sports
   lines.push(formatSportBestBetsForContext(sportBets))
+  lines.push('')
+  
+  // BEST PROP OF THE DAY - For users asking about player props
+  lines.push(formatBestPropForContext(bestPropResult))
   lines.push('')
   
   // Header with data freshness info

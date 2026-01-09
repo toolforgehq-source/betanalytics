@@ -718,3 +718,457 @@ export async function getCachedSportBets(): Promise<SportBestBets | null> {
     return null
   }
 }
+
+// ============================================
+// BEST PROP OF THE DAY
+// ============================================
+
+import type { GamePlayerProps, PlayerProp } from './odds'
+
+export interface RankedProp {
+  gameId: string
+  sport: string
+  homeTeam: string
+  awayTeam: string
+  commenceTime: string
+  
+  playerName: string
+  market: string              // e.g., 'player_points'
+  marketDisplay: string       // e.g., 'Points'
+  line: number                // e.g., 25.5
+  pick: 'Over' | 'Under'
+  
+  consensusProbability: number
+  bestPrice: number
+  bestBook: string
+  impliedProbability: number
+  edge: number
+  
+  booksWithLine: number       // How many books have this exact line
+  allBookPrices: { book: string; price: number; impliedProb: number }[]
+  
+  score: number
+  calculatedAt: string
+}
+
+export interface BestPropResult {
+  bestProp: RankedProp | null
+  runnerUp: RankedProp | null
+  allRankedProps: RankedProp[]
+  calculatedAt: string
+  propsAnalyzed: number
+  propsQualified: number
+  reason: string | null
+}
+
+// Market display names
+const MARKET_DISPLAY: Record<string, string> = {
+  'player_points': 'Points',
+  'player_rebounds': 'Rebounds',
+  'player_assists': 'Assists',
+  'player_threes': '3-Pointers',
+  'player_pass_yds': 'Pass Yards',
+  'player_rush_yds': 'Rush Yards',
+  'player_reception_yds': 'Receiving Yards',
+  'player_pass_tds': 'Pass TDs',
+}
+
+/**
+ * Compute Best Prop of the Day from player props data
+ * 
+ * Algorithm:
+ * 1. Group props by player + market + line (find consensus lines)
+ * 2. For lines with 2+ books, calculate no-vig probability for Over/Under
+ * 3. Find best available price
+ * 4. Calculate edge and filter by criteria
+ * 5. Rank by probability, then edge
+ */
+export function computeBestProp(propsData: GamePlayerProps[]): BestPropResult {
+  const now = new Date().toISOString()
+  
+  if (!propsData || propsData.length === 0) {
+    return {
+      bestProp: null,
+      runnerUp: null,
+      allRankedProps: [],
+      calculatedAt: now,
+      propsAnalyzed: 0,
+      propsQualified: 0,
+      reason: 'No player props data available'
+    }
+  }
+  
+  const allRankedProps: RankedProp[] = []
+  let propsAnalyzed = 0
+  
+  // Process each game's props
+  for (const game of propsData) {
+    // Group props by player + market + line
+    const propGroups = new Map<string, PlayerProp[]>()
+    
+    for (const prop of game.props) {
+      const key = `${prop.playerName}|${prop.market}|${prop.line}`
+      const existing = propGroups.get(key) || []
+      existing.push(prop)
+      propGroups.set(key, existing)
+      propsAnalyzed++
+    }
+    
+    // Analyze each group with 2+ books (consensus)
+    const propGroupEntries = Array.from(propGroups.entries())
+    for (const [key, props] of propGroupEntries) {
+      if (props.length < 2) continue // Need at least 2 books for consensus
+      
+      const [playerName, market, lineStr] = key.split('|')
+      const line = parseFloat(lineStr)
+      
+      // Calculate no-vig probability for Over and Under
+      const overPrices = props.map(p => p.overOdds)
+      const underPrices = props.map(p => p.underOdds)
+      
+      // Calculate median implied probabilities
+      const overImpliedProbs = overPrices.map(p => americanToImpliedProbability(p))
+      const underImpliedProbs = underPrices.map(p => americanToImpliedProbability(p))
+      
+      // Remove vig by normalizing (Over + Under should = 100%)
+      const avgOverImplied = overImpliedProbs.reduce((a, b) => a + b, 0) / overImpliedProbs.length
+      const avgUnderImplied = underImpliedProbs.reduce((a, b) => a + b, 0) / underImpliedProbs.length
+      const totalImplied = avgOverImplied + avgUnderImplied
+      
+      const overNoVig = (avgOverImplied / totalImplied) * 100
+      const underNoVig = (avgUnderImplied / totalImplied) * 100
+      
+      // Determine which side has better value
+      const bestOverPrice = Math.max(...overPrices)
+      const bestUnderPrice = Math.max(...underPrices)
+      
+      const overBestImplied = americanToImpliedProbability(bestOverPrice) * 100
+      const underBestImplied = americanToImpliedProbability(bestUnderPrice) * 100
+      
+      const overEdge = overNoVig - overBestImplied
+      const underEdge = underNoVig - underBestImplied
+      
+      // Pick the side with better edge (if it meets criteria)
+      const sides: Array<{
+        pick: 'Over' | 'Under'
+        consensusProb: number
+        bestPrice: number
+        bestImplied: number
+        edge: number
+        prices: number[]
+      }> = [
+        { pick: 'Over', consensusProb: overNoVig, bestPrice: bestOverPrice, bestImplied: overBestImplied, edge: overEdge, prices: overPrices },
+        { pick: 'Under', consensusProb: underNoVig, bestPrice: bestUnderPrice, bestImplied: underBestImplied, edge: underEdge, prices: underPrices }
+      ]
+      
+      for (const side of sides) {
+        // Apply filters
+        if (side.consensusProb < MIN_PROBABILITY * 100) continue
+        if (side.edge < MIN_EDGE * 100) continue
+        if (side.bestPrice < MAX_JUICE_ODDS) continue
+        
+        // Find which book has the best price
+        const bestBookIndex = side.prices.indexOf(side.bestPrice)
+        const bestBook = props[bestBookIndex]?.bookmaker || 'Unknown'
+        
+        // Build all book prices
+        const allBookPrices = props.map(p => ({
+          book: p.bookmaker,
+          price: side.pick === 'Over' ? p.overOdds : p.underOdds,
+          impliedProb: Math.round(americanToImpliedProbability(side.pick === 'Over' ? p.overOdds : p.underOdds) * 1000) / 10
+        }))
+        
+        // Calculate score (probability * 0.7 + edge * 0.3)
+        const score = side.consensusProb * 0.7 + side.edge * 0.3
+        
+        allRankedProps.push({
+          gameId: game.gameId,
+          sport: game.sport,
+          homeTeam: game.homeTeam,
+          awayTeam: game.awayTeam,
+          commenceTime: game.commenceTime,
+          playerName,
+          market,
+          marketDisplay: MARKET_DISPLAY[market] || market,
+          line,
+          pick: side.pick,
+          consensusProbability: Math.round(side.consensusProb * 10) / 10,
+          bestPrice: side.bestPrice,
+          bestBook,
+          impliedProbability: Math.round(side.bestImplied * 10) / 10,
+          edge: Math.round(side.edge * 10) / 10,
+          booksWithLine: props.length,
+          allBookPrices,
+          score,
+          calculatedAt: now
+        })
+      }
+    }
+  }
+  
+  // Sort by score (desc)
+  allRankedProps.sort((a, b) => b.score - a.score)
+  
+  return {
+    bestProp: allRankedProps[0] || null,
+    runnerUp: allRankedProps[1] || null,
+    allRankedProps: allRankedProps.slice(0, 10),
+    calculatedAt: now,
+    propsAnalyzed,
+    propsQualified: allRankedProps.length,
+    reason: allRankedProps.length === 0 ? 'No props meet criteria (55%+ probability, 3%+ edge)' : null
+  }
+}
+
+/**
+ * Format best prop result for Claude's context
+ */
+export function formatBestPropForContext(result: BestPropResult): string {
+  const lines: string[] = []
+  
+  lines.push('=== PRE-COMPUTED BEST PROP OF THE DAY ===')
+  lines.push('')
+  
+  if (!result.bestProp) {
+    lines.push(`NO BEST PROP AVAILABLE: ${result.reason}`)
+    lines.push('')
+    lines.push('When user asks for a prop bet, explain that no props currently meet our criteria.')
+    return lines.join('\n')
+  }
+  
+  const prop = result.bestProp
+  
+  lines.push('BEST PROP OF THE DAY:')
+  lines.push(`Player: ${prop.playerName}`)
+  lines.push(`Prop: ${prop.pick} ${prop.line} ${prop.marketDisplay}`)
+  lines.push(`Game: ${prop.awayTeam} @ ${prop.homeTeam}`)
+  lines.push('')
+  lines.push('PROBABILITY CALCULATION:')
+  lines.push(`- Consensus Probability: ${prop.consensusProbability}% (no-vig from ${prop.booksWithLine} books)`)
+  lines.push(`- Best Available Price: ${formatOdds(prop.bestPrice)} at ${prop.bestBook}`)
+  lines.push(`- Implied Probability: ${prop.impliedProbability}%`)
+  lines.push(`- EDGE: ${prop.edge}%`)
+  lines.push('')
+  lines.push('ALL BOOK PRICES:')
+  for (const book of prop.allBookPrices) {
+    lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
+  }
+  
+  if (result.runnerUp) {
+    const ru = result.runnerUp
+    lines.push('')
+    lines.push('RUNNER-UP PROP:')
+    lines.push(`${ru.playerName} ${ru.pick} ${ru.line} ${ru.marketDisplay}`)
+    lines.push(`Probability: ${ru.consensusProbability}% | Edge: ${ru.edge}%`)
+  }
+  
+  lines.push('')
+  lines.push('IMPORTANT: When user asks for a prop bet, present the BEST PROP above.')
+  lines.push('Do NOT pick a different prop. This is the pre-computed best prop based on market consensus.')
+  
+  return lines.join('\n')
+}
+
+// Cache key for best prop
+const BEST_PROP_CACHE_KEY = 'betanalytics:best-prop'
+
+/**
+ * Cache best prop result
+ */
+export async function cacheBestProp(result: BestPropResult): Promise<void> {
+  const redis = await getRedisClient()
+  if (!redis) return
+  
+  try {
+    await fetch(`${redis.url}/set/${BEST_PROP_CACHE_KEY}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(JSON.stringify(result))
+    })
+    
+    await fetch(`${redis.url}/expire/${BEST_PROP_CACHE_KEY}/${4 * 60 * 60}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+  } catch (error) {
+    console.error('[cacheBestProp] Error:', error)
+  }
+}
+
+/**
+ * Get cached best prop
+ */
+export async function getCachedBestProp(): Promise<BestPropResult | null> {
+  const redis = await getRedisClient()
+  if (!redis) return null
+  
+  try {
+    const response = await fetch(`${redis.url}/get/${BEST_PROP_CACHE_KEY}`, {
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    if (!response.ok) return null
+    const data = await response.json()
+    if (!data.result) return null
+    
+    return JSON.parse(data.result) as BestPropResult
+  } catch (error) {
+    console.error('[getCachedBestProp] Error:', error)
+    return null
+  }
+}
+
+// ============================================
+// GAME-SPECIFIC MENU
+// ============================================
+
+export interface GameMenu {
+  gameId: string
+  sport: string
+  sportName: string
+  homeTeam: string
+  awayTeam: string
+  commenceTime: string
+  
+  safestBet: {
+    type: 'moneyline'
+    team: string
+    odds: number
+    book: string
+    probability: number
+    edge: number
+  } | null
+  
+  valueBets: Array<{
+    type: 'spread' | 'total'
+    description: string
+    odds: number
+    book: string
+  }>
+  
+  calculatedAt: string
+}
+
+/**
+ * Compute game-specific menu for a single game
+ * Returns safest bet (moneyline favorite with edge) and value options (spreads/totals)
+ */
+export function computeGameMenu(game: Game): GameMenu {
+  const now = new Date().toISOString()
+  
+  const menu: GameMenu = {
+    gameId: game.id,
+    sport: game.sport,
+    sportName: game.sportName,
+    homeTeam: game.homeTeam,
+    awayTeam: game.awayTeam,
+    commenceTime: game.commenceTime,
+    safestBet: null,
+    valueBets: [],
+    calculatedAt: now
+  }
+  
+  // Calculate safest bet (moneyline with highest probability and edge)
+  const homeConsensus = calculateConsensusProbability(game, game.homeTeam)
+  const awayConsensus = calculateConsensusProbability(game, game.awayTeam)
+  
+  const candidates: Array<{
+    team: string
+    consensus: NonNullable<ReturnType<typeof calculateConsensusProbability>>
+  }> = []
+  
+  if (homeConsensus) candidates.push({ team: game.homeTeam, consensus: homeConsensus })
+  if (awayConsensus) candidates.push({ team: game.awayTeam, consensus: awayConsensus })
+  
+  // Find the safest bet (highest probability with positive edge)
+  for (const candidate of candidates) {
+    const bestPrice = findBestPrice(game, candidate.team)
+    if (!bestPrice) continue
+    
+    const impliedProb = americanToImpliedProbability(bestPrice.price) * 100
+    const edge = candidate.consensus.consensusProb - impliedProb
+    
+    if (edge >= MIN_EDGE * 100 && candidate.consensus.consensusProb >= MIN_PROBABILITY * 100) {
+      if (!menu.safestBet || candidate.consensus.consensusProb > menu.safestBet.probability) {
+        menu.safestBet = {
+          type: 'moneyline',
+          team: candidate.team,
+          odds: bestPrice.price,
+          book: bestPrice.book,
+          probability: Math.round(candidate.consensus.consensusProb * 10) / 10,
+          edge: Math.round(edge * 10) / 10
+        }
+      }
+    }
+  }
+  
+  // Add value bets (spreads and totals)
+  // Best spread
+  if (game.spreads.length > 0) {
+    for (const spread of game.spreads) {
+      for (const outcome of spread.outcomes) {
+        if (outcome.point !== undefined) {
+          menu.valueBets.push({
+            type: 'spread',
+            description: `${outcome.name} ${outcome.point > 0 ? '+' : ''}${outcome.point}`,
+            odds: outcome.price,
+            book: spread.bookmaker
+          })
+        }
+      }
+    }
+  }
+  
+  // Best total
+  if (game.totals.length > 0) {
+    for (const total of game.totals) {
+      for (const outcome of total.outcomes) {
+        if (outcome.point !== undefined) {
+          menu.valueBets.push({
+            type: 'total',
+            description: `${outcome.name} ${outcome.point}`,
+            odds: outcome.price,
+            book: total.bookmaker
+          })
+        }
+      }
+    }
+  }
+  
+  // Limit value bets to best 4
+  menu.valueBets = menu.valueBets.slice(0, 4)
+  
+  return menu
+}
+
+/**
+ * Format game menu for Claude's context
+ */
+export function formatGameMenuForContext(menu: GameMenu): string {
+  const lines: string[] = []
+  
+  lines.push(`=== GAME MENU: ${menu.awayTeam} @ ${menu.homeTeam} ===`)
+  lines.push('')
+  
+  if (menu.safestBet) {
+    lines.push('SAFEST BET (Moneyline with Edge):')
+    lines.push(`  ${menu.safestBet.team} ML @ ${formatOdds(menu.safestBet.odds)} (${menu.safestBet.book})`)
+    lines.push(`  Probability: ${menu.safestBet.probability}% | Edge: ${menu.safestBet.edge}%`)
+  } else {
+    lines.push('SAFEST BET: No moneyline meets our criteria for this game')
+  }
+  
+  lines.push('')
+  
+  if (menu.valueBets.length > 0) {
+    lines.push('VALUE OPTIONS (Spreads/Totals):')
+    for (const bet of menu.valueBets) {
+      lines.push(`  ${bet.description} @ ${formatOdds(bet.odds)} (${bet.book})`)
+    }
+  }
+  
+  return lines.join('\n')
+}

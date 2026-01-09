@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server"
-import { fetchAllOdds } from "@/lib/odds"
+import { fetchAllOdds, fetchSportPlayerProps } from "@/lib/odds"
 import { 
   computeBestBets, 
   cacheBestBet, 
   computeParlayOfTheDay, 
   cacheParlay,
   computeSportBestBets,
-  cacheSportBets
+  cacheSportBets,
+  computeBestProp,
+  cacheBestProp
 } from "@/lib/bet-ranking"
 import { storePick, getAllPicks } from "@/lib/pick-tracking"
 
@@ -67,6 +69,19 @@ export async function GET(request: Request) {
     const sportBets = computeSportBestBets(bestBetResult.allRankedBets)
     await cacheSportBets(sportBets)
     console.log(`Sport bets computed: ${Object.keys(sportBets).length} sports`)
+    
+    // Compute and cache best prop of the day
+    console.log("Computing best prop of the day...")
+    // Fetch player props for NBA, NFL, NHL (sports with props)
+    const [nbaProps, nflProps, nhlProps] = await Promise.all([
+      fetchSportPlayerProps('basketball_nba').catch(() => []),
+      fetchSportPlayerProps('americanfootball_nfl').catch(() => []),
+      fetchSportPlayerProps('icehockey_nhl').catch(() => [])
+    ])
+    const allProps = [...nbaProps, ...nflProps, ...nhlProps]
+    const bestPropResult = computeBestProp(allProps)
+    await cacheBestProp(bestPropResult)
+    console.log(`Best prop computed: ${bestPropResult.bestProp ? `${bestPropResult.bestProp.playerName} ${bestPropResult.bestProp.pick} ${bestPropResult.bestProp.line}` : 'none'}`)
     
     // Store the best bet pick for track record (if we have one and it's a new game)
     let pickStored = false
