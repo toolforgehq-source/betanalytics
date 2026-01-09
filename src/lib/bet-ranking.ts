@@ -459,10 +459,13 @@ export function formatBestBetForContext(result: BestBetResult): string {
     lines.push('')
     
     // Include fallback data for when user asks
-    if (result.closestMisses.length > 0) {
+    const closestMisses = result.closestMisses ?? []
+    const mostLikelyWinners = result.mostLikelyWinners ?? []
+    
+    if (closestMisses.length > 0) {
       lines.push('=== CLOSEST MISSES (for user who asks) ===')
       lines.push('IMPORTANT: These are NOT recommendations. Label them as "informational only".')
-      for (const miss of result.closestMisses) {
+      for (const miss of closestMisses) {
         lines.push(`- ${miss.team} ML @ ${formatOdds(miss.bestPrice)} (${miss.bestBook})`)
         lines.push(`  Game: ${miss.awayTeam} @ ${miss.homeTeam} | ${miss.sportName}`)
         lines.push(`  Probability: ${miss.consensusProbability}% | Edge: ${miss.edge}%`)
@@ -471,11 +474,11 @@ export function formatBestBetForContext(result: BestBetResult): string {
       lines.push('')
     }
     
-    if (result.mostLikelyWinners.length > 0) {
+    if (mostLikelyWinners.length > 0) {
       lines.push('=== MOST LIKELY WINNERS (for user who asks) ===')
       lines.push('IMPORTANT: These are NOT recommendations. They may have NEGATIVE edge.')
       lines.push('Label them as "informational only - not a betting recommendation".')
-      for (const winner of result.mostLikelyWinners) {
+      for (const winner of mostLikelyWinners) {
         lines.push(`- ${winner.team} ML @ ${formatOdds(winner.bestPrice)} (${winner.bestBook})`)
         lines.push(`  Game: ${winner.awayTeam} @ ${winner.homeTeam} | ${winner.sportName}`)
         lines.push(`  Probability: ${winner.consensusProbability}% | Edge: ${winner.edge}%`)
