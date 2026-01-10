@@ -1,8 +1,28 @@
 {
   "crons": [
     {
+      "path": "/api/cron/fetch-odds",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/fetch-odds",
+      "schedule": "30 17-23 * * *"
+    },
+    {
+      "path": "/api/cron/fetch-odds",
+      "schedule": "30 0-3 * * *"
+    },
+    {
+      "path": "/api/cron/fetch-odds",
+      "schedule": "30 * * * 0,6"
+    },
+    {
+      "path": "/api/cron/fetch-props",
+      "schedule": "0 */2 * * *"
+    },
+    {
       "path": "/api/cron/snapshot-odds",
-      "schedule": "0 */4 * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }

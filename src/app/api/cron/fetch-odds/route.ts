@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { fetchSportPlayerProps, setCachedPlayerProps, type GamePlayerProps, type Game } from "@/lib/odds"
+import { type Game } from "@/lib/odds"
 import { fetchAllESPNOdds, type ESPNOdds } from "@/lib/espn"
 import { 
   computeBestBets, 
@@ -7,9 +7,7 @@ import {
   computeParlayOfTheDay, 
   cacheParlay,
   computeSportBestBets,
-  cacheSportBets,
-  computeBestProp,
-  cacheBestProp
+  cacheSportBets
 } from "@/lib/bet-ranking"
 import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
 
@@ -84,15 +82,18 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
 }
 
 /**
- * Cron endpoint to fetch fresh odds data and compute best bet
+ * Cron endpoint to fetch ESPN odds (FREE) and compute best bets
  * 
- * COST OPTIMIZATION:
- * - ESPN odds are FREE - used for all game lines (spreads, totals, moneylines)
- * - Odds API is PAID - used ONLY for player props (~30 requests per cron run)
+ * This endpoint handles:
+ * - Fetching game odds from ESPN (spreads, totals, moneylines) - FREE
+ * - Computing best bet, parlay, and sport-specific bets
+ * - Storing picks for track record
+ * - Auto-grading completed picks
  * 
- * This endpoint is called by Vercel Cron Jobs every 4 hours.
+ * Player props are handled by a separate /api/cron/fetch-props endpoint
+ * to allow different update frequencies (props are PAID via Odds API).
  * 
- * Expected API usage: ~180 requests/month (down from ~18,000/month)
+ * Schedule: Every hour (or 30 min during peak hours)
  */
 export async function GET(request: Request) {
   try {
@@ -105,13 +106,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
     
-    // Note: ODDS_API_KEY is only needed for player props now
-    // ESPN odds are FREE and don't require authentication
+    console.log("[fetch-odds] Starting ESPN odds fetch (FREE)...")
     
-    console.log("Starting scheduled odds fetch (ESPN FREE + Odds API props only)...")
-    
-    // Fetch fresh odds from ESPN (FREE - no API key needed)
-    console.log("Fetching ESPN odds (FREE)...")
     const espnOddsData = await fetchAllESPNOdds()
     
     console.log(`Fetched ${espnOddsData.games.length} games with odds from ESPN at ${espnOddsData.lastUpdated}`)
@@ -133,32 +129,10 @@ export async function GET(request: Request) {
     console.log(`Parlay computed: ${parlayResult.safeParlay ? '2-leg safe parlay ready' : 'no parlay available'}`)
     
     // Compute and cache sport-specific best bets
-    console.log("Computing sport-specific best bets...")
+    console.log("[fetch-odds] Computing sport-specific best bets...")
     const sportBets = computeSportBestBets(bestBetResult.allRankedBets)
     await cacheSportBets(sportBets)
-    console.log(`Sport bets computed: ${Object.keys(sportBets).length} sports`)
-    
-    // Fetch and cache player props for all major sports
-    // This is now the ONLY place props are fetched (not per-chat request)
-    console.log("Fetching and caching player props...")
-    const [nbaProps, nflProps, nhlProps, ncaafProps, ncaabProps] = await Promise.all([
-      fetchSportPlayerProps('basketball_nba').catch(() => [] as GamePlayerProps[]),
-      fetchSportPlayerProps('americanfootball_nfl').catch(() => [] as GamePlayerProps[]),
-      fetchSportPlayerProps('icehockey_nhl').catch(() => [] as GamePlayerProps[]),
-      fetchSportPlayerProps('americanfootball_ncaaf').catch(() => [] as GamePlayerProps[]),
-      fetchSportPlayerProps('basketball_ncaab').catch(() => [] as GamePlayerProps[])
-    ])
-    const allProps = [...nbaProps, ...nflProps, ...nhlProps, ...ncaafProps, ...ncaabProps]
-    
-    // Cache the props so chat requests don't need to fetch them
-    await setCachedPlayerProps(allProps)
-    console.log(`Cached ${allProps.length} games with player props`)
-    
-    // Compute and cache best prop of the day
-    console.log("Computing best prop of the day...")
-    const bestPropResult = computeBestProp(allProps)
-    await cacheBestProp(bestPropResult)
-    console.log(`Best prop computed: ${bestPropResult.bestProp ? `${bestPropResult.bestProp.playerName} ${bestPropResult.bestProp.pick} ${bestPropResult.bestProp.line}` : 'none'}`)
+    console.log(`[fetch-odds] Sport bets computed: ${Object.keys(sportBets).length} sports`)
     
     // Store the best bet pick for track record (if we have one and it's a new game)
     let pickStored = false
@@ -210,14 +184,13 @@ export async function GET(request: Request) {
         edge: bestBetResult.bestBet.edge
       } : null,
       qualifiedBets: bestBetResult.gamesQualified,
-      propsCount: allProps.length,
       pickStored,
       grading: {
         picksGraded: gradingResult.graded,
         errors: gradingResult.errors,
         pendingPicks: gradingResult.pending
       },
-      message: `ESPN odds: ${espnOddsData.games.length} games (FREE), Props: ${allProps.length} games (Odds API), Best bet: ${bestBetResult.bestBet?.team || 'none'}, Graded: ${gradingResult.graded} picks`
+      message: `ESPN odds: ${espnOddsData.games.length} games (FREE), Best bet: ${bestBetResult.bestBet?.team || 'none'}, Graded: ${gradingResult.graded} picks`
     })
     
   } catch (error) {
