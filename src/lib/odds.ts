@@ -115,6 +115,10 @@ const CACHE_EXPIRY_SECONDS = 4 * 60 * 60
 
 // Redis cache keys
 const ODDS_CACHE_KEY = 'betanalytics:odds:data'
+const PROPS_CACHE_KEY = 'betanalytics:props:data'
+
+// Props cache expiry: 2 hours (shorter than odds since props change more frequently)
+const PROPS_CACHE_EXPIRY_SECONDS = 2 * 60 * 60
 
 export interface Game {
   id: string
@@ -278,6 +282,75 @@ async function setCachedOdds(oddsData: OddsData): Promise<void> {
 }
 
 /**
+ * Get cached player props from Redis
+ */
+export async function getCachedPlayerProps(): Promise<GamePlayerProps[] | null> {
+  const redis = await getRedisClient()
+  if (!redis) return null
+  
+  try {
+    const response = await fetch(`${redis.url}/get/${PROPS_CACHE_KEY}`, {
+      headers: { Authorization: `Bearer ${redis.token}` },
+      cache: 'no-store',
+    })
+    
+    if (!response.ok) return null
+    
+    const data = await response.json()
+    if (!data.result) return null
+    
+    const propsData = JSON.parse(data.result) as { props: GamePlayerProps[], lastUpdated: string }
+    
+    // Check if cache is still valid (within 2 hours)
+    const cacheAge = Date.now() - new Date(propsData.lastUpdated).getTime()
+    if (cacheAge > PROPS_CACHE_EXPIRY_SECONDS * 1000) {
+      console.log('[getCachedPlayerProps] Cache expired')
+      return null
+    }
+    
+    console.log(`[getCachedPlayerProps] Returning ${propsData.props.length} cached props`)
+    return propsData.props
+  } catch (error) {
+    console.error('Error getting cached props:', error)
+    return null
+  }
+}
+
+/**
+ * Save player props to Redis cache
+ */
+export async function setCachedPlayerProps(props: GamePlayerProps[]): Promise<void> {
+  const redis = await getRedisClient()
+  if (!redis) return
+  
+  try {
+    const cacheData = {
+      props,
+      lastUpdated: new Date().toISOString()
+    }
+    
+    await fetch(`${redis.url}/set/${PROPS_CACHE_KEY}`, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(JSON.stringify(cacheData))
+    })
+    
+    // Set expiry
+    await fetch(`${redis.url}/expire/${PROPS_CACHE_KEY}/${PROPS_CACHE_EXPIRY_SECONDS}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    console.log(`[setCachedPlayerProps] Cached ${props.length} props`)
+  } catch (error) {
+    console.error('Error caching props:', error)
+  }
+}
+
+/**
  * Fetch odds for a single sport from The Odds API
  */
 async function fetchSportOdds(sportKey: string, sportName: string): Promise<Game[]> {
@@ -408,10 +481,13 @@ export function getSportTitle(sportKey: string): string {
 }
 
 /**
- * Fetch fresh odds from The Odds API for ALL sports
+ * Fetch fresh odds from The Odds API
  * Uses Promise.allSettled for graceful degradation - one failing sport won't break others
+ * 
+ * @param tier1Only - If true, only fetch Tier 1 sports (NBA, NFL, NHL, NCAAB, NCAAF, MLB)
+ *                    This dramatically reduces API usage from ~50 requests to ~6 requests
  */
-export async function fetchAllOdds(): Promise<OddsData> {
+export async function fetchAllOdds(tier1Only: boolean = false): Promise<OddsData> {
   const apiKey = process.env.ODDS_API_KEY
   
   if (!apiKey) {
@@ -423,10 +499,13 @@ export async function fetchAllOdds(): Promise<OddsData> {
     }
   }
   
-  console.log(`■ Fetching odds for ${ALL_SPORTS.length} sports using Promise.allSettled...`)
+  // Filter to Tier 1 sports only if requested (reduces API usage from ~50 to ~6 requests)
+  const sportsToFetch = tier1Only ? ALL_SPORTS.filter(s => s.tier === 1) : ALL_SPORTS
   
-  // Fetch ALL sports in parallel using Promise.allSettled for graceful degradation
-  const fetchPromises = ALL_SPORTS.map(async (sport) => {
+  console.log(`■ Fetching odds for ${sportsToFetch.length} sports${tier1Only ? ' (Tier 1 only)' : ''} using Promise.allSettled...`)
+  
+  // Fetch sports in parallel using Promise.allSettled for graceful degradation
+  const fetchPromises = sportsToFetch.map(async (sport) => {
     const games = await fetchSportOdds(sport.key, sport.name)
     return { 
       sport: sport.key, 
@@ -452,7 +531,7 @@ export async function fetchAllOdds(): Promise<OddsData> {
   
   for (let i = 0; i < settledResults.length; i++) {
     const result = settledResults[i]
-    const sportConfig = ALL_SPORTS[i]
+    const sportConfig = sportsToFetch[i]
     
     if (result.status === 'fulfilled') {
       const { sport, sportName, tier, category, games } = result.value

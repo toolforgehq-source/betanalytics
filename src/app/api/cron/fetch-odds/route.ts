@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { fetchAllOdds, fetchSportPlayerProps } from "@/lib/odds"
+import { fetchAllOdds, fetchSportPlayerProps, setCachedPlayerProps, type GamePlayerProps } from "@/lib/odds"
 import { 
   computeBestBets, 
   cacheBestBet, 
@@ -46,8 +46,10 @@ export async function GET(request: Request) {
     
     console.log("Starting scheduled odds fetch...")
     
-    // Fetch fresh odds for all sports
-    const oddsData = await fetchAllOdds()
+    // Fetch fresh odds for Tier 1 sports only (NBA, NFL, NHL, NCAAB, NCAAF, MLB)
+    // This reduces API usage from ~50 requests to ~6 requests per cron run
+    // Tier 1 sports cover 95%+ of user requests
+    const oddsData = await fetchAllOdds(true) // tier1Only = true
     
     console.log(`Fetched ${oddsData.games.length} games at ${oddsData.lastUpdated}`)
     
@@ -70,15 +72,24 @@ export async function GET(request: Request) {
     await cacheSportBets(sportBets)
     console.log(`Sport bets computed: ${Object.keys(sportBets).length} sports`)
     
+    // Fetch and cache player props for all major sports
+    // This is now the ONLY place props are fetched (not per-chat request)
+    console.log("Fetching and caching player props...")
+    const [nbaProps, nflProps, nhlProps, ncaafProps, ncaabProps] = await Promise.all([
+      fetchSportPlayerProps('basketball_nba').catch(() => [] as GamePlayerProps[]),
+      fetchSportPlayerProps('americanfootball_nfl').catch(() => [] as GamePlayerProps[]),
+      fetchSportPlayerProps('icehockey_nhl').catch(() => [] as GamePlayerProps[]),
+      fetchSportPlayerProps('americanfootball_ncaaf').catch(() => [] as GamePlayerProps[]),
+      fetchSportPlayerProps('basketball_ncaab').catch(() => [] as GamePlayerProps[])
+    ])
+    const allProps = [...nbaProps, ...nflProps, ...nhlProps, ...ncaafProps, ...ncaabProps]
+    
+    // Cache the props so chat requests don't need to fetch them
+    await setCachedPlayerProps(allProps)
+    console.log(`Cached ${allProps.length} games with player props`)
+    
     // Compute and cache best prop of the day
     console.log("Computing best prop of the day...")
-    // Fetch player props for NBA, NFL, NHL (sports with props)
-    const [nbaProps, nflProps, nhlProps] = await Promise.all([
-      fetchSportPlayerProps('basketball_nba').catch(() => []),
-      fetchSportPlayerProps('americanfootball_nfl').catch(() => []),
-      fetchSportPlayerProps('icehockey_nhl').catch(() => [])
-    ])
-    const allProps = [...nbaProps, ...nflProps, ...nhlProps]
     const bestPropResult = computeBestProp(allProps)
     await cacheBestProp(bestPropResult)
     console.log(`Best prop computed: ${bestPropResult.bestProp ? `${bestPropResult.bestProp.playerName} ${bestPropResult.bestProp.pick} ${bestPropResult.bestProp.line}` : 'none'}`)

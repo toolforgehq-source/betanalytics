@@ -16,7 +16,7 @@
  * - Tier 4: Golf, Tennis, Cricket, Rugby, AFL, F1, NASCAR, and more
  */
 
-import { getCurrentOdds, fetchAllOdds, formatOddsForContext, fetchSportPlayerProps, formatPlayerPropsForContext, type Game, type GamePlayerProps } from './odds'
+import { getCurrentOdds, fetchAllOdds, formatOddsForContext, getCachedPlayerProps, formatPlayerPropsForContext, type Game, type GamePlayerProps } from './odds'
 import { getCachedESPNData, formatESPNForContext, type ESPNGameData, type ESPNInjury, type ESPNProbable } from './espn'
 import { getWeatherForGames, formatWeatherForContext } from './weather'
 import { getCachedSoccerStats, formatSoccerStatsForContext } from './soccer-stats'
@@ -187,19 +187,17 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
  * This is the main function to use in the chat API
  */
 export async function formatCombinedDataForContext(): Promise<string> {
-  // Fetch odds, ESPN data, and player props for ALL sports in parallel
-  const [initialOddsData, espnData, nbaProps, nflProps, nhlProps, ncaafProps, ncaabProps] = await Promise.all([
+  // Fetch odds, ESPN data, and CACHED player props in parallel
+  // IMPORTANT: Player props are now cached to reduce API usage
+  // Props are refreshed by the cron job, not per-chat request
+  const [initialOddsData, espnData, cachedProps] = await Promise.all([
     getCurrentOdds(),
     getCachedESPNData(),
-    fetchSportPlayerProps('basketball_nba').catch(() => [] as GamePlayerProps[]),
-    fetchSportPlayerProps('americanfootball_nfl').catch(() => [] as GamePlayerProps[]),
-    fetchSportPlayerProps('icehockey_nhl').catch(() => [] as GamePlayerProps[]),
-    fetchSportPlayerProps('americanfootball_ncaaf').catch(() => [] as GamePlayerProps[]),
-    fetchSportPlayerProps('basketball_ncaab').catch(() => [] as GamePlayerProps[])
+    getCachedPlayerProps().catch(() => [] as GamePlayerProps[])
   ])
   
-  // Combine all props from all sports
-  const allProps = [...nbaProps, ...nflProps, ...nhlProps, ...ncaafProps, ...ncaabProps]
+  // Use cached props (populated by cron job)
+  const allProps = cachedProps || []
   
   // If cache returned empty odds, force fetch fresh data
   let oddsData = initialOddsData
@@ -265,7 +263,7 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('You have access to CURRENT data from SIX sources:')
   lines.push(`1. BETTING ODDS (The Odds API) - Last updated: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}${oddsData?.isStale ? ' ⚠️ STALE' : ''}`)
   lines.push(`2. INJURIES & LINEUPS (ESPN API) - Last updated: ${formatTimestamp(espnData?.lastUpdated || new Date().toISOString())}${espnData?.error ? ' ⚠️ ' + espnData.error : ''}`)
-  lines.push(`3. PLAYER PROPS (The Odds API) - NBA: ${nbaProps.length}, NFL: ${nflProps.length}, NHL: ${nhlProps.length}, NCAAF: ${ncaafProps.length}, NCAAB: ${ncaabProps.length} games`)
+  lines.push(`3. PLAYER PROPS (The Odds API) - ${allProps.length} games with props (cached, refreshed by cron)`)
   lines.push(`4. WEATHER (OpenWeatherMap) - ${weatherMap.size} outdoor games with weather data`)
   lines.push(`5. SOCCER STANDINGS (Football-data.org) - ${soccerStats.leagues.length} leagues with standings${soccerStats.error ? ' ⚠️ ' + soccerStats.error : ''}`)
   lines.push(`6. LINE MOVEMENT - ${lineMovement.length} games with opening vs current lines tracked`)
