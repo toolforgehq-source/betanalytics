@@ -528,8 +528,16 @@ export async function fetchAllOdds(): Promise<OddsData> {
     coverage,
   }
   
-  // Cache the fresh data
-  await setCachedOdds(oddsData)
+  // IMPORTANT: Only cache if we got actual games
+  // Don't overwrite good cached data with empty data (e.g., when API quota exhausted)
+  if (allGames.length > 0) {
+    await setCachedOdds(oddsData)
+    console.log(`[fetchAllOdds] Cached ${allGames.length} games`)
+  } else {
+    console.warn('[fetchAllOdds] NOT caching - no games returned (API may be down or quota exhausted)')
+    // Mark as stale since we couldn't get fresh data
+    oddsData.isStale = true
+  }
   
   return oddsData
 }
@@ -680,15 +688,24 @@ export function formatOddsForContext(oddsData: OddsData): string {
   if (!oddsData?.games?.length) {
     return `${coverageSection}
 === CURRENT BETTING ODDS ===
-No games currently available. Last checked: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}
 
-COMPREHENSIVE SPORTS COVERAGE (${ALL_SPORTS.length} sports monitored):
-Tier 1 - Major US Sports: NBA, NFL, NHL, NCAAB, NCAAF, MLB
-Tier 2 - Soccer: EPL, La Liga, Bundesliga, Serie A, Ligue 1, MLS, Champions League, Europa League, Liga MX, Brazil Serie A, Argentina Primera
-Tier 3 - Combat Sports: UFC/MMA, Boxing
-Tier 4 - Other: Euroleague, NBL, AHL, SHL, Golf Majors, Tennis Grand Slams, Cricket (Big Bash, T20, ODI, IPL), Rugby (NRL, Six Nations), AFL, F1, NASCAR, and more
+⚠️ ODDS DATA UNAVAILABLE ⚠️
 
-Note: Some sports may be in offseason or have no events scheduled today. The coverage report above shows exactly what was checked.`
+No betting odds data is currently available. This is likely due to:
+- API quota exhausted (most common)
+- API service temporarily down
+- Network connectivity issues
+
+Last attempted fetch: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}
+
+CRITICAL INSTRUCTIONS FOR CLAUDE:
+- DO NOT list any games or schedules - you have NO current game data
+- DO NOT say "we have X games available" - this would be false
+- DO NOT make up or guess game schedules from training data
+- TELL THE USER: "Our odds data feed is temporarily unavailable. Please try again later or contact support if this persists."
+- If user asks about specific games, say: "I cannot verify current odds - our data feed is down."
+
+This is a temporary issue. The data will refresh automatically when the API is available again.`
   }
   
   const lines: string[] = []
