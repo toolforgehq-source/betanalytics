@@ -34,8 +34,9 @@ export async function GET(request: Request) {
     console.log('[Cron] Starting odds snapshot job...')
     const startTime = Date.now()
     
-    // Fetch fresh odds from all sports
-    const oddsData = await fetchAllOdds()
+    // Fetch fresh odds for Tier 1 sports only (NBA, NFL, NHL, NCAAB, NCAAF, MLB)
+    // This reduces API usage from ~50 requests to ~6 requests per cron run
+    const oddsData = await fetchAllOdds(true) // tier1Only = true
     
     if (!oddsData.games || oddsData.games.length === 0) {
       console.error('[Cron] No games returned from fetchAllOdds')
