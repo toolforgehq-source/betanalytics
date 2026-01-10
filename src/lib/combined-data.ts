@@ -2,9 +2,8 @@
  * Combined Sports Data Module
  * 
  * Merges data from multiple sources for comprehensive multi-sport coverage:
- * 1. The Odds API - betting odds, spreads, totals, moneylines (45+ sports)
- * 2. ESPN API - injuries, lineups, rosters, team records
- * 3. Player Props - from The Odds API for NBA, NFL, NHL, NCAAF, NCAAB
+ * 1. ESPN API - FREE betting odds (spreads, totals, moneylines) + injuries, lineups, rosters
+ * 2. The Odds API - Player props ONLY (to minimize API costs)
  * 
  * This gives Claude complete, real-time information to make
  * accurate betting recommendations without relying on training data.
@@ -12,24 +11,24 @@
  * COMPREHENSIVE COVERAGE:
  * - Tier 1: NBA, NFL, NHL, NCAAB, NCAAF, MLB
  * - Tier 2: EPL, La Liga, Bundesliga, Serie A, Ligue 1, MLS, Champions League
- * - Tier 3: UFC/MMA, Boxing
- * - Tier 4: Golf, Tennis, Cricket, Rugby, AFL, F1, NASCAR, and more
+ * - Tier 3: UFC/MMA
+ * - Tier 4: Golf, Tennis
+ * 
+ * COST OPTIMIZATION:
+ * - ESPN odds are FREE - used for all game lines (spreads, totals, moneylines)
+ * - Odds API is PAID - used ONLY for player props
  */
 
-import { getCurrentOdds, fetchAllOdds, formatOddsForContext, getCachedPlayerProps, formatPlayerPropsForContext, type Game, type GamePlayerProps } from './odds'
-import { getCachedESPNData, formatESPNForContext, type ESPNGameData, type ESPNInjury, type ESPNProbable } from './espn'
+import { getCachedPlayerProps, formatPlayerPropsForContext, getCurrentOdds, fetchAllOdds, type GamePlayerProps, type Game } from './odds'
+import { getCachedESPNData, getCachedESPNOdds, formatESPNForContext, formatESPNOddsForContext, type ESPNGameData, type ESPNInjury, type ESPNProbable } from './espn'
 import { getWeatherForGames, formatWeatherForContext } from './weather'
 import { getCachedSoccerStats, formatSoccerStatsForContext } from './soccer-stats'
-import { getLineMovement, formatLineMovementForContext } from './line-movement'
 import { 
   getCachedBestBet, 
-  computeBestBets, 
   formatBestBetForContext,
   getCachedParlay,
-  computeParlayOfTheDay,
   formatParlayForContext,
   getCachedSportBets,
-  computeSportBestBets,
   formatSportBestBetsForContext,
   getCachedBestProp,
   computeBestProp,
@@ -187,11 +186,11 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
  * This is the main function to use in the chat API
  */
 export async function formatCombinedDataForContext(): Promise<string> {
-  // Fetch odds, ESPN data, and CACHED player props in parallel
-  // IMPORTANT: Player props are now cached to reduce API usage
+  // Fetch ESPN odds (FREE), ESPN data, and CACHED player props in parallel
+  // COST OPTIMIZATION: ESPN odds are FREE, Odds API is only used for player props
   // Props are refreshed by the cron job, not per-chat request
-  const [initialOddsData, espnData, cachedProps] = await Promise.all([
-    getCurrentOdds(),
+  const [espnOddsData, espnData, cachedProps] = await Promise.all([
+    getCachedESPNOdds(),
     getCachedESPNData(),
     getCachedPlayerProps().catch(() => [] as GamePlayerProps[])
   ])
@@ -199,23 +198,16 @@ export async function formatCombinedDataForContext(): Promise<string> {
   // Use cached props (populated by cron job)
   const allProps = cachedProps || []
   
-  // If cache returned empty odds, force fetch fresh data
-  let oddsData = initialOddsData
-  if (!oddsData?.games?.length) {
-    console.log('[formatCombinedDataForContext] Cache empty, fetching fresh odds...')
-    oddsData = await fetchAllOdds()
-  }
-  
   // Fetch weather for outdoor games (NFL, NCAAF, MLB, MLS, Soccer)
-  const outdoorGames = oddsData.games
-    .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.sportName))
-    .map(g => ({ id: g.id, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.sportName }))
+  const outdoorGames = espnOddsData.games
+    .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.league))
+    .map(g => ({ id: g.gameId, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.league }))
   
-  // Fetch weather, soccer stats, line movement, best bet, parlay, sport bets, best prop, and track record in parallel
-  const [weatherMap, soccerStats, lineMovement, cachedBestBet, cachedParlay, cachedSportBets, cachedBestProp, trackRecord] = await Promise.all([
+  // Fetch weather, soccer stats, best bet, parlay, sport bets, best prop, and track record in parallel
+  // NOTE: Line movement is now computed from ESPN odds snapshots (handled by cron job)
+  const [weatherMap, soccerStats, cachedBestBet, cachedParlay, cachedSportBets, cachedBestProp, trackRecord] = await Promise.all([
     getWeatherForGames(outdoorGames).catch(() => new Map()),
     getCachedSoccerStats().catch(() => ({ leagues: [], lastUpdated: new Date().toISOString(), error: 'Failed to fetch' })),
-    getLineMovement(oddsData.games).catch(() => []),
     getCachedBestBet().catch(() => null),
     getCachedParlay().catch(() => null),
     getCachedSportBets().catch(() => null),
@@ -223,16 +215,16 @@ export async function formatCombinedDataForContext(): Promise<string> {
     getTrackRecord().catch(() => null)
   ])
   
-  // If no cached best bet, compute it now
-  const bestBetResult = cachedBestBet || computeBestBets(oddsData.games)
+  // Best bets are now computed from cached data (populated by cron job)
+  const bestBetResult = cachedBestBet
   
-  // If no cached parlay, compute it now (handle case where allRankedBets might be undefined)
-  const parlayResult = cachedParlay || computeParlayOfTheDay(bestBetResult?.allRankedBets || [])
+  // Use cached parlay (populated by cron job)
+  const parlayResult = cachedParlay
   
-  // If no cached sport bets, compute them now (handle case where allRankedBets might be undefined)
-  const sportBets = cachedSportBets || computeSportBestBets(bestBetResult?.allRankedBets || [])
+  // Use cached sport bets (populated by cron job)
+  const sportBets = cachedSportBets
   
-  // If no cached best prop, compute it now
+  // Use cached best prop (populated by cron job)
   const bestPropResult = cachedBestProp || computeBestProp(allProps)
   
   const lines: string[] = []
@@ -242,16 +234,34 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('')
   
   // BEST BET SECOND - This is the most important recommendation
-  lines.push(formatBestBetForContext(bestBetResult))
-  lines.push('')
+  if (bestBetResult) {
+    lines.push(formatBestBetForContext(bestBetResult))
+    lines.push('')
+  } else {
+    lines.push('=== BEST BET OF THE DAY ===')
+    lines.push('Best bet data is being computed by the cron job. Check back shortly.')
+    lines.push('')
+  }
   
   // PARLAY OF THE DAY - For users who want multi-leg bets
-  lines.push(formatParlayForContext(parlayResult))
-  lines.push('')
+  if (parlayResult) {
+    lines.push(formatParlayForContext(parlayResult))
+    lines.push('')
+  } else {
+    lines.push('=== PARLAY OF THE DAY ===')
+    lines.push('Parlay data is being computed by the cron job. Check back shortly.')
+    lines.push('')
+  }
   
   // SPORT-SPECIFIC BEST BETS - For users asking about specific sports
-  lines.push(formatSportBestBetsForContext(sportBets))
-  lines.push('')
+  if (sportBets) {
+    lines.push(formatSportBestBetsForContext(sportBets))
+    lines.push('')
+  } else {
+    lines.push('=== SPORT-SPECIFIC BEST BETS ===')
+    lines.push('Sport-specific bets are being computed by the cron job. Check back shortly.')
+    lines.push('')
+  }
   
   // BEST PROP OF THE DAY - For users asking about player props
   lines.push(formatBestPropForContext(bestPropResult))
@@ -261,12 +271,12 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('=== REAL-TIME SPORTS DATA ===')
   lines.push('')
   lines.push('You have access to CURRENT data from SIX sources:')
-  lines.push(`1. BETTING ODDS (The Odds API) - Last updated: ${formatTimestamp(oddsData?.lastUpdated || new Date().toISOString())}${oddsData?.isStale ? ' ⚠️ STALE' : ''}`)
+  lines.push(`1. BETTING ODDS (ESPN - FREE) - ${espnOddsData.games.length} games with odds - Last updated: ${formatTimestamp(espnOddsData?.lastUpdated || new Date().toISOString())}`)
   lines.push(`2. INJURIES & LINEUPS (ESPN API) - Last updated: ${formatTimestamp(espnData?.lastUpdated || new Date().toISOString())}${espnData?.error ? ' ⚠️ ' + espnData.error : ''}`)
   lines.push(`3. PLAYER PROPS (The Odds API) - ${allProps.length} games with props (cached, refreshed by cron)`)
   lines.push(`4. WEATHER (OpenWeatherMap) - ${weatherMap.size} outdoor games with weather data`)
   lines.push(`5. SOCCER STANDINGS (Football-data.org) - ${soccerStats.leagues.length} leagues with standings${soccerStats.error ? ' ⚠️ ' + soccerStats.error : ''}`)
-  lines.push(`6. LINE MOVEMENT - ${lineMovement.length} games with opening vs current lines tracked`)
+  lines.push(`6. LINE MOVEMENT - Tracked via ESPN odds snapshots (updated by cron)`)
   lines.push('')
   
   // Critical instructions for Claude
@@ -288,8 +298,8 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('- For AFTERNOON/EVENING requests: Use props data for high-confidence recommendations')
   lines.push('')
   
-  // Add odds data
-  lines.push(formatOddsForContext(oddsData))
+  // Add ESPN odds data (FREE - replaces The Odds API for game lines)
+  lines.push(formatESPNOddsForContext(espnOddsData))
   lines.push('')
   
   // Add weather data for outdoor games
@@ -300,11 +310,6 @@ export async function formatCombinedDataForContext(): Promise<string> {
   // Add soccer standings data
   if (soccerStats.leagues.length > 0) {
     lines.push(formatSoccerStatsForContext(soccerStats))
-  }
-  
-  // Add line movement data
-  if (lineMovement.length > 0) {
-    lines.push(formatLineMovementForContext(lineMovement))
   }
   
   // Add player props data for ALL sports

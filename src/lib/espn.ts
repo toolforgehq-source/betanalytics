@@ -98,6 +98,282 @@ export interface ESPNData {
   error: string | null
 }
 
+// ============================================
+// ESPN ODDS TYPES AND FUNCTIONS
+// ESPN provides FREE betting odds from DraftKings via the pickcenter endpoint
+// This replaces the need for The Odds API for game lines (spreads, totals, moneylines)
+// ============================================
+
+export interface ESPNOdds {
+  gameId: string
+  sport: string
+  league: string
+  homeTeam: string
+  awayTeam: string
+  commenceTime: string
+  provider: string
+  spread: number | null
+  spreadOdds: { home: number; away: number } | null
+  overUnder: number | null
+  overUnderOdds: { over: number; under: number } | null
+  moneyline: { home: number; away: number } | null
+  homeFavorite: boolean
+}
+
+export interface ESPNOddsData {
+  games: ESPNOdds[]
+  lastUpdated: string
+  error: string | null
+}
+
+// Extended ESPN sports list for odds (includes more sports)
+const ESPN_ODDS_SPORTS = [
+  // Tier 1: Major US Sports
+  { sport: 'basketball', league: 'nba', name: 'NBA' },
+  { sport: 'football', league: 'nfl', name: 'NFL' },
+  { sport: 'hockey', league: 'nhl', name: 'NHL' },
+  { sport: 'basketball', league: 'mens-college-basketball', name: 'NCAAB' },
+  { sport: 'football', league: 'college-football', name: 'NCAAF' },
+  { sport: 'baseball', league: 'mlb', name: 'MLB' },
+  // Tier 2: Soccer
+  { sport: 'soccer', league: 'eng.1', name: 'English Premier League' },
+  { sport: 'soccer', league: 'esp.1', name: 'La Liga' },
+  { sport: 'soccer', league: 'ger.1', name: 'Bundesliga' },
+  { sport: 'soccer', league: 'ita.1', name: 'Serie A' },
+  { sport: 'soccer', league: 'fra.1', name: 'Ligue 1' },
+  { sport: 'soccer', league: 'usa.1', name: 'MLS' },
+  { sport: 'soccer', league: 'uefa.champions', name: 'UEFA Champions League' },
+  // Tier 3: Combat Sports
+  { sport: 'mma', league: 'ufc', name: 'UFC' },
+  // Tier 4: Other Sports
+  { sport: 'golf', league: 'pga', name: 'PGA Tour' },
+  { sport: 'tennis', league: 'atp', name: 'ATP Tennis' },
+]
+
+// Cache for ESPN odds (15 minutes - can refresh more often since it's free)
+const ESPN_ODDS_CACHE_EXPIRY_MS = 15 * 60 * 1000
+let espnOddsCache: ESPNOddsData | null = null
+let espnOddsCacheExpiry: Date | null = null
+
+/**
+ * Fetch odds for a single game from ESPN summary endpoint
+ */
+async function fetchESPNGameOdds(sport: string, league: string, eventId: string, leagueName: string): Promise<ESPNOdds | null> {
+  try {
+    const url = `https://site.web.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${eventId}`
+    
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+    
+    if (!response.ok) {
+      return null
+    }
+    
+    const data = await response.json()
+    
+    // Get pickcenter data (betting odds)
+    const pickcenter = data.pickcenter?.[0]
+    if (!pickcenter) {
+      return null
+    }
+    
+    // Get game info
+    const header = data.header
+    const competition = header?.competitions?.[0]
+    const homeTeam = competition?.competitors?.find((c: { homeAway: string }) => c.homeAway === 'home')
+    const awayTeam = competition?.competitors?.find((c: { homeAway: string }) => c.homeAway === 'away')
+    
+    if (!homeTeam || !awayTeam) {
+      return null
+    }
+    
+    return {
+      gameId: eventId,
+      sport,
+      league: leagueName,
+      homeTeam: homeTeam.team?.displayName || homeTeam.team?.name || 'Unknown',
+      awayTeam: awayTeam.team?.displayName || awayTeam.team?.name || 'Unknown',
+      commenceTime: header?.competitions?.[0]?.date || new Date().toISOString(),
+      provider: pickcenter.provider?.name || 'DraftKings',
+      spread: pickcenter.spread ?? null,
+      spreadOdds: pickcenter.homeTeamOdds?.spreadOdds && pickcenter.awayTeamOdds?.spreadOdds ? {
+        home: pickcenter.homeTeamOdds.spreadOdds,
+        away: pickcenter.awayTeamOdds.spreadOdds
+      } : null,
+      overUnder: pickcenter.overUnder ?? null,
+      overUnderOdds: pickcenter.overOdds && pickcenter.underOdds ? {
+        over: pickcenter.overOdds,
+        under: pickcenter.underOdds
+      } : null,
+      moneyline: pickcenter.homeTeamOdds?.moneyLine && pickcenter.awayTeamOdds?.moneyLine ? {
+        home: pickcenter.homeTeamOdds.moneyLine,
+        away: pickcenter.awayTeamOdds.moneyLine
+      } : null,
+      homeFavorite: pickcenter.homeTeamOdds?.favorite ?? false
+    }
+  } catch (error) {
+    console.error(`Failed to fetch ESPN odds for event ${eventId}:`, error)
+    return null
+  }
+}
+
+/**
+ * Fetch all game IDs from ESPN scoreboard for a sport
+ */
+async function fetchESPNGameIds(sport: string, league: string): Promise<string[]> {
+  try {
+    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard`
+    
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+    
+    if (!response.ok) {
+      return []
+    }
+    
+    const data = await response.json()
+    
+    if (!data.events || !Array.isArray(data.events)) {
+      return []
+    }
+    
+    // Filter to upcoming/scheduled games only (not completed)
+    return data.events
+      .filter((event: { status?: { type?: { completed?: boolean } } }) => !event.status?.type?.completed)
+      .map((event: { id: string }) => event.id)
+  } catch (error) {
+    console.error(`Failed to fetch ESPN game IDs for ${sport}/${league}:`, error)
+    return []
+  }
+}
+
+/**
+ * Fetch all ESPN odds for all supported sports
+ * This is FREE and can be called frequently
+ */
+export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
+  console.log('🔄 Fetching ESPN odds for all sports (FREE)...')
+  
+  const allOdds: ESPNOdds[] = []
+  
+  // Fetch game IDs for all sports in parallel
+  const gameIdPromises = ESPN_ODDS_SPORTS.map(async ({ sport, league, name }) => {
+    const gameIds = await fetchESPNGameIds(sport, league)
+    return { sport, league, name, gameIds }
+  })
+  
+  const sportsWithGameIds = await Promise.all(gameIdPromises)
+  
+  // Fetch odds for each game (limit to 10 games per sport to avoid too many requests)
+  for (const { sport, league, name, gameIds } of sportsWithGameIds) {
+    const limitedGameIds = gameIds.slice(0, 10)
+    
+    if (limitedGameIds.length === 0) {
+      console.log(`📊 ${name}: No upcoming games`)
+      continue
+    }
+    
+    // Fetch odds for each game in parallel
+    const oddsPromises = limitedGameIds.map(gameId => 
+      fetchESPNGameOdds(sport, league, gameId, name)
+    )
+    
+    const oddsResults = await Promise.all(oddsPromises)
+    const validOdds = oddsResults.filter((o): o is ESPNOdds => o !== null)
+    
+    allOdds.push(...validOdds)
+    console.log(`📊 ${name}: ${validOdds.length} games with odds`)
+  }
+  
+  const oddsData: ESPNOddsData = {
+    games: allOdds,
+    lastUpdated: new Date().toISOString(),
+    error: null
+  }
+  
+  // Update cache
+  espnOddsCache = oddsData
+  espnOddsCacheExpiry = new Date(Date.now() + ESPN_ODDS_CACHE_EXPIRY_MS)
+  
+  console.log(`✅ ESPN odds fetched: ${allOdds.length} total games with odds`)
+  
+  return oddsData
+}
+
+/**
+ * Get cached ESPN odds or fetch fresh if expired
+ */
+export async function getCachedESPNOdds(): Promise<ESPNOddsData> {
+  // Check if cache is valid
+  if (espnOddsCache && espnOddsCacheExpiry && espnOddsCacheExpiry > new Date()) {
+    console.log(`📊 Using cached ESPN odds (${espnOddsCache.games.length} games)`)
+    return espnOddsCache
+  }
+  
+  // Fetch fresh data
+  return fetchAllESPNOdds()
+}
+
+/**
+ * Format ESPN odds for Claude's context
+ */
+export function formatESPNOddsForContext(oddsData: ESPNOddsData): string {
+  if (!oddsData?.games?.length) {
+    return `\n=== ESPN BETTING ODDS ===\nNo betting odds currently available from ESPN.\n`
+  }
+  
+  const lines: string[] = []
+  lines.push(`\n=== ESPN BETTING ODDS (${oddsData.games.length} games) ===`)
+  lines.push(`Source: ${oddsData.games[0]?.provider || 'DraftKings'} via ESPN (FREE)`)
+  lines.push(`Last Updated: ${formatTimestamp(oddsData.lastUpdated)}`)
+  lines.push(``)
+  
+  // Group by league
+  const byLeague: Record<string, ESPNOdds[]> = {}
+  for (const game of oddsData.games) {
+    if (!byLeague[game.league]) {
+      byLeague[game.league] = []
+    }
+    byLeague[game.league].push(game)
+  }
+  
+  for (const league of Object.keys(byLeague)) {
+    const games = byLeague[league]
+    lines.push(`--- ${league} (${games.length} games) ---`)
+    
+    for (const game of games) {
+      lines.push(`${game.awayTeam} @ ${game.homeTeam}`)
+      
+      const oddsInfo: string[] = []
+      
+      if (game.spread !== null) {
+        const spreadTeam = game.homeFavorite ? game.homeTeam : game.awayTeam
+        const spreadValue = game.homeFavorite ? game.spread : -game.spread
+        oddsInfo.push(`Spread: ${spreadTeam} ${spreadValue > 0 ? '+' : ''}${spreadValue}`)
+      }
+      
+      if (game.overUnder !== null) {
+        oddsInfo.push(`O/U: ${game.overUnder}`)
+      }
+      
+      if (game.moneyline) {
+        oddsInfo.push(`ML: ${game.homeTeam} ${game.moneyline.home > 0 ? '+' : ''}${game.moneyline.home} / ${game.awayTeam} ${game.moneyline.away > 0 ? '+' : ''}${game.moneyline.away}`)
+      }
+      
+      if (oddsInfo.length > 0) {
+        lines.push(`  ${oddsInfo.join(' | ')}`)
+      }
+      lines.push(``)
+    }
+  }
+  
+  return lines.join('\n')
+}
+
 /**
  * Fetch roster for a specific team from ESPN
  * Returns key players (QBs, RBs, WRs for football; goalies for hockey)

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { fetchAllOdds, fetchSportPlayerProps, setCachedPlayerProps, type GamePlayerProps } from "@/lib/odds"
+import { fetchSportPlayerProps, setCachedPlayerProps, type GamePlayerProps, type Game } from "@/lib/odds"
+import { fetchAllESPNOdds, type ESPNOdds } from "@/lib/espn"
 import { 
   computeBestBets, 
   cacheBestBet, 
@@ -13,16 +14,85 @@ import {
 import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
 
 /**
+ * Convert ESPN odds to Game format for best bet computation
+ */
+function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
+  // Map ESPN league names to sport keys
+  const sportKeyMap: Record<string, string> = {
+    'NBA': 'basketball_nba',
+    'NFL': 'americanfootball_nfl',
+    'NHL': 'icehockey_nhl',
+    'NCAAB': 'basketball_ncaab',
+    'NCAAF': 'americanfootball_ncaaf',
+    'MLB': 'baseball_mlb',
+    'English Premier League': 'soccer_epl',
+    'La Liga': 'soccer_spain_la_liga',
+    'Bundesliga': 'soccer_germany_bundesliga',
+    'Serie A': 'soccer_italy_serie_a',
+    'Ligue 1': 'soccer_france_ligue_one',
+    'MLS': 'soccer_usa_mls',
+    'UEFA Champions League': 'soccer_uefa_champs_league',
+    'UFC': 'mma_mixed_martial_arts',
+    'PGA Tour': 'golf_pga',
+    'ATP Tennis': 'tennis_atp',
+  }
+  
+  const sportKey = sportKeyMap[espnOdds.league] || espnOdds.sport
+  const provider = espnOdds.provider || 'DraftKings'
+  
+  // Build spreads array
+  const spreads = espnOdds.spread !== null ? [{
+    bookmaker: provider,
+    market: 'spreads',
+    outcomes: [
+      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: espnOdds.homeFavorite ? espnOdds.spread : -espnOdds.spread },
+      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: espnOdds.homeFavorite ? -espnOdds.spread : espnOdds.spread }
+    ]
+  }] : []
+  
+  // Build totals array
+  const totals = espnOdds.overUnder !== null ? [{
+    bookmaker: provider,
+    market: 'totals',
+    outcomes: [
+      { name: 'Over', price: espnOdds.overUnderOdds?.over || -110, point: espnOdds.overUnder },
+      { name: 'Under', price: espnOdds.overUnderOdds?.under || -110, point: espnOdds.overUnder }
+    ]
+  }] : []
+  
+  // Build moneylines array
+  const moneylines = espnOdds.moneyline ? [{
+    bookmaker: provider,
+    market: 'h2h',
+    outcomes: [
+      { name: espnOdds.homeTeam, price: espnOdds.moneyline.home },
+      { name: espnOdds.awayTeam, price: espnOdds.moneyline.away }
+    ]
+  }] : []
+  
+  return {
+    id: espnOdds.gameId,
+    sport: sportKey,
+    sportName: espnOdds.league,
+    homeTeam: espnOdds.homeTeam,
+    awayTeam: espnOdds.awayTeam,
+    commenceTime: espnOdds.commenceTime,
+    spreads,
+    totals,
+    moneylines
+  }
+}
+
+/**
  * Cron endpoint to fetch fresh odds data and compute best bet
  * 
- * This endpoint is called by Vercel Cron Jobs at scheduled times:
- * - 8:00 AM ET (13:00 UTC)
- * - 2:00 PM ET (19:00 UTC)
- * - 8:00 PM ET (01:00 UTC next day)
+ * COST OPTIMIZATION:
+ * - ESPN odds are FREE - used for all game lines (spreads, totals, moneylines)
+ * - Odds API is PAID - used ONLY for player props (~30 requests per cron run)
  * 
- * This keeps the odds cache fresh while staying under the 500 requests/month limit.
- * Also computes and caches the deterministic "Best Bet of the Day".
- * Stores picks for track record tracking.
+ * This endpoint is called by Vercel Cron Jobs every 4 hours.
+ * 
+ * Expected API usage: ~180 requests/month (down from ~18,000/month)
  */
 export async function GET(request: Request) {
   try {
@@ -35,27 +105,23 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
     
-    // Check if ODDS_API_KEY is configured
-    if (!process.env.ODDS_API_KEY) {
-      console.error("ODDS_API_KEY is not configured")
-      return NextResponse.json({ 
-        error: "Odds API not configured",
-        details: "ODDS_API_KEY environment variable is not set"
-      }, { status: 500 })
-    }
+    // Note: ODDS_API_KEY is only needed for player props now
+    // ESPN odds are FREE and don't require authentication
     
-    console.log("Starting scheduled odds fetch...")
+    console.log("Starting scheduled odds fetch (ESPN FREE + Odds API props only)...")
     
-    // Fetch fresh odds for Tier 1 sports only (NBA, NFL, NHL, NCAAB, NCAAF, MLB)
-    // This reduces API usage from ~50 requests to ~6 requests per cron run
-    // Tier 1 sports cover 95%+ of user requests
-    const oddsData = await fetchAllOdds(true) // tier1Only = true
+    // Fetch fresh odds from ESPN (FREE - no API key needed)
+    console.log("Fetching ESPN odds (FREE)...")
+    const espnOddsData = await fetchAllESPNOdds()
     
-    console.log(`Fetched ${oddsData.games.length} games at ${oddsData.lastUpdated}`)
+    console.log(`Fetched ${espnOddsData.games.length} games with odds from ESPN at ${espnOddsData.lastUpdated}`)
     
-    // Compute and cache the best bet
-    console.log("Computing best bet...")
-    const bestBetResult = computeBestBets(oddsData.games)
+    // Convert ESPN odds to Game format for best bet computation
+    const gamesForBestBet = espnOddsData.games.map(espnOdds => convertESPNOddsToGame(espnOdds))
+    
+    // Compute and cache the best bet using ESPN odds
+    console.log("Computing best bet from ESPN odds...")
+    const bestBetResult = computeBestBets(gamesForBestBet)
     await cacheBestBet(bestBetResult)
     
     console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)
@@ -134,8 +200,9 @@ export async function GET(request: Request) {
     
     return NextResponse.json({
       success: true,
-      gamesCount: oddsData.games.length,
-      lastUpdated: oddsData.lastUpdated,
+      source: 'ESPN (FREE)',
+      gamesCount: espnOddsData.games.length,
+      lastUpdated: espnOddsData.lastUpdated,
       bestBet: bestBetResult.bestBet ? {
         team: bestBetResult.bestBet.team,
         game: `${bestBetResult.bestBet.awayTeam} @ ${bestBetResult.bestBet.homeTeam}`,
@@ -143,13 +210,14 @@ export async function GET(request: Request) {
         edge: bestBetResult.bestBet.edge
       } : null,
       qualifiedBets: bestBetResult.gamesQualified,
+      propsCount: allProps.length,
       pickStored,
       grading: {
         picksGraded: gradingResult.graded,
         errors: gradingResult.errors,
         pendingPicks: gradingResult.pending
       },
-      message: `Successfully fetched odds for ${oddsData.games.length} games, best bet: ${bestBetResult.bestBet?.team || 'none'}, graded ${gradingResult.graded} picks`
+      message: `ESPN odds: ${espnOddsData.games.length} games (FREE), Props: ${allProps.length} games (Odds API), Best bet: ${bestBetResult.bestBet?.team || 'none'}, Graded: ${gradingResult.graded} picks`
     })
     
   } catch (error) {
