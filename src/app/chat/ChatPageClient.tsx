@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Calculator, BookOpen, User, LogOut, ArrowLeft, Activity, RefreshCw } from 'lucide-react'
+import { Calculator, BookOpen, User, LogOut, ArrowLeft, Activity, RefreshCw, Menu, X } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
@@ -40,6 +40,7 @@ export default function ChatPageClient({
   const [showLessonModal, setShowLessonModal] = useState(false)
   const [analyticsLoading, setAnalyticsLoading] = useState(true)
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const chatRef = useRef<ChatInterfaceRef>(null)
 
   // Get today's lesson
@@ -106,7 +107,8 @@ export default function ChatPageClient({
               <Logo />
             </Link>
             
-            <div className="flex items-center gap-2">
+            {/* Desktop Navigation */}
+            <div className="hidden md:flex items-center gap-2">
               <button
                 onClick={() => setShowHedgeCalculator(!showHedgeCalculator)}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm ${
@@ -142,7 +144,62 @@ export default function ChatPageClient({
                 Sign Out
               </button>
             </div>
+
+            {/* Mobile Hamburger Button */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden flex items-center justify-center w-10 h-10 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors"
+              aria-label="Toggle menu"
+            >
+              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </button>
           </div>
+
+          {/* Mobile Navigation Menu */}
+          {mobileMenuOpen && (
+            <div className="md:hidden mt-4 pt-4 border-t border-slate-800/50 space-y-2">
+              <button
+                onClick={() => {
+                  setShowHedgeCalculator(!showHedgeCalculator)
+                  setMobileMenuOpen(false)
+                }}
+                className={`w-full flex items-center gap-2 px-4 py-3 rounded-lg transition-colors text-sm ${
+                  showHedgeCalculator 
+                    ? 'bg-blue-500/20 border border-blue-500/30 text-blue-300' 
+                    : 'bg-slate-800/50 hover:bg-slate-700/50'
+                }`}
+              >
+                {showHedgeCalculator ? (
+                  <>
+                    <ArrowLeft className="w-4 h-4" />
+                    Back to Chat
+                  </>
+                ) : (
+                  <>
+                    <Calculator className="w-4 h-4" />
+                    Hedge Calculator
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  router.push('/account')
+                  setMobileMenuOpen(false)
+                }}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <User className="w-4 h-4" />
+                Account
+              </button>
+              <button
+                onClick={() => signOut({ callbackUrl: '/' })}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <LogOut className="w-4 h-4" />
+                Sign Out
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
