@@ -23,8 +23,8 @@ const ESPN_SPORTS = [
   { sport: 'baseball', league: 'mlb', name: 'MLB' },
 ]
 
-// Cache for ESPN data (30 minutes)
-const ESPN_CACHE_EXPIRY_MS = 30 * 60 * 1000
+// Cache for ESPN data (5 minutes - injuries are critical for betting decisions)
+const ESPN_CACHE_EXPIRY_MS = 5 * 60 * 1000
 let espnCache: ESPNData | null = null
 let espnCacheExpiry: Date | null = null
 
@@ -836,16 +836,25 @@ export function formatESPNForContext(espnData: ESPNData): string {
     return `No ESPN game data currently available.${espnData?.error ? ` Error: ${espnData.error}` : ''}`
   }
   
+  // Format last updated time in ET for user-friendly display
+  const lastUpdatedET = new Date(espnData.lastUpdated).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }) + ' ET'
+  
   const lines: string[] = []
   lines.push(`=== REAL-TIME ROSTER, INJURY & LINEUP DATA (ESPN) ===`)
-  lines.push(`Last Updated: ${formatTimestamp(espnData.lastUpdated)}`)
+  lines.push(`⏰ Data freshness: Updated as of ${lastUpdatedET} (refreshes every 5 minutes)`)
   if (espnData.error) {
     lines.push(`⚠️ Warning: ${espnData.error}`)
   }
   lines.push('')
-  lines.push(`CRITICAL: The roster data below shows CURRENT players on each team.`)
+  lines.push(`CRITICAL: The roster and injury data below is CURRENT as of ${lastUpdatedET}.`)
+  lines.push(`When discussing injuries, mention "as of ${lastUpdatedET}" so users know the data is fresh.`)
   lines.push(`DO NOT mention any player whose name does not appear in the roster below.`)
-  lines.push(`If you're unsure about a player, say "I cannot verify current roster status."`)
+  lines.push(`If injury list is empty, say "ESPN reports no significant injuries as of ${lastUpdatedET}."`)
   lines.push('')
   
   // Group games by league
