@@ -118,6 +118,8 @@ export interface ESPNOdds {
   overUnderOdds: { over: number; under: number } | null
   moneyline: { home: number; away: number } | null
   homeFavorite: boolean
+  gameStatus: 'pre' | 'in' | 'post'
+  statusDetail: string
 }
 
 export interface ESPNOddsData {
@@ -189,6 +191,10 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
       return null
     }
     
+    // Get game status from header
+    const gameState = header?.competitions?.[0]?.status?.type?.state || 'pre'
+    const statusDetail = header?.competitions?.[0]?.status?.type?.shortDetail || ''
+    
     return {
       gameId: eventId,
       sport,
@@ -211,7 +217,9 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
         home: pickcenter.homeTeamOdds.moneyLine,
         away: pickcenter.awayTeamOdds.moneyLine
       } : null,
-      homeFavorite: pickcenter.homeTeamOdds?.favorite ?? false
+      homeFavorite: pickcenter.homeTeamOdds?.favorite ?? false,
+      gameStatus: gameState as 'pre' | 'in' | 'post',
+      statusDetail: statusDetail
     }
   } catch (error) {
     console.error(`Failed to fetch ESPN odds for event ${eventId}:`, error)
@@ -319,6 +327,32 @@ export async function getCachedESPNOdds(): Promise<ESPNOddsData> {
 }
 
 /**
+ * Format game time in ET timezone
+ */
+function formatGameTimeET(isoString: string): string {
+  const date = new Date(isoString)
+  return date.toLocaleString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: 'America/New_York'
+  }) + ' ET'
+}
+
+/**
+ * Get status label for display
+ */
+function getStatusLabel(status: 'pre' | 'in' | 'post', detail: string): string {
+  switch (status) {
+    case 'pre': return 'SCHEDULED'
+    case 'in': return `IN PROGRESS (${detail || 'Live'})`
+    case 'post': return 'FINAL'
+  }
+}
+
+/**
  * Format ESPN odds for Claude's context
  */
 export function formatESPNOddsForContext(oddsData: ESPNOddsData): string {
@@ -326,10 +360,27 @@ export function formatESPNOddsForContext(oddsData: ESPNOddsData): string {
     return `\n=== ESPN BETTING ODDS ===\nNo betting odds currently available from ESPN.\n`
   }
   
+  // Get current time in ET for "today" calculation
+  const now = new Date()
+  const etFormatter = new Intl.DateTimeFormat('en-US', { 
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  })
+  const todayET = etFormatter.format(now)
+  
   const lines: string[] = []
   lines.push(`\n=== ESPN BETTING ODDS (${oddsData.games.length} games) ===`)
   lines.push(`Source: ${oddsData.games[0]?.provider || 'DraftKings'} via ESPN (FREE)`)
   lines.push(`Last Updated: ${formatTimestamp(oddsData.lastUpdated)}`)
+  lines.push(`Current Time (ET): ${now.toLocaleString('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} ET`)
+  lines.push(``)
+  lines.push(`GAME STATUS KEY: SCHEDULED = not started yet, IN PROGRESS = currently playing, FINAL = completed`)
+  lines.push(`IMPORTANT: When user asks for "tonight's game" or "today's game", only show games that are:`)
+  lines.push(`  1. Status = SCHEDULED (not started yet)`)
+  lines.push(`  2. Game time is TODAY in ET timezone`)
+  lines.push(`  Do NOT include IN PROGRESS or FINAL games when asked about "tonight's game".`)
   lines.push(``)
   
   // Group by league
@@ -346,7 +397,17 @@ export function formatESPNOddsForContext(oddsData: ESPNOddsData): string {
     lines.push(`--- ${league} (${games.length} games) ---`)
     
     for (const game of games) {
+      // Format game time and check if it's today
+      const gameTimeET = formatGameTimeET(game.commenceTime)
+      const gameDateET = etFormatter.format(new Date(game.commenceTime))
+      const isToday = gameDateET === todayET
+      const todayLabel = isToday ? '[TODAY]' : '[NOT TODAY]'
+      
+      // Get status label
+      const statusLabel = getStatusLabel(game.gameStatus, game.statusDetail)
+      
       lines.push(`${game.awayTeam} @ ${game.homeTeam}`)
+      lines.push(`  Time: ${gameTimeET} ${todayLabel} | Status: ${statusLabel}`)
       
       const oddsInfo: string[] = []
       
