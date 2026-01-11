@@ -520,6 +520,51 @@ async function fetchTeamRoster(sport: string, league: string, teamId: string, te
 }
 
 /**
+ * Fetch injuries for a specific game from ESPN summary endpoint
+ * The scoreboard endpoint doesn't include injuries, but the summary endpoint does
+ */
+async function fetchGameInjuries(sport: string, league: string, eventId: string): Promise<ESPNInjury[]> {
+  try {
+    const url = `https://site.web.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${eventId}`
+    
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+    
+    if (!response.ok) {
+      return []
+    }
+    
+    const data = await response.json()
+    
+    const injuries: ESPNInjury[] = []
+    
+    // Extract injuries from the summary endpoint
+    if (data.injuries && Array.isArray(data.injuries)) {
+      for (const teamInjuries of data.injuries) {
+        const teamName = teamInjuries.team?.displayName || 'Unknown'
+        if (teamInjuries.injuries && Array.isArray(teamInjuries.injuries)) {
+          for (const injury of teamInjuries.injuries) {
+            injuries.push({
+              team: teamName,
+              player: injury.athlete?.displayName || injury.athlete?.fullName || 'Unknown',
+              status: injury.status || 'Unknown',
+              details: injury.type?.description || injury.details?.detail || ''
+            })
+          }
+        }
+      }
+    }
+    
+    return injuries
+  } catch (error) {
+    console.error(`Failed to fetch injuries for event ${eventId}:`, error)
+    return []
+  }
+}
+
+/**
  * Fetch scoreboard data for a specific sport/league from ESPN
  */
 async function fetchESPNScoreboard(sport: string, league: string, leagueName: string): Promise<ESPNGameData[]> {
@@ -708,6 +753,35 @@ export async function fetchAllESPNData(): Promise<ESPNData> {
   const gamesWithRosters = allGames.filter(g => g.homeTeam.roster || g.awayTeam.roster).length
   console.log(`📊 Attached rosters to ${gamesWithRosters} games`)
   
+  // Fetch injuries from summary endpoint for upcoming games
+  // The scoreboard endpoint doesn't include injuries, but the summary endpoint does
+  console.log(`🏥 Fetching injuries for ${upcomingGames.length} upcoming games...`)
+  
+  const INJURY_BATCH_SIZE = 5
+  for (let i = 0; i < upcomingGames.length; i += INJURY_BATCH_SIZE) {
+    const batch = upcomingGames.slice(i, i + INJURY_BATCH_SIZE)
+    const injuryPromises = batch.map(async (game) => {
+      const sportConfig = ESPN_SPORTS.find(s => s.name === game.league)
+      if (!sportConfig) return { gameId: game.id, injuries: [] }
+      
+      const injuries = await fetchGameInjuries(sportConfig.sport, sportConfig.league, game.id)
+      return { gameId: game.id, injuries }
+    })
+    
+    const injuryResults = await Promise.all(injuryPromises)
+    
+    // Attach injuries to games
+    for (const result of injuryResults) {
+      const gameIndex = allGames.findIndex(g => g.id === result.gameId)
+      if (gameIndex >= 0 && result.injuries.length > 0) {
+        allGames[gameIndex].injuries = result.injuries
+      }
+    }
+  }
+  
+  const gamesWithInjuries = allGames.filter(g => g.injuries.length > 0).length
+  console.log(`🏥 Attached injuries to ${gamesWithInjuries} games`)
+  
   return {
     games: allGames,
     lastUpdated: new Date().toISOString(),
@@ -841,15 +915,15 @@ export function formatESPNForContext(espnData: ESPNData): string {
       
       // Injuries
       if (game.injuries.length > 0) {
-        lines.push(`Injuries:`)
-        for (const injury of game.injuries.slice(0, 10)) {
+        lines.push(`🏥 INJURY REPORT (${game.injuries.length} players):`)
+        for (const injury of game.injuries.slice(0, 15)) {
           lines.push(`  - ${injury.player} (${injury.team}): ${injury.status}${injury.details ? ` - ${injury.details}` : ''}`)
         }
-        if (game.injuries.length > 10) {
-          lines.push(`  ... and ${game.injuries.length - 10} more injuries`)
+        if (game.injuries.length > 15) {
+          lines.push(`  ... and ${game.injuries.length - 15} more injuries`)
         }
       } else {
-        lines.push(`Injuries: None reported`)
+        lines.push(`🏥 INJURY REPORT: No significant injuries reported by ESPN. Both teams appear healthy.`)
       }
       
       // Venue and broadcast
