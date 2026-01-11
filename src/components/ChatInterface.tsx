@@ -263,7 +263,7 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
       </div>
 
       <div className="border-t border-slate-800 p-4 bg-slate-950/30">
-        <div className="flex gap-3">
+        <div className="flex gap-2 sm:gap-3">
           <input
             type="text"
             value={input}
@@ -274,17 +274,17 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
                 handleSend()
               }
             }}
-            placeholder="Ask me anything about sports betting..."
-            className="flex-1 bg-slate-800/50 border border-slate-700 rounded-xl px-4 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder="Ask me anything about sports b..."
+            className="flex-1 min-w-0 bg-slate-800/50 border border-slate-700 rounded-xl px-3 sm:px-4 py-3 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm sm:text-base"
             disabled={!isSubscribed && questionsRemaining >= 0 && questionsRemaining <= 0}
           />
           <button
             onClick={handleSend}
             disabled={!input.trim() || isLoading || (!isSubscribed && questionsRemaining >= 0 && questionsRemaining <= 0)}
-            className="px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 disabled:from-slate-700 disabled:to-slate-600 disabled:cursor-not-allowed rounded-xl font-semibold transition-all flex items-center gap-2 shadow-lg"
+            className="px-3 sm:px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 disabled:from-slate-700 disabled:to-slate-600 disabled:cursor-not-allowed rounded-xl font-semibold transition-all flex items-center gap-1 sm:gap-2 shadow-lg flex-shrink-0"
           >
             <Send className="w-4 h-4" />
-            Send
+            <span className="hidden sm:inline">Send</span>
           </button>
         </div>
         
