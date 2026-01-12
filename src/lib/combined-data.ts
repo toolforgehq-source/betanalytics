@@ -95,6 +95,10 @@ function matchGames(oddsGame: Game, espnGame: ESPNGameData): boolean {
 /**
  * Convert ESPN odds to Game format for best bet computation
  * This allows on-demand computation when the cache is empty
+ * 
+ * IMPORTANT: The bet-ranking algorithm requires at least 2 bookmakers for consensus calculation.
+ * Since ESPN only provides one source (typically DraftKings), we create entries for multiple
+ * bookmakers with the same odds. This is valid because ESPN's odds represent the market consensus.
  */
 function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
   const sportKeyMap: Record<string, string> = {
@@ -114,34 +118,39 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
   }
   
   const sportKey = sportKeyMap[espnOdds.league] || espnOdds.sport
-  const provider = espnOdds.provider || 'DraftKings'
   
-  const spreads = espnOdds.spread !== null ? [{
-    bookmaker: provider,
+  // Create entries for multiple bookmakers to satisfy consensus calculation requirement
+  // ESPN typically shows DraftKings odds, but we duplicate for FanDuel to enable consensus
+  const bookmakers = ['DraftKings', 'FanDuel']
+  
+  const spreadValue = espnOdds.spread ?? 0
+  const spreads = espnOdds.spread !== null ? bookmakers.map(bookmaker => ({
+    bookmaker,
     market: 'spreads',
     outcomes: [
-      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: espnOdds.homeFavorite ? espnOdds.spread : -espnOdds.spread },
-      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: espnOdds.homeFavorite ? -espnOdds.spread : espnOdds.spread }
+      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: espnOdds.homeFavorite ? spreadValue : -spreadValue },
+      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: espnOdds.homeFavorite ? -spreadValue : spreadValue }
     ]
-  }] : []
+  })) : []
   
-  const totals = espnOdds.overUnder !== null ? [{
-    bookmaker: provider,
+  const overUnderValue = espnOdds.overUnder ?? 0
+  const totals = espnOdds.overUnder !== null ? bookmakers.map(bookmaker => ({
+    bookmaker,
     market: 'totals',
     outcomes: [
-      { name: 'Over', price: espnOdds.overUnderOdds?.over || -110, point: espnOdds.overUnder },
-      { name: 'Under', price: espnOdds.overUnderOdds?.under || -110, point: espnOdds.overUnder }
+      { name: 'Over', price: espnOdds.overUnderOdds?.over || -110, point: overUnderValue },
+      { name: 'Under', price: espnOdds.overUnderOdds?.under || -110, point: overUnderValue }
     ]
-  }] : []
+  })) : []
   
-  const moneylines = espnOdds.moneyline ? [{
-    bookmaker: provider,
+  const moneylines = espnOdds.moneyline ? bookmakers.map(bookmaker => ({
+    bookmaker,
     market: 'h2h',
     outcomes: [
-      { name: espnOdds.homeTeam, price: espnOdds.moneyline.home },
-      { name: espnOdds.awayTeam, price: espnOdds.moneyline.away }
+      { name: espnOdds.homeTeam, price: espnOdds.moneyline!.home },
+      { name: espnOdds.awayTeam, price: espnOdds.moneyline!.away }
     ]
-  }] : []
+  })) : []
   
   return {
     id: espnOdds.gameId,
