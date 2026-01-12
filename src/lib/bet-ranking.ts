@@ -540,58 +540,85 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push('')
   
   if (!result.bestBet) {
-    lines.push(`NO BEST BET AVAILABLE: ${result.reason}`)
-    lines.push('')
-    lines.push('When user asks for "best bet", respond with this two-tier message:')
-    lines.push('')
-    lines.push('TIER 1 - EXPLAIN WHY NO PICK:')
-    lines.push('"No high-confidence value bets today. Our criteria (55% win probability, 3% edge, max -250 juice) ensure we only recommend +EV plays."')
-    lines.push('')
-    lines.push('"Today\'s market: All high-probability games are heavy favorites with negative edge (you\'d be paying a premium, not getting value)."')
-    lines.push('')
-    lines.push('TIER 2 - OFFER FALLBACK OPTIONS:')
-    lines.push('"If you still want action, I can show you:"')
-    lines.push('- "Closest misses - Games that nearly qualified (reasonable odds, small edge)"')
-    lines.push('- "Most likely winners - High probability picks, but NOT value bets (informational only, not recommendations)"')
-    lines.push('')
-    lines.push('"Which would you like to see?"')
-    lines.push('')
-    
-    // Include fallback data for when user asks
+    // Get fallback data
     const closestMisses = result.closestMisses ?? []
     const mostLikelyWinners = result.mostLikelyWinners ?? []
     
-    if (closestMisses.length > 0) {
-      lines.push('=== CLOSEST MISSES (for user who asks) ===')
-      lines.push('IMPORTANT: These are NOT recommendations. Label them as "informational only".')
-      for (const miss of closestMisses) {
-        lines.push(`- ${miss.team} ML @ ${formatOdds(miss.bestPrice)} (${miss.bestBook})`)
-        lines.push(`  Game: ${miss.awayTeam} @ ${miss.homeTeam} | ${miss.sportName}`)
-        lines.push(`  Probability: ${miss.consensusProbability}% | Edge: ${miss.edge}%`)
-        lines.push(`  EV: $${miss.expectedValue.toFixed(2)} per $100 | ROI: ${miss.roi.toFixed(1)}%`)
-        lines.push(`  Why disqualified: ${miss.disqualifyReasons.join(', ')}`)
-      }
-      lines.push('')
+    // Find the BEST AVAILABLE option - prioritize by ROI, then by probability
+    // First try closest misses (better value), then most likely winners
+    let bestAvailable: FallbackBet | null = null
+    
+    // From closest misses, find the one with best ROI that has positive EV
+    const positiveEVMisses = closestMisses.filter(m => m.expectedValue > 0)
+    if (positiveEVMisses.length > 0) {
+      bestAvailable = positiveEVMisses.sort((a, b) => b.roi - a.roi)[0]
     }
     
-    if (mostLikelyWinners.length > 0) {
-      lines.push('=== MOST LIKELY WINNERS (for user who asks) ===')
-      lines.push('IMPORTANT: These are NOT recommendations. They may have NEGATIVE EV.')
-      lines.push('Label them as "informational only - not a betting recommendation".')
-      lines.push('CRITICAL: Do NOT recommend bets with negative EV or ROI < 1%!')
-      for (const winner of mostLikelyWinners) {
-        lines.push(`- ${winner.team} ML @ ${formatOdds(winner.bestPrice)} (${winner.bestBook})`)
-        lines.push(`  Game: ${winner.awayTeam} @ ${winner.homeTeam} | ${winner.sportName}`)
-        lines.push(`  Probability: ${winner.consensusProbability}% | Edge: ${winner.edge}%`)
-        lines.push(`  EV: $${winner.expectedValue.toFixed(2)} per $100 | ROI: ${winner.roi.toFixed(1)}%`)
-        if (winner.expectedValue <= 0) {
-          lines.push(`  ⚠️ NEGATIVE EV - DO NOT RECOMMEND. Risk $${Math.abs(winner.bestPrice > 0 ? 100 : winner.bestPrice)} to win $${winner.bestPrice > 0 ? winner.bestPrice : 100}`)
-        } else if (winner.roi < 1) {
-          lines.push(`  ⚠️ TINY ROI (${winner.roi.toFixed(2)}%) - Heavy favorite with minimal value`)
-        }
+    // If no positive EV misses, try most likely winners with positive EV
+    if (!bestAvailable) {
+      const positiveEVWinners = mostLikelyWinners.filter(w => w.expectedValue > 0)
+      if (positiveEVWinners.length > 0) {
+        bestAvailable = positiveEVWinners.sort((a, b) => b.roi - a.roi)[0]
+      }
+    }
+    
+    // If still nothing, take the best ROI from all options (even if negative EV)
+    if (!bestAvailable) {
+      const allOptions = [...closestMisses, ...mostLikelyWinners]
+      if (allOptions.length > 0) {
+        bestAvailable = allOptions.sort((a, b) => b.roi - a.roi)[0]
+      }
+    }
+    
+    lines.push('NO STRICT VALUE BET AVAILABLE')
+    lines.push(`Reason: ${result.reason}`)
+    lines.push('')
+    
+    if (bestAvailable) {
+      lines.push('=== BEST AVAILABLE LEAN (USE THIS) ===')
+      lines.push('IMPORTANT: When user asks for "best bet", IMMEDIATELY give them this pick.')
+      lines.push('DO NOT ask follow-up questions. DO NOT offer multiple options.')
+      lines.push('Just present this as "Today\'s Best Lean" with the disclaimer below.')
+      lines.push('')
+      lines.push('BEST AVAILABLE LEAN:')
+      lines.push(`Team: ${bestAvailable.team} (Moneyline)`)
+      lines.push(`Game: ${bestAvailable.awayTeam} @ ${bestAvailable.homeTeam}`)
+      lines.push(`Sport: ${bestAvailable.sportName}`)
+      lines.push(`Best Price: ${formatOdds(bestAvailable.bestPrice)} at ${bestAvailable.bestBook}`)
+      lines.push('')
+      lines.push('VALUE METRICS:')
+      lines.push(`- Win Probability: ${bestAvailable.consensusProbability}%`)
+      lines.push(`- Edge: ${bestAvailable.edge}%`)
+      lines.push(`- Expected Value: $${bestAvailable.expectedValue.toFixed(2)} per $100`)
+      lines.push(`- ROI: ${bestAvailable.roi.toFixed(2)}%`)
+      lines.push('')
+      
+      if (bestAvailable.expectedValue > 0) {
+        lines.push('STATUS: Positive EV - This is a mathematically sound bet, just below our strict thresholds.')
+        lines.push(`Why not "Best Bet": ${bestAvailable.disqualifyReasons.join(', ')}`)
+      } else {
+        lines.push('STATUS: Negative EV - This is NOT a value bet. Only for users who want action.')
+        lines.push('DISCLAIMER: "This doesn\'t meet our value criteria. Consider passing or betting small."')
       }
       lines.push('')
+      lines.push('RESPONSE FORMAT:')
+      lines.push('## Today\'s Best Lean')
+      lines.push('')
+      lines.push('**Note:** No games meet our strict value criteria today (55%+ probability, 3%+ edge).')
+      lines.push('')
+      lines.push(`**${bestAvailable.team} ML @ ${formatOdds(bestAvailable.bestPrice)}** (${bestAvailable.bestBook})`)
+      lines.push('')
+      lines.push(`Win Probability: ${bestAvailable.consensusProbability}% | Edge: ${bestAvailable.edge}% | EV: $${bestAvailable.expectedValue.toFixed(2)} | ROI: ${bestAvailable.roi.toFixed(2)}%`)
+      lines.push('')
+      lines.push('[Add 2-3 sentences about why this is the best available option and any relevant game factors]')
+      lines.push('')
+      lines.push('**Recommendation:** This is a lean, not a lock. Consider smaller bet size.')
+    } else {
+      lines.push('NO GAMES AVAILABLE')
+      lines.push('There are no games with odds data available right now.')
+      lines.push('Tell the user: "No games with odds data available right now. Check back later."')
     }
+    lines.push('')
     
     return lines.join('\n')
   }
