@@ -617,7 +617,8 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push(`- This means: For every $100 bet, you expect to profit $${bet.expectedValue.toFixed(2)} on average`)
   lines.push('')
   lines.push('ALL BOOK PRICES:')
-  for (const book of bet.allBookPrices) {
+  const bookPrices = bet.allBookPrices || []
+  for (const book of bookPrices) {
     lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
   }
   

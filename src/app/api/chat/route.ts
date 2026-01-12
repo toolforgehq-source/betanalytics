@@ -395,7 +395,16 @@ export async function POST(request: Request) {
       )
     }
 
-    const { messages: chatMessages } = await request.json()
+    const body = await request.json()
+    const chatMessages = body?.messages
+    
+    // Validate chatMessages is an array
+    if (!chatMessages || !Array.isArray(chatMessages) || chatMessages.length === 0) {
+      return NextResponse.json(
+        { error: "Invalid request", details: "messages must be a non-empty array" },
+        { status: 400 }
+      )
+    }
 
     const conversations = await db.conversations.findByUserId(session.user.id)
     let conversation = conversations[0]
