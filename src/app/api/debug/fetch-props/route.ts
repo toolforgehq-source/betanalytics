@@ -38,19 +38,38 @@ export async function GET() {
     }
     const fetchTime = Date.now() - fetchStartTime
     
-    // If we got fresh props and cache was empty, populate the cache
+    // If we got fresh props and cache was empty, populate the cache with ALL sports
     let cacheUpdated = false
+    let allProps: GamePlayerProps[] = []
+    let sportBreakdown: Record<string, number> = {}
+    
     if (freshNbaProps.length > 0 && (!cachedProps || cachedProps.length === 0)) {
       // Fetch all sports and cache
-      const [nflProps, nhlProps] = await Promise.all([
+      const [nflProps, nhlProps, ncaabProps, ncaafProps] = await Promise.all([
         fetchSportPlayerProps('americanfootball_nfl').catch(() => [] as GamePlayerProps[]),
         fetchSportPlayerProps('icehockey_nhl').catch(() => [] as GamePlayerProps[]),
+        fetchSportPlayerProps('basketball_ncaab').catch(() => [] as GamePlayerProps[]),
+        fetchSportPlayerProps('americanfootball_ncaaf').catch(() => [] as GamePlayerProps[]),
       ])
       
-      const allProps = [...freshNbaProps, ...nflProps, ...nhlProps]
+      allProps = [...freshNbaProps, ...nflProps, ...nhlProps, ...ncaabProps, ...ncaafProps]
+      sportBreakdown = {
+        NBA: freshNbaProps.length,
+        NFL: nflProps.length,
+        NHL: nhlProps.length,
+        NCAAB: ncaabProps.length,
+        NCAAF: ncaafProps.length,
+      }
+      
       await setCachedPlayerProps(allProps)
       cacheUpdated = true
     }
+    
+    // Re-check cache after update to verify it persisted
+    const updatedCachedProps = cacheUpdated ? await getCachedPlayerProps() : cachedProps
+    
+    // Use updated cache if we just wrote to it
+    const finalCachedProps = updatedCachedProps || cachedProps
     
     return NextResponse.json({
       timestamp: new Date().toISOString(),
@@ -58,8 +77,8 @@ export async function GET() {
       
       cachedProps: {
         checkTimeMs: cacheCheckTime,
-        count: cachedProps?.length || 0,
-        games: cachedProps?.map(p => ({
+        count: finalCachedProps?.length || 0,
+        games: finalCachedProps?.map(p => ({
           game: `${p.awayTeam} @ ${p.homeTeam}`,
           sport: p.sport,
           playersCount: p.playersWithProps?.length || 0,
@@ -79,11 +98,13 @@ export async function GET() {
       },
       
       cacheUpdated,
+      sportBreakdown: cacheUpdated ? sportBreakdown : undefined,
+      totalPropsCached: cacheUpdated ? allProps.length : undefined,
       
       diagnosis: {
         apiKeyConfigured: envCheck.hasOddsApiKey,
         kvConfigured: envCheck.hasKvUrl && envCheck.hasKvToken,
-        cacheHasData: (cachedProps?.length || 0) > 0,
+        cacheHasData: (finalCachedProps?.length || 0) > 0,
         freshFetchWorking: freshNbaProps.length > 0,
         issue: !envCheck.hasOddsApiKey
           ? 'ODDS_API_KEY not configured'
@@ -91,8 +112,8 @@ export async function GET() {
           ? `API error: ${fetchError}`
           : freshNbaProps.length === 0
           ? 'No props returned from API - props may not be posted yet for today\'s games'
-          : (cachedProps?.length || 0) === 0 && freshNbaProps.length > 0
-          ? 'Cache was empty but fresh fetch works - cache has been updated'
+          : cacheUpdated
+          ? `Cache updated with ${allProps.length} games across all sports`
           : 'Props system working correctly'
       }
     })
