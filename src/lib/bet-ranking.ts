@@ -35,10 +35,14 @@ export interface RankedBet {
   impliedProbability: number    // Implied prob from best price
   edge: number                  // consensus - implied
   
+  // NEW: Expected Value and ROI calculations
+  expectedValue: number         // EV in dollars per $100 bet
+  roi: number                   // ROI as percentage
+  
   // All book prices for transparency
   allBookPrices: { book: string; price: number; impliedProb: number }[]
   
-  // Ranking score (for sorting)
+  // Ranking score (for sorting) - NOW BASED ON EV/ROI
   score: number
   
   // Timestamp
@@ -58,6 +62,9 @@ export interface FallbackBet {
   bestBook: string
   impliedProbability: number
   edge: number
+  // NEW: Expected Value and ROI calculations
+  expectedValue: number         // EV in dollars per $100 bet
+  roi: number                   // ROI as percentage
   disqualifyReasons: string[]
 }
 
@@ -106,6 +113,72 @@ export function americanToImpliedProbability(odds: number): number {
   } else {
     return 100 / (odds + 100)
   }
+}
+
+/**
+ * Calculate Expected Value (EV) in dollars per $100 bet
+ * EV = (Win Probability × Payout) - (Loss Probability × Stake)
+ * 
+ * Example: -800 odds with 89% probability
+ * - Payout on win: $12.50 (100/8)
+ * - EV = (0.89 × $12.50) - (0.11 × $100) = $11.13 - $11 = +$0.13
+ * - This is terrible value despite high probability!
+ */
+export function calculateExpectedValue(americanOdds: number, winProbability: number): number {
+  const winProb = winProbability // Already in decimal form (0-1)
+  const loseProb = 1 - winProb
+  
+  let payout: number
+  if (americanOdds < 0) {
+    // Favorite: -200 means bet $200 to win $100, so payout per $100 bet = 100 / (200/100) = $50
+    payout = 100 / (Math.abs(americanOdds) / 100)
+  } else {
+    // Underdog: +150 means bet $100 to win $150
+    payout = americanOdds
+  }
+  
+  // EV = (Win Prob × Payout) - (Loss Prob × Stake)
+  const ev = (winProb * payout) - (loseProb * 100)
+  
+  return ev
+}
+
+/**
+ * Calculate ROI (Return on Investment) as a percentage
+ * ROI = EV / Stake × 100
+ */
+export function calculateROI(expectedValue: number): number {
+  return (expectedValue / 100) * 100 // EV per $100 bet as percentage
+}
+
+/**
+ * Calculate bet quality score (0-100)
+ * 
+ * NEW SCORING SYSTEM:
+ * - ROI is the PRIMARY factor (50 points max)
+ * - Win probability is SECONDARY (30 points max)
+ * - Edge is a MODIFIER (20 points max)
+ * 
+ * This prevents recommending -800 favorites with tiny ROI
+ */
+function calculateBetScore(
+  winProbability: number,  // 0-1
+  edge: number,            // 0-1 (e.g., 0.05 = 5%)
+  roi: number              // percentage (e.g., 5.0 = 5%)
+): number {
+  // ROI Score (50 points max)
+  // 0% ROI = 0 points, 5% ROI = 25 points, 10%+ ROI = 50 points
+  const roiScore = Math.max(0, Math.min(50, roi * 5))
+  
+  // Probability Score (30 points max)
+  // 50% = 0 points, 60% = 15 points, 70%+ = 30 points
+  const probScore = Math.max(0, Math.min(30, (winProbability - 0.5) * 150))
+  
+  // Edge Score (20 points max)
+  // 0% edge = 0 points, 5% edge = 10 points, 10%+ edge = 20 points
+  const edgeScore = Math.max(0, Math.min(20, edge * 200))
+  
+  return Math.round(roiScore + probScore + edgeScore)
 }
 
 /**
@@ -261,13 +334,23 @@ function analyzeGame(game: Game): RankedBet[] {
     
     const edge = consensus.consensusProb - bestPrice.impliedProb
     
+    // NEW: Calculate Expected Value and ROI
+    const ev = calculateExpectedValue(bestPrice.price, consensus.consensusProb)
+    const roi = calculateROI(ev)
+    
     // Check minimum thresholds
     if (consensus.consensusProb < MIN_PROBABILITY) continue
     if (edge < MIN_EDGE) continue
     
-    // Calculate ranking score: probability first, then edge
-    // Score = probability * 100 + edge * 10 (so 60% + 5% edge = 60.5)
-    const score = consensus.consensusProb * 100 + edge * 10
+    // NEW: Also require positive EV (this is the key fix!)
+    if (ev <= 0) continue
+    
+    // NEW: Require minimum ROI of 1% to avoid tiny-edge heavy favorites
+    if (roi < 1) continue
+    
+    // NEW: Calculate score using EV-based scoring system
+    // This prioritizes ROI over raw probability
+    const score = calculateBetScore(consensus.consensusProb, edge, roi)
     
     rankedBets.push({
       gameId: game.id,
@@ -283,6 +366,8 @@ function analyzeGame(game: Game): RankedBet[] {
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
       edge: Math.round(edge * 1000) / 10,
+      expectedValue: Math.round(ev * 100) / 100, // e.g., $5.23
+      roi: Math.round(roi * 100) / 100, // e.g., 5.23%
       allBookPrices: consensus.bookPrices.map(b => ({
         book: b.book,
         price: b.price,
@@ -327,6 +412,11 @@ function analyzeGameUnfiltered(game: Game): FallbackBet[] {
     if (!bestPrice) continue
     
     const edge = consensus.consensusProb - bestPrice.impliedProb
+    
+    // NEW: Calculate Expected Value and ROI
+    const ev = calculateExpectedValue(bestPrice.price, consensus.consensusProb)
+    const roi = calculateROI(ev)
+    
     const disqualifyReasons: string[] = []
     
     // Check why it doesn't qualify
@@ -338,6 +428,13 @@ function analyzeGameUnfiltered(game: Game): FallbackBet[] {
     }
     if (edge < MIN_EDGE) {
       disqualifyReasons.push(`Edge ${(edge * 100).toFixed(1)}% < 3% min`)
+    }
+    // NEW: Check EV and ROI
+    if (ev <= 0) {
+      disqualifyReasons.push(`Negative EV: $${ev.toFixed(2)} per $100 bet`)
+    }
+    if (roi < 1 && ev > 0) {
+      disqualifyReasons.push(`ROI ${roi.toFixed(1)}% < 1% min (tiny edge on heavy favorite)`)
     }
     
     fallbackBets.push({
@@ -353,6 +450,8 @@ function analyzeGameUnfiltered(game: Game): FallbackBet[] {
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
       edge: Math.round(edge * 1000) / 10,
+      expectedValue: Math.round(ev * 100) / 100, // e.g., $5.23 or -$2.50
+      roi: Math.round(roi * 100) / 100, // e.g., 5.23% or -2.50%
       disqualifyReasons
     })
   }
@@ -393,7 +492,7 @@ export function computeBestBets(games: Game[]): BestBetResult {
     if (games.length === 0) {
       reason = 'No games available'
     } else {
-      reason = 'No games meet criteria (55%+ probability, 3%+ edge, max -250 juice)'
+      reason = 'No games meet criteria (55%+ probability, 3%+ edge, 1%+ ROI, positive EV, max -250 juice)'
     }
   }
   
@@ -469,6 +568,7 @@ export function formatBestBetForContext(result: BestBetResult): string {
         lines.push(`- ${miss.team} ML @ ${formatOdds(miss.bestPrice)} (${miss.bestBook})`)
         lines.push(`  Game: ${miss.awayTeam} @ ${miss.homeTeam} | ${miss.sportName}`)
         lines.push(`  Probability: ${miss.consensusProbability}% | Edge: ${miss.edge}%`)
+        lines.push(`  EV: $${miss.expectedValue.toFixed(2)} per $100 | ROI: ${miss.roi.toFixed(1)}%`)
         lines.push(`  Why disqualified: ${miss.disqualifyReasons.join(', ')}`)
       }
       lines.push('')
@@ -476,14 +576,18 @@ export function formatBestBetForContext(result: BestBetResult): string {
     
     if (mostLikelyWinners.length > 0) {
       lines.push('=== MOST LIKELY WINNERS (for user who asks) ===')
-      lines.push('IMPORTANT: These are NOT recommendations. They may have NEGATIVE edge.')
+      lines.push('IMPORTANT: These are NOT recommendations. They may have NEGATIVE EV.')
       lines.push('Label them as "informational only - not a betting recommendation".')
+      lines.push('CRITICAL: Do NOT recommend bets with negative EV or ROI < 1%!')
       for (const winner of mostLikelyWinners) {
         lines.push(`- ${winner.team} ML @ ${formatOdds(winner.bestPrice)} (${winner.bestBook})`)
         lines.push(`  Game: ${winner.awayTeam} @ ${winner.homeTeam} | ${winner.sportName}`)
         lines.push(`  Probability: ${winner.consensusProbability}% | Edge: ${winner.edge}%`)
-        if (winner.edge < 0) {
-          lines.push(`  WARNING: Negative edge - you are paying a premium for this bet`)
+        lines.push(`  EV: $${winner.expectedValue.toFixed(2)} per $100 | ROI: ${winner.roi.toFixed(1)}%`)
+        if (winner.expectedValue <= 0) {
+          lines.push(`  ⚠️ NEGATIVE EV - DO NOT RECOMMEND. Risk $${Math.abs(winner.bestPrice > 0 ? 100 : winner.bestPrice)} to win $${winner.bestPrice > 0 ? winner.bestPrice : 100}`)
+        } else if (winner.roi < 1) {
+          lines.push(`  ⚠️ TINY ROI (${winner.roi.toFixed(2)}%) - Heavy favorite with minimal value`)
         }
       }
       lines.push('')
@@ -499,12 +603,18 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push(`Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
   lines.push(`Sport: ${bet.sportName}`)
   lines.push(`Game Time: ${formatTime(bet.commenceTime)}`)
+  lines.push(`Score: ${bet.score}/100 (EV-based ranking)`)
   lines.push('')
-  lines.push('PROBABILITY CALCULATION:')
+  lines.push('VALUE CALCULATION:')
   lines.push(`- Consensus Win Probability: ${bet.consensusProbability}% (no-vig median from ${bet.allBookPrices.length} books)`)
   lines.push(`- Best Available Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
   lines.push(`- Implied Probability from Best Price: ${bet.impliedProbability}%`)
   lines.push(`- EDGE: ${bet.consensusProbability}% - ${bet.impliedProbability}% = ${bet.edge}%`)
+  lines.push('')
+  lines.push('EXPECTED VALUE (KEY METRIC):')
+  lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
+  lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
+  lines.push(`- This means: For every $100 bet, you expect to profit $${bet.expectedValue.toFixed(2)} on average`)
   lines.push('')
   lines.push('ALL BOOK PRICES:')
   for (const book of bet.allBookPrices) {
@@ -519,13 +629,15 @@ export function formatBestBetForContext(result: BestBetResult): string {
     lines.push(`Game: ${ru.awayTeam} @ ${ru.homeTeam}`)
     lines.push(`Consensus Probability: ${ru.consensusProbability}%`)
     lines.push(`Best Price: ${formatOdds(ru.bestPrice)} at ${ru.bestBook}`)
-    lines.push(`Edge: ${ru.edge}%`)
+    lines.push(`Edge: ${ru.edge}% | EV: $${ru.expectedValue.toFixed(2)} | ROI: ${ru.roi.toFixed(2)}%`)
+    lines.push(`Score: ${ru.score}/100`)
   }
   
   lines.push('')
   lines.push('IMPORTANT: When user asks for "best bet", present the BEST BET above.')
-  lines.push('Do NOT pick a different game. This is the pre-computed best bet based on market consensus.')
-  lines.push('Your job is to EXPLAIN why this is the best bet, not to choose a different one.')
+  lines.push('This bet was selected because it has the HIGHEST SCORE (based on EV + probability + edge).')
+  lines.push('Do NOT recommend bets with negative EV or ROI < 1% - those are bad value even if high probability.')
+  lines.push('Your job is to EXPLAIN the value (EV, ROI) not just the probability.')
   
   return lines.join('\n')
 }
