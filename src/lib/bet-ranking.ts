@@ -1314,6 +1314,30 @@ export async function getCachedBestProp(): Promise<BestPropResult | null> {
 // GAME-SPECIFIC MENU
 // ============================================
 
+// Universal Bet Card - applies to ANY bet type
+export interface BetCard {
+  type: 'moneyline' | 'spread' | 'total' | 'prop'
+  description: string           // e.g., "Lakers ML", "Lakers -3.5", "Over 224.5", "LeBron Over 27.5 pts"
+  team?: string                 // For moneyline/spread
+  line?: number                 // For spread/total/prop
+  odds: number                  // American odds
+  book: string                  // Best book for this bet
+  
+  // Universal evaluation metrics
+  impliedProbability: number    // From the odds
+  consensusProbability: number  // No-vig average (our estimate)
+  edge: number                  // consensus - implied (as percentage)
+  expectedValue: number         // EV in dollars per $100 bet
+  roi: number                   // ROI as percentage
+  
+  // Verdict
+  verdict: 'good' | 'fair' | 'bad'  // Good = +EV & 1%+ ROI, Fair = small edge, Bad = negative EV
+  verdictReason: string         // Human-readable explanation
+  
+  // All book prices for line shopping
+  allBookPrices: { book: string; price: number }[]
+}
+
 export interface GameMenu {
   gameId: string
   sport: string
@@ -1322,15 +1346,14 @@ export interface GameMenu {
   awayTeam: string
   commenceTime: string
   
-  safestBet: {
-    type: 'moneyline'
-    team: string
-    odds: number
-    book: string
-    probability: number
-    edge: number
-  } | null
+  // All evaluated bets for this game
+  allBets: BetCard[]
   
+  // Pre-sorted recommendations
+  bestValueBet: BetCard | null      // Highest ROI bet (for value seekers)
+  safestBet: BetCard | null         // Highest probability bet with max -250 juice (for casual bettors)
+  
+  // Legacy fields for backwards compatibility
   valueBets: Array<{
     type: 'spread' | 'total'
     description: string
@@ -1342,122 +1365,332 @@ export interface GameMenu {
 }
 
 /**
+ * Create a BetCard with full EV/ROI evaluation
+ */
+function createBetCard(
+  type: BetCard['type'],
+  description: string,
+  odds: number,
+  book: string,
+  consensusProbability: number,  // As decimal (0-1)
+  allBookPrices: { book: string; price: number }[],
+  team?: string,
+  line?: number
+): BetCard {
+  const impliedProb = americanToImpliedProbability(odds)
+  const edge = (consensusProbability - impliedProb) * 100  // As percentage
+  const ev = calculateExpectedValue(odds, consensusProbability)
+  const roi = calculateROI(ev)
+  
+  // Determine verdict
+  let verdict: BetCard['verdict']
+  let verdictReason: string
+  
+  if (ev > 0 && roi >= 1) {
+    verdict = 'good'
+    verdictReason = `+EV: $${ev.toFixed(2)} per $100, ROI: ${roi.toFixed(1)}%`
+  } else if (ev > 0 && roi < 1) {
+    verdict = 'fair'
+    verdictReason = `Small edge: ROI only ${roi.toFixed(2)}% (heavy favorite premium)`
+  } else if (edge > -2) {
+    verdict = 'fair'
+    verdictReason = `Near fair value: ${edge.toFixed(1)}% edge`
+  } else {
+    verdict = 'bad'
+    verdictReason = `Negative EV: $${ev.toFixed(2)} per $100, paying ${Math.abs(edge).toFixed(1)}% premium`
+  }
+  
+  return {
+    type,
+    description,
+    team,
+    line,
+    odds,
+    book,
+    impliedProbability: Math.round(impliedProb * 1000) / 10,  // As percentage
+    consensusProbability: Math.round(consensusProbability * 1000) / 10,  // As percentage
+    edge: Math.round(edge * 10) / 10,
+    expectedValue: Math.round(ev * 100) / 100,
+    roi: Math.round(roi * 100) / 100,
+    verdict,
+    verdictReason,
+    allBookPrices
+  }
+}
+
+/**
+ * Calculate consensus probability for spreads/totals
+ * Uses no-vig calculation across all books offering the same line
+ */
+function calculateSpreadTotalConsensus(
+  outcomes: Array<{ name: string; price: number; point?: number }>,
+  bookmakers: Array<{ bookmaker: string; outcomes: Array<{ name: string; price: number; point?: number }> }>,
+  targetOutcome: string,
+  targetPoint: number
+): number {
+  // Collect all prices for this exact line across books
+  const prices: number[] = []
+  
+  for (const bm of bookmakers) {
+    for (const o of bm.outcomes) {
+      if (o.name === targetOutcome && o.point === targetPoint) {
+        prices.push(o.price)
+      }
+    }
+  }
+  
+  if (prices.length === 0) {
+    // Fallback: use implied probability from the single price
+    const outcome = outcomes.find(o => o.name === targetOutcome && o.point === targetPoint)
+    if (outcome) {
+      return americanToImpliedProbability(outcome.price)
+    }
+    return 0.5  // Default to 50%
+  }
+  
+  // Calculate no-vig probability
+  const impliedProbs = prices.map(p => americanToImpliedProbability(p))
+  const avgImplied = impliedProbs.reduce((a, b) => a + b, 0) / impliedProbs.length
+  
+  // Remove vig (assume ~5% total vig, so each side has ~2.5% extra)
+  // This is a simplification - true no-vig would need both sides
+  return Math.min(0.95, Math.max(0.05, avgImplied * 0.975))
+}
+
+/**
  * Compute game-specific menu for a single game
- * Returns safest bet (moneyline favorite with edge) and value options (spreads/totals)
+ * Returns all bets evaluated with EV/ROI, plus best value and safest recommendations
  */
 export function computeGameMenu(game: Game): GameMenu {
   const now = new Date().toISOString()
   
-  const menu: GameMenu = {
+  const allBets: BetCard[] = []
+  
+  // 1. Evaluate MONEYLINES
+  const homeConsensus = calculateConsensusProbability(game, game.homeTeam)
+  const awayConsensus = calculateConsensusProbability(game, game.awayTeam)
+  
+  if (homeConsensus) {
+    const bestPrice = findBestPrice(game, game.homeTeam)
+    if (bestPrice) {
+      const allPrices = game.moneylines
+        .flatMap(ml => ml.outcomes.filter(o => o.name === game.homeTeam).map(o => ({ book: ml.bookmaker, price: o.price })))
+      
+      allBets.push(createBetCard(
+        'moneyline',
+        `${game.homeTeam} ML`,
+        bestPrice.price,
+        bestPrice.book,
+        homeConsensus.consensusProb / 100,
+        allPrices,
+        game.homeTeam
+      ))
+    }
+  }
+  
+  if (awayConsensus) {
+    const bestPrice = findBestPrice(game, game.awayTeam)
+    if (bestPrice) {
+      const allPrices = game.moneylines
+        .flatMap(ml => ml.outcomes.filter(o => o.name === game.awayTeam).map(o => ({ book: ml.bookmaker, price: o.price })))
+      
+      allBets.push(createBetCard(
+        'moneyline',
+        `${game.awayTeam} ML`,
+        bestPrice.price,
+        bestPrice.book,
+        awayConsensus.consensusProb / 100,
+        allPrices,
+        game.awayTeam
+      ))
+    }
+  }
+  
+  // 2. Evaluate SPREADS
+  if (game.spreads.length > 0) {
+    // Group by unique spread lines
+    const spreadLines = new Map<string, { outcome: { name: string; price: number; point: number }; book: string }[]>()
+    
+    for (const spread of game.spreads) {
+      for (const outcome of spread.outcomes) {
+        if (outcome.point !== undefined) {
+          const key = `${outcome.name}|${outcome.point}`
+          if (!spreadLines.has(key)) spreadLines.set(key, [])
+          spreadLines.get(key)!.push({ outcome: { ...outcome, point: outcome.point }, book: spread.bookmaker })
+        }
+      }
+    }
+    
+    // Evaluate each unique spread
+    spreadLines.forEach((entries, key) => {
+      const [teamName, pointStr] = key.split('|')
+      const point = parseFloat(pointStr)
+      
+      // Find best price
+      const bestEntry = entries.reduce((best, curr) => 
+        curr.outcome.price > best.outcome.price ? curr : best
+      )
+      
+      const consensusProb = calculateSpreadTotalConsensus(
+        entries.map(e => e.outcome),
+        game.spreads.map(s => ({ bookmaker: s.bookmaker, outcomes: s.outcomes.map(o => ({ ...o, point: o.point ?? 0 })) })),
+        teamName,
+        point
+      )
+      
+      const allPrices = entries.map(e => ({ book: e.book, price: e.outcome.price }))
+      
+      allBets.push(createBetCard(
+        'spread',
+        `${teamName} ${point > 0 ? '+' : ''}${point}`,
+        bestEntry.outcome.price,
+        bestEntry.book,
+        consensusProb,
+        allPrices,
+        teamName,
+        point
+      ))
+    })
+  }
+  
+  // 3. Evaluate TOTALS
+  if (game.totals.length > 0) {
+    // Group by unique total lines
+    const totalLines = new Map<string, { outcome: { name: string; price: number; point: number }; book: string }[]>()
+    
+    for (const total of game.totals) {
+      for (const outcome of total.outcomes) {
+        if (outcome.point !== undefined) {
+          const key = `${outcome.name}|${outcome.point}`
+          if (!totalLines.has(key)) totalLines.set(key, [])
+          totalLines.get(key)!.push({ outcome: { ...outcome, point: outcome.point }, book: total.bookmaker })
+        }
+      }
+    }
+    
+    // Evaluate each unique total
+    totalLines.forEach((entries, key) => {
+      const [overUnder, pointStr] = key.split('|')
+      const point = parseFloat(pointStr)
+      
+      // Find best price
+      const bestEntry = entries.reduce((best, curr) => 
+        curr.outcome.price > best.outcome.price ? curr : best
+      )
+      
+      const consensusProb = calculateSpreadTotalConsensus(
+        entries.map(e => e.outcome),
+        game.totals.map(t => ({ bookmaker: t.bookmaker, outcomes: t.outcomes.map(o => ({ ...o, point: o.point ?? 0 })) })),
+        overUnder,
+        point
+      )
+      
+      const allPrices = entries.map(e => ({ book: e.book, price: e.outcome.price }))
+      
+      allBets.push(createBetCard(
+        'total',
+        `${overUnder} ${point}`,
+        bestEntry.outcome.price,
+        bestEntry.book,
+        consensusProb,
+        allPrices,
+        undefined,
+        point
+      ))
+    })
+  }
+  
+  // Sort all bets by ROI (descending)
+  allBets.sort((a, b) => b.roi - a.roi)
+  
+  // Find best value bet (highest ROI with positive EV)
+  const bestValueBet = allBets.find(b => b.verdict === 'good') || null
+  
+  // Find safest bet (highest probability with max -250 juice)
+  const safestBet = allBets
+    .filter(b => b.odds >= -250)
+    .sort((a, b) => b.consensusProbability - a.consensusProbability)[0] || null
+  
+  // Legacy valueBets for backwards compatibility
+  const valueBets = allBets
+    .filter(b => b.type === 'spread' || b.type === 'total')
+    .slice(0, 4)
+    .map(b => ({
+      type: b.type as 'spread' | 'total',
+      description: b.description,
+      odds: b.odds,
+      book: b.book
+    }))
+  
+  return {
     gameId: game.id,
     sport: game.sport,
     sportName: game.sportName,
     homeTeam: game.homeTeam,
     awayTeam: game.awayTeam,
     commenceTime: game.commenceTime,
-    safestBet: null,
-    valueBets: [],
+    allBets,
+    bestValueBet,
+    safestBet,
+    valueBets,
     calculatedAt: now
   }
-  
-  // Calculate safest bet (moneyline with highest probability and edge)
-  const homeConsensus = calculateConsensusProbability(game, game.homeTeam)
-  const awayConsensus = calculateConsensusProbability(game, game.awayTeam)
-  
-  const candidates: Array<{
-    team: string
-    consensus: NonNullable<ReturnType<typeof calculateConsensusProbability>>
-  }> = []
-  
-  if (homeConsensus) candidates.push({ team: game.homeTeam, consensus: homeConsensus })
-  if (awayConsensus) candidates.push({ team: game.awayTeam, consensus: awayConsensus })
-  
-  // Find the safest bet (highest probability with positive edge)
-  for (const candidate of candidates) {
-    const bestPrice = findBestPrice(game, candidate.team)
-    if (!bestPrice) continue
-    
-    const impliedProb = americanToImpliedProbability(bestPrice.price) * 100
-    const edge = candidate.consensus.consensusProb - impliedProb
-    
-    if (edge >= MIN_EDGE * 100 && candidate.consensus.consensusProb >= MIN_PROBABILITY * 100) {
-      if (!menu.safestBet || candidate.consensus.consensusProb > menu.safestBet.probability) {
-        menu.safestBet = {
-          type: 'moneyline',
-          team: candidate.team,
-          odds: bestPrice.price,
-          book: bestPrice.book,
-          probability: Math.round(candidate.consensus.consensusProb * 10) / 10,
-          edge: Math.round(edge * 10) / 10
-        }
-      }
-    }
-  }
-  
-  // Add value bets (spreads and totals)
-  // Best spread
-  if (game.spreads.length > 0) {
-    for (const spread of game.spreads) {
-      for (const outcome of spread.outcomes) {
-        if (outcome.point !== undefined) {
-          menu.valueBets.push({
-            type: 'spread',
-            description: `${outcome.name} ${outcome.point > 0 ? '+' : ''}${outcome.point}`,
-            odds: outcome.price,
-            book: spread.bookmaker
-          })
-        }
-      }
-    }
-  }
-  
-  // Best total
-  if (game.totals.length > 0) {
-    for (const total of game.totals) {
-      for (const outcome of total.outcomes) {
-        if (outcome.point !== undefined) {
-          menu.valueBets.push({
-            type: 'total',
-            description: `${outcome.name} ${outcome.point}`,
-            odds: outcome.price,
-            book: total.bookmaker
-          })
-        }
-      }
-    }
-  }
-  
-  // Limit value bets to best 4
-  menu.valueBets = menu.valueBets.slice(0, 4)
-  
-  return menu
 }
 
 /**
- * Format game menu for Claude's context
+ * Format a single BetCard for display
+ */
+function formatBetCard(bet: BetCard, indent: string = '  '): string[] {
+  const lines: string[] = []
+  const verdictEmoji = bet.verdict === 'good' ? '(GOOD)' : bet.verdict === 'fair' ? '(FAIR)' : '(BAD)'
+  
+  lines.push(`${indent}${bet.description} @ ${formatOdds(bet.odds)} (${bet.book}) ${verdictEmoji}`)
+  lines.push(`${indent}  Probability: ${bet.consensusProbability}% | Edge: ${bet.edge}%`)
+  lines.push(`${indent}  EV: $${bet.expectedValue.toFixed(2)} per $100 | ROI: ${bet.roi.toFixed(1)}%`)
+  lines.push(`${indent}  Verdict: ${bet.verdictReason}`)
+  
+  return lines
+}
+
+/**
+ * Format game menu for Claude's context - now with full EV/ROI for all bets
  */
 export function formatGameMenuForContext(menu: GameMenu): string {
   const lines: string[] = []
   
   lines.push(`=== GAME MENU: ${menu.awayTeam} @ ${menu.homeTeam} ===`)
+  lines.push(`Game Time: ${formatTime(menu.commenceTime)}`)
   lines.push('')
   
-  if (menu.safestBet) {
-    lines.push('SAFEST BET (Moneyline with Edge):')
-    lines.push(`  ${menu.safestBet.team} ML @ ${formatOdds(menu.safestBet.odds)} (${menu.safestBet.book})`)
-    lines.push(`  Probability: ${menu.safestBet.probability}% | Edge: ${menu.safestBet.edge}%`)
+  // Best Value Bet (highest ROI)
+  if (menu.bestValueBet) {
+    lines.push('BEST VALUE BET (Highest ROI):')
+    lines.push(...formatBetCard(menu.bestValueBet))
   } else {
-    lines.push('SAFEST BET: No moneyline meets our criteria for this game')
+    lines.push('BEST VALUE BET: No bets have positive EV with 1%+ ROI')
   }
   
   lines.push('')
   
-  if (menu.valueBets.length > 0) {
-    lines.push('VALUE OPTIONS (Spreads/Totals):')
-    for (const bet of menu.valueBets) {
-      lines.push(`  ${bet.description} @ ${formatOdds(bet.odds)} (${bet.book})`)
-    }
+  // Safest Bet (highest probability with reasonable juice)
+  if (menu.safestBet) {
+    lines.push('SAFEST BET (Highest Probability, max -250 juice):')
+    lines.push(...formatBetCard(menu.safestBet))
+  } else {
+    lines.push('SAFEST BET: No bets available with reasonable juice')
   }
+  
+  lines.push('')
+  
+  // All Bets Evaluated (sorted by ROI)
+  lines.push('ALL BETS EVALUATED (sorted by ROI):')
+  for (const bet of menu.allBets.slice(0, 10)) {  // Limit to top 10
+    lines.push(...formatBetCard(bet))
+    lines.push('')
+  }
+  
+  lines.push('---')
+  lines.push('LEGEND: (GOOD) = +EV & 1%+ ROI, (FAIR) = small edge, (BAD) = negative EV')
   
   return lines.join('\n')
 }
