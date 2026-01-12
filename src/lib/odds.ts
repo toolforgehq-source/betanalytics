@@ -299,7 +299,16 @@ export async function getCachedPlayerProps(): Promise<GamePlayerProps[] | null> 
     const data = await response.json()
     if (!data.result) return null
     
-    const propsData = JSON.parse(data.result) as { props: GamePlayerProps[], lastUpdated: string }
+    // Handle double-stringified data from setCachedPlayerProps
+    // The write uses JSON.stringify(JSON.stringify(cacheData)), so we need to parse twice
+    const outer = JSON.parse(data.result)
+    const propsData = typeof outer === 'string' ? JSON.parse(outer) : outer
+    
+    // Validate the parsed data structure
+    if (!propsData || !Array.isArray(propsData.props)) {
+      console.log('[getCachedPlayerProps] Invalid cache data structure')
+      return []
+    }
     
     // Check if cache is still valid (within 2 hours)
     const cacheAge = Date.now() - new Date(propsData.lastUpdated).getTime()
@@ -311,8 +320,8 @@ export async function getCachedPlayerProps(): Promise<GamePlayerProps[] | null> 
     console.log(`[getCachedPlayerProps] Returning ${propsData.props.length} cached props`)
     return propsData.props
   } catch (error) {
-    console.error('Error getting cached props:', error)
-    return null
+    console.error('[getCachedPlayerProps] Error:', error)
+    return []
   }
 }
 
