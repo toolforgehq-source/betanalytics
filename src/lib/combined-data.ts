@@ -176,6 +176,22 @@ function isValidBestBetResult(result: BestBetResult | null): result is BestBetRe
 }
 
 /**
+ * Get today's date string in ET timezone (America/New_York)
+ */
+function getTodayET(): string {
+  return new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+}
+
+/**
+ * Check if a game's commence time falls on today (ET timezone)
+ */
+function isGameToday(commenceTime: string): boolean {
+  const todayET = getTodayET()
+  const gameDate = new Date(commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+  return gameDate === todayET
+}
+
+/**
  * Map Odds API sport names to ESPN league names
  * Comprehensive mapping for all supported sports
  */
@@ -310,10 +326,13 @@ export async function formatCombinedDataForContext(): Promise<string> {
     bestBetResult = cachedBestBet
     console.log('[formatCombinedDataForContext] Using cached best bet')
   } else if (espnOddsData.games.length > 0) {
-    // Compute on-demand from ESPN odds
+    // Compute on-demand from ESPN odds - FILTER TO TODAY'S GAMES ONLY (ET timezone)
     console.log('[formatCombinedDataForContext] Computing best bet on-demand from ESPN odds...')
-    const gamesForBestBet = espnOddsData.games.map(convertESPNOddsToGame)
-    bestBetResult = computeBestBets(gamesForBestBet)
+    const allGames = espnOddsData.games.map(convertESPNOddsToGame)
+    // Filter to today's games only so "best bet today" returns a game happening TODAY
+    const todaysGames = allGames.filter(game => isGameToday(game.commenceTime))
+    console.log(`[formatCombinedDataForContext] Filtered to ${todaysGames.length} games today (ET) out of ${allGames.length} total`)
+    bestBetResult = computeBestBets(todaysGames)
     console.log(`[formatCombinedDataForContext] Computed: ${bestBetResult.gamesAnalyzed} games, ${bestBetResult.gamesQualified} qualified`)
   }
   
