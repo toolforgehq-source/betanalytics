@@ -568,8 +568,8 @@ export function formatBestBetForContext(result: BestBetResult): string {
         lines.push(`- ${miss.team} ML @ ${formatOdds(miss.bestPrice)} (${miss.bestBook})`)
         lines.push(`  Game: ${miss.awayTeam} @ ${miss.homeTeam} | ${miss.sportName}`)
         lines.push(`  Probability: ${miss.consensusProbability}% | Edge: ${miss.edge}%`)
-        lines.push(`  EV: $${miss.expectedValue.toFixed(2)} per $100 | ROI: ${miss.roi.toFixed(1)}%`)
-        lines.push(`  Why disqualified: ${miss.disqualifyReasons.join(', ')}`)
+        lines.push(`  EV: $${miss.expectedValue?.toFixed(2) ?? 'N/A'} per $100 | ROI: ${miss.roi?.toFixed(1) ?? 'N/A'}%`)
+        lines.push(`  Why disqualified: ${miss.disqualifyReasons?.join(', ') ?? 'Unknown'}`)
       }
       lines.push('')
     }
@@ -583,10 +583,10 @@ export function formatBestBetForContext(result: BestBetResult): string {
         lines.push(`- ${winner.team} ML @ ${formatOdds(winner.bestPrice)} (${winner.bestBook})`)
         lines.push(`  Game: ${winner.awayTeam} @ ${winner.homeTeam} | ${winner.sportName}`)
         lines.push(`  Probability: ${winner.consensusProbability}% | Edge: ${winner.edge}%`)
-        lines.push(`  EV: $${winner.expectedValue.toFixed(2)} per $100 | ROI: ${winner.roi.toFixed(1)}%`)
-        if (winner.expectedValue <= 0) {
+        lines.push(`  EV: $${winner.expectedValue?.toFixed(2) ?? 'N/A'} per $100 | ROI: ${winner.roi?.toFixed(1) ?? 'N/A'}%`)
+        if (winner.expectedValue != null && winner.expectedValue <= 0) {
           lines.push(`  ⚠️ NEGATIVE EV - DO NOT RECOMMEND. Risk $${Math.abs(winner.bestPrice > 0 ? 100 : winner.bestPrice)} to win $${winner.bestPrice > 0 ? winner.bestPrice : 100}`)
-        } else if (winner.roi < 1) {
+        } else if (winner.roi != null && winner.roi < 1) {
           lines.push(`  ⚠️ TINY ROI (${winner.roi.toFixed(2)}%) - Heavy favorite with minimal value`)
         }
       }
@@ -606,18 +606,18 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push(`Score: ${bet.score}/100 (EV-based ranking)`)
   lines.push('')
   lines.push('VALUE CALCULATION:')
-  lines.push(`- Consensus Win Probability: ${bet.consensusProbability}% (no-vig median from ${bet.allBookPrices.length} books)`)
+  lines.push(`- Consensus Win Probability: ${bet.consensusProbability}% (no-vig median from ${bet.allBookPrices?.length ?? 0} books)`)
   lines.push(`- Best Available Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
   lines.push(`- Implied Probability from Best Price: ${bet.impliedProbability}%`)
   lines.push(`- EDGE: ${bet.consensusProbability}% - ${bet.impliedProbability}% = ${bet.edge}%`)
   lines.push('')
   lines.push('EXPECTED VALUE (KEY METRIC):')
-  lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
-  lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
-  lines.push(`- This means: For every $100 bet, you expect to profit $${bet.expectedValue.toFixed(2)} on average`)
+  lines.push(`- Expected Value: $${bet.expectedValue?.toFixed(2) ?? 'N/A'} per $100 bet`)
+  lines.push(`- ROI: ${bet.roi?.toFixed(2) ?? 'N/A'}%`)
+  lines.push(`- This means: For every $100 bet, you expect to profit $${bet.expectedValue?.toFixed(2) ?? 'N/A'} on average`)
   lines.push('')
   lines.push('ALL BOOK PRICES:')
-  for (const book of bet.allBookPrices) {
+  for (const book of bet.allBookPrices ?? []) {
     lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
   }
   
@@ -629,7 +629,7 @@ export function formatBestBetForContext(result: BestBetResult): string {
     lines.push(`Game: ${ru.awayTeam} @ ${ru.homeTeam}`)
     lines.push(`Consensus Probability: ${ru.consensusProbability}%`)
     lines.push(`Best Price: ${formatOdds(ru.bestPrice)} at ${ru.bestBook}`)
-    lines.push(`Edge: ${ru.edge}% | EV: $${ru.expectedValue.toFixed(2)} | ROI: ${ru.roi.toFixed(2)}%`)
+    lines.push(`Edge: ${ru.edge}% | EV: $${ru.expectedValue?.toFixed(2) ?? 'N/A'} | ROI: ${ru.roi?.toFixed(2) ?? 'N/A'}%`)
     lines.push(`Score: ${ru.score}/100`)
   }
   
@@ -1239,7 +1239,7 @@ export function formatBestPropForContext(result: BestPropResult): string {
   lines.push(`- EDGE: ${prop.edge}%`)
   lines.push('')
   lines.push('ALL BOOK PRICES:')
-  for (const book of prop.allBookPrices) {
+  for (const book of prop.allBookPrices ?? []) {
     lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
   }
   
