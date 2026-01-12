@@ -19,7 +19,7 @@
  * - Odds API is PAID - used ONLY for player props
  */
 
-import { getCachedPlayerProps, formatPlayerPropsForContext, getCurrentOdds, fetchAllOdds, type GamePlayerProps, type Game } from './odds'
+import { getCachedPlayerProps, formatPlayerPropsForContext, getCurrentOdds, fetchAllOdds, fetchSportPlayerProps, type GamePlayerProps, type Game } from './odds'
 import { getCachedESPNData, getCachedESPNOdds, formatESPNForContext, formatESPNOddsForContext, type ESPNGameData, type ESPNInjury, type ESPNProbable } from './espn'
 import { getWeatherForGames, formatWeatherForContext } from './weather'
 import { getCachedSoccerStats, formatSoccerStatsForContext } from './soccer-stats'
@@ -281,8 +281,21 @@ export async function formatCombinedDataForContext(): Promise<string> {
     getCachedPlayerProps().catch(() => [] as GamePlayerProps[])
   ])
   
-  // Use cached props (populated by cron job)
-  const allProps = cachedProps || []
+  // Use cached props if available, otherwise fetch on-demand for NBA (most requested)
+  // This ensures props are available even if the cache is empty
+  let allProps = cachedProps || []
+  if (allProps.length === 0) {
+    console.log('[formatCombinedDataForContext] Props cache empty, fetching NBA props on-demand...')
+    try {
+      const nbaProps = await fetchSportPlayerProps('basketball_nba')
+      if (nbaProps.length > 0) {
+        allProps = nbaProps
+        console.log(`[formatCombinedDataForContext] Fetched ${nbaProps.length} NBA games with props on-demand`)
+      }
+    } catch (error) {
+      console.log('[formatCombinedDataForContext] On-demand props fetch failed:', error)
+    }
+  }
   
   // Fetch weather for outdoor games (NFL, NCAAF, MLB, MLS, Soccer)
   const outdoorGames = espnOddsData.games
