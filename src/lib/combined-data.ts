@@ -199,7 +199,7 @@ export async function formatCombinedDataForContext(): Promise<string> {
   const allProps = cachedProps || []
   
   // Fetch weather for outdoor games (NFL, NCAAF, MLB, MLS, Soccer)
-  const outdoorGames = espnOddsData.games
+  const outdoorGames = (espnOddsData?.games || [])
     .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.league))
     .map(g => ({ id: g.gameId, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.league }))
   
@@ -271,11 +271,11 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('=== REAL-TIME SPORTS DATA ===')
   lines.push('')
   lines.push('You have access to CURRENT data from SIX sources:')
-  lines.push(`1. BETTING ODDS (ESPN - FREE) - ${espnOddsData.games.length} games with odds - Last updated: ${formatTimestamp(espnOddsData?.lastUpdated || new Date().toISOString())}`)
+  lines.push(`1. BETTING ODDS (ESPN - FREE) - ${espnOddsData?.games?.length || 0} games with odds - Last updated: ${formatTimestamp(espnOddsData?.lastUpdated || new Date().toISOString())}`)
   lines.push(`2. INJURIES & LINEUPS (ESPN API) - Last updated: ${formatTimestamp(espnData?.lastUpdated || new Date().toISOString())}${espnData?.error ? ' ⚠️ ' + espnData.error : ''}`)
   lines.push(`3. PLAYER PROPS (The Odds API) - ${allProps.length} games with props (cached, refreshed by cron)`)
   lines.push(`4. WEATHER (OpenWeatherMap) - ${weatherMap.size} outdoor games with weather data`)
-  lines.push(`5. SOCCER STANDINGS (Football-data.org) - ${soccerStats.leagues.length} leagues with standings${soccerStats.error ? ' ⚠️ ' + soccerStats.error : ''}`)
+  lines.push(`5. SOCCER STANDINGS (Football-data.org) - ${soccerStats?.leagues?.length || 0} leagues with standings${soccerStats?.error ? ' ⚠️ ' + soccerStats.error : ''}`)
   lines.push(`6. LINE MOVEMENT - Tracked via ESPN odds snapshots (updated by cron)`)
   lines.push('')
   
@@ -308,7 +308,7 @@ export async function formatCombinedDataForContext(): Promise<string> {
   }
   
   // Add soccer standings data
-  if (soccerStats.leagues.length > 0) {
+  if (soccerStats?.leagues?.length > 0) {
     lines.push(formatSoccerStatsForContext(soccerStats))
   }
   

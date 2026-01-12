@@ -449,7 +449,7 @@ export async function getCachedESPNOdds(): Promise<ESPNOddsData> {
   
   // Try Redis cache (persists across serverless invocations)
   const redisData = await getRedisESPNOdds()
-  if (redisData && redisData.games.length > 0) {
+  if (redisData && redisData.games && redisData.games.length > 0) {
     console.log(`📊 Using Redis ESPN odds (${redisData.games.length} games)`)
     // Update in-memory cache
     espnOddsCache = redisData
