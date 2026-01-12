@@ -12,6 +12,29 @@ import {
 import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
 
 /**
+ * Get today's date string in ET timezone (America/New_York)
+ */
+function getTodayET(): string {
+  return new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+}
+
+/**
+ * Check if a game's commence time falls on today (ET timezone)
+ */
+function isGameToday(commenceTime: string): boolean {
+  const todayET = getTodayET()
+  const gameDate = new Date(commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+  return gameDate === todayET
+}
+
+/**
+ * Filter games to only include those happening today (ET timezone)
+ */
+function filterGamesToday<T extends { commenceTime: string }>(games: T[]): T[] {
+  return games.filter(game => isGameToday(game.commenceTime))
+}
+
+/**
  * Convert ESPN odds to Game format for best bet computation
  */
 function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
@@ -117,11 +140,16 @@ export async function GET(request: Request) {
         console.log(`[fetch-odds] Cached ESPN odds to Redis`)
     
     // Convert ESPN odds to Game format for best bet computation
-    const gamesForBestBet = espnOddsData.games.map(espnOdds => convertESPNOddsToGame(espnOdds))
+    const allGames = espnOddsData.games.map(espnOdds => convertESPNOddsToGame(espnOdds))
     
-    // Compute and cache the best bet using ESPN odds
-    console.log("Computing best bet from ESPN odds...")
-    const bestBetResult = computeBestBets(gamesForBestBet)
+    // Filter to TODAY's games only (ET timezone) for "best bet today"
+    // This ensures when users ask "What's the best bet today?" they get a game happening TODAY
+    const todaysGames = filterGamesToday(allGames)
+    console.log(`[fetch-odds] Filtered to ${todaysGames.length} games today (ET) out of ${allGames.length} total`)
+    
+    // Compute and cache the best bet using only TODAY's games
+    console.log("Computing best bet from today's games...")
+    const bestBetResult = computeBestBets(todaysGames)
     await cacheBestBet(bestBetResult)
     
     console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)
