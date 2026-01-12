@@ -63,7 +63,7 @@ export default function HomePage() {
               </Link>
             </div>
             <p className="text-sm text-slate-400 mt-4">
-              $69/month after trial. Cancel anytime.
+              $29/month after trial. Cancel anytime.
             </p>
           </div>
         </section>
@@ -126,7 +126,7 @@ export default function HomePage() {
           <div className="container mx-auto max-w-4xl text-center">
             <h2 className="text-3xl font-bold mb-8">Simple Pricing</h2>
             <div className="bg-gradient-to-br from-blue-900/20 to-cyan-900/20 backdrop-blur-sm border border-blue-500/30 rounded-2xl p-8 max-w-md mx-auto">
-              <div className="text-5xl font-bold mb-2">$69<span className="text-xl text-slate-400">/month</span></div>
+              <div className="text-5xl font-bold mb-2">$29<span className="text-xl text-slate-400">/month</span></div>
               <p className="text-slate-300 mb-6">Everything included. Cancel anytime.</p>
               <ul className="text-left space-y-3 mb-8">
                 <PricingFeature text="Unlimited questions" />

@@ -147,7 +147,7 @@ export default function AccountPageClient({
                       Upgrade to Premium for unlimited questions and all features.
                     </p>
                     <div className="text-2xl font-bold mb-3">
-                      $69<span className="text-sm text-slate-400">/month</span>
+                      $29<span className="text-sm text-slate-400">/month</span>
                     </div>
                     <button
                       onClick={handleSubscribe}

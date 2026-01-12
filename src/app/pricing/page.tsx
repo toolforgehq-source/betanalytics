@@ -65,7 +65,7 @@ export default async function PricingPage() {
             <div className="text-center mb-8">
               <h2 className="text-2xl font-bold mb-2">Betanalytics.ai Premium</h2>
               <div className="text-5xl font-bold mb-2">
-                $69<span className="text-xl text-slate-400">/month</span>
+                $29<span className="text-xl text-slate-400">/month</span>
               </div>
               <p className="text-slate-400">Billed monthly. Cancel anytime.</p>
             </div>
