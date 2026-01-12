@@ -66,7 +66,14 @@ export async function GET() {
     }
     
     // Re-check cache after update to verify it persisted
+    // Add a small delay to ensure write completes
+    if (cacheUpdated) {
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
     const updatedCachedProps = cacheUpdated ? await getCachedPlayerProps() : cachedProps
+    
+    // Debug: Check if the cache read is working
+    const cacheVerified = (updatedCachedProps?.length || 0) > 0
     
     // Use updated cache if we just wrote to it
     const finalCachedProps = updatedCachedProps || cachedProps
@@ -98,6 +105,7 @@ export async function GET() {
       },
       
       cacheUpdated,
+      cacheVerified,
       sportBreakdown: cacheUpdated ? sportBreakdown : undefined,
       totalPropsCached: cacheUpdated ? allProps.length : undefined,
       
