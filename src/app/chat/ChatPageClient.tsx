@@ -18,15 +18,16 @@ interface ChatPageClientProps {
   termsAccepted: boolean
 }
 
-interface AnalyticsData {
-  highConfidencePicks: number
-  sharpMoneySignals: number
-  modelConsensus: 'Strong' | 'Moderate' | 'Limited'
-  modelConsensusRatio: string
+interface SystemStatusData {
+  totalGames: number
+  gamesToday: number
+  gamesTomorrow: number
+  uniqueSports: number
+  sportCounts: Record<string, number>
   freshnessStatus: 'fresh' | 'aging' | 'stale'
   timeSinceUpdate: string
-  gamesAnalyzed: number
-  isStale: boolean
+  dataSource: string
+  isHealthy: boolean
 }
 
 export default function ChatPageClient({ 
@@ -38,8 +39,8 @@ export default function ChatPageClient({
   const [showHedgeCalculator, setShowHedgeCalculator] = useState(false)
   const [termsAccepted, setTermsAccepted] = useState(initialTermsAccepted)
   const [showLessonModal, setShowLessonModal] = useState(false)
-  const [analyticsLoading, setAnalyticsLoading] = useState(true)
-  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null)
+  const [statusLoading, setStatusLoading] = useState(true)
+  const [systemStatus, setSystemStatus] = useState<SystemStatusData | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const chatRef = useRef<ChatInterfaceRef>(null)
 
@@ -47,28 +48,28 @@ export default function ChatPageClient({
   const todaysLesson = getTodaysLesson()
   const dayName = getCurrentDayName()
 
-  // Fetch analytics data on mount and periodically
+  // Fetch system status data on mount and periodically
   useEffect(() => {
-    const fetchAnalytics = async () => {
+    const fetchStatus = async () => {
       try {
         const apiUrl = new URL('/api/analytics', window.location.origin).toString()
         const response = await fetch(apiUrl, { credentials: 'include' })
         if (response.ok) {
           const result = await response.json()
           if (result.success) {
-            setAnalytics(result.data)
+            setSystemStatus(result.data)
           }
         }
       } catch (error) {
-        console.error('Failed to fetch analytics:', error)
+        console.error('Failed to fetch system status:', error)
       } finally {
-        setAnalyticsLoading(false)
+        setStatusLoading(false)
       }
     }
 
-    fetchAnalytics()
-    // Refresh analytics every 5 minutes
-    const interval = setInterval(fetchAnalytics, 5 * 60 * 1000)
+    fetchStatus()
+    // Refresh status every 5 minutes
+    const interval = setInterval(fetchStatus, 5 * 60 * 1000)
     return () => clearInterval(interval)
   }, [])
 
@@ -221,47 +222,51 @@ export default function ChatPageClient({
             <div className="bg-slate-900/30 backdrop-blur-sm border border-slate-800/50 rounded-2xl p-6">
               <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
                 <Activity className="w-5 h-5 text-blue-400" />
-                Today&apos;s Edge
-                {analytics && (
+                System Status
+                {systemStatus && (
                   <span className={`ml-auto w-2 h-2 rounded-full ${
-                    analytics.freshnessStatus === 'fresh' ? 'bg-green-400' :
-                    analytics.freshnessStatus === 'aging' ? 'bg-yellow-400' : 'bg-red-400'
-                  }`} title={`Data ${analytics.timeSinceUpdate}`} />
+                    systemStatus.freshnessStatus === 'fresh' ? 'bg-green-400' :
+                    systemStatus.freshnessStatus === 'aging' ? 'bg-yellow-400' : 'bg-red-400'
+                  }`} title={`Data ${systemStatus.timeSinceUpdate}`} />
                 )}
               </h3>
-              {analyticsLoading ? (
+              {statusLoading ? (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400 text-sm">Loading...</span>
                     <RefreshCw className="w-4 h-4 text-slate-500 animate-spin" />
                   </div>
                 </div>
-              ) : analytics ? (
-                <div className="space-y-4">
+              ) : systemStatus ? (
+                <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400 text-sm">Model Consensus</span>
-                    <span className={`font-semibold ${
-                      analytics.modelConsensus === 'Strong' ? 'text-green-400' :
-                      analytics.modelConsensus === 'Moderate' ? 'text-yellow-400' : 'text-red-400'
-                    }`}>{analytics.modelConsensus}</span>
+                    <span className="text-slate-400 text-sm">Games Today</span>
+                    <span className="text-blue-400 font-semibold">{systemStatus.gamesToday}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400 text-sm">High Confidence Picks</span>
-                    <span className="text-blue-400 font-semibold">{analytics.highConfidencePicks} available</span>
+                    <span className="text-slate-400 text-sm">Games Tomorrow</span>
+                    <span className="text-cyan-400 font-semibold">{systemStatus.gamesTomorrow}</span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400 text-sm">Sharp Money Signals</span>
-                    <span className="text-yellow-400 font-semibold">{analytics.sharpMoneySignals} detected</span>
+                    <span className="text-slate-400 text-sm">Sports Tracked</span>
+                    <span className="text-green-400 font-semibold">{systemStatus.uniqueSports}</span>
                   </div>
                   <div className="pt-2 border-t border-slate-700/50">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-slate-400 text-xs">Data Source</span>
+                      <span className={`text-xs font-medium flex items-center gap-1 ${systemStatus.isHealthy ? 'text-green-400' : 'text-red-400'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${systemStatus.isHealthy ? 'bg-green-400' : 'bg-red-400'}`} />
+                        {systemStatus.dataSource}
+                      </span>
+                    </div>
                     <p className="text-xs text-slate-500">
-                      Updated {analytics.timeSinceUpdate} ({analytics.gamesAnalyzed} games)
+                      Updated {systemStatus.timeSinceUpdate}
                     </p>
                   </div>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <p className="text-slate-400 text-sm">Unable to load analytics</p>
+                  <p className="text-slate-400 text-sm">Unable to load status</p>
                 </div>
               )}
             </div>

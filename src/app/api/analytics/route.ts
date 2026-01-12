@@ -1,39 +1,88 @@
 import { NextResponse } from "next/server"
-import { getCurrentOdds } from "@/lib/odds"
-import { getAnalytics, formatTimeSinceUpdate } from "@/lib/analytics"
+import { getCachedESPNOdds } from "@/lib/espn"
 
 /**
  * GET /api/analytics
  * 
- * Returns real-time analytics data calculated from current odds:
- * - High confidence picks count
- * - Sharp money signals count
- * - Model consensus rating
+ * Returns system status data from ESPN odds:
+ * - Games tracked today and tomorrow
+ * - Sports coverage breakdown
  * - Data freshness indicators
  */
 export async function GET() {
   try {
-    // Get current odds data (from cache or fresh fetch)
-    const oddsData = await getCurrentOdds()
+    // Get ESPN odds data (from cache or fresh fetch)
+    const espnData = await getCachedESPNOdds()
     
-    // Calculate analytics from odds data
-    const analytics = getAnalytics(oddsData)
+    // Calculate time since last update
+    const lastUpdated = new Date(espnData.lastUpdated)
+    const now = new Date()
+    const minutesSinceUpdate = Math.floor((now.getTime() - lastUpdated.getTime()) / (1000 * 60))
     
-    // Format the time since update for display
-    const timeSinceUpdate = formatTimeSinceUpdate(analytics.minutesSinceUpdate)
+    // Determine freshness status
+    let freshnessStatus: 'fresh' | 'aging' | 'stale'
+    if (minutesSinceUpdate < 30) {
+      freshnessStatus = 'fresh'
+    } else if (minutesSinceUpdate < 120) {
+      freshnessStatus = 'aging'
+    } else {
+      freshnessStatus = 'stale'
+    }
+    
+    // Format time since update
+    let timeSinceUpdate: string
+    if (minutesSinceUpdate < 1) {
+      timeSinceUpdate = 'Just now'
+    } else if (minutesSinceUpdate === 1) {
+      timeSinceUpdate = '1 min ago'
+    } else if (minutesSinceUpdate < 60) {
+      timeSinceUpdate = `${minutesSinceUpdate} min ago`
+    } else {
+      const hours = Math.floor(minutesSinceUpdate / 60)
+      timeSinceUpdate = hours === 1 ? '1 hour ago' : `${hours} hours ago`
+    }
+    
+    // Count games by sport/league
+    const sportCounts: Record<string, number> = {}
+    for (const game of espnData.games) {
+      const league = game.league
+      sportCounts[league] = (sportCounts[league] || 0) + 1
+    }
+    
+    // Separate today vs tomorrow games
+    const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    const tomorrowDate = new Date()
+    tomorrowDate.setDate(tomorrowDate.getDate() + 1)
+    const tomorrowET = tomorrowDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    
+    let gamesToday = 0
+    let gamesTomorrow = 0
+    
+    for (const game of espnData.games) {
+      const gameDate = new Date(game.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+      if (gameDate === todayET) {
+        gamesToday++
+      } else if (gameDate === tomorrowET) {
+        gamesTomorrow++
+      }
+    }
+    
+    // Count unique sports
+    const uniqueSports = Object.keys(sportCounts).length
     
     return NextResponse.json({
       success: true,
       data: {
-        highConfidencePicks: analytics.highConfidencePicks,
-        sharpMoneySignals: analytics.sharpMoneySignals,
-        modelConsensus: analytics.modelConsensus,
-        modelConsensusRatio: analytics.modelConsensusRatio,
-        freshnessStatus: analytics.freshnessStatus,
+        totalGames: espnData.games.length,
+        gamesToday,
+        gamesTomorrow,
+        uniqueSports,
+        sportCounts,
+        freshnessStatus,
         timeSinceUpdate,
-        lastUpdated: analytics.lastUpdated,
-        gamesAnalyzed: oddsData.games.length,
-        isStale: oddsData.isStale,
+        lastUpdated: espnData.lastUpdated,
+        dataSource: 'ESPN',
+        isHealthy: freshnessStatus !== 'stale' && espnData.games.length > 0,
       }
     })
   } catch (error) {
@@ -45,15 +94,16 @@ export async function GET() {
       success: false,
       error: errorMessage,
       data: {
-        highConfidencePicks: 0,
-        sharpMoneySignals: 0,
-        modelConsensus: "Limited",
-        modelConsensusRatio: "0/4",
-        freshnessStatus: "stale",
-        timeSinceUpdate: "Unknown",
+        totalGames: 0,
+        gamesToday: 0,
+        gamesTomorrow: 0,
+        uniqueSports: 0,
+        sportCounts: {},
+        freshnessStatus: 'stale',
+        timeSinceUpdate: 'Unknown',
         lastUpdated: null,
-        gamesAnalyzed: 0,
-        isStale: true,
+        dataSource: 'ESPN',
+        isHealthy: false,
       }
     })
   }
