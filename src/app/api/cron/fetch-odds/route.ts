@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { type Game } from "@/lib/odds"
-import { fetchAllESPNOdds, type ESPNOdds } from "@/lib/espn"
+import { fetchAllESPNOdds, cacheESPNOdds, type ESPNOdds } from "@/lib/espn"
 import { 
   computeBestBets, 
   cacheBestBet, 
@@ -106,11 +106,15 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
     
-    console.log("[fetch-odds] Starting ESPN odds fetch (FREE)...")
+        console.log("[fetch-odds] Starting ESPN odds fetch (FREE)...")
     
-    const espnOddsData = await fetchAllESPNOdds()
+        const espnOddsData = await fetchAllESPNOdds()
     
-    console.log(`Fetched ${espnOddsData.games.length} games with odds from ESPN at ${espnOddsData.lastUpdated}`)
+        console.log(`Fetched ${espnOddsData.games.length} games with odds from ESPN at ${espnOddsData.lastUpdated}`)
+    
+        // Cache ESPN odds to Redis for persistence across serverless invocations
+        await cacheESPNOdds(espnOddsData)
+        console.log(`[fetch-odds] Cached ESPN odds to Redis`)
     
     // Convert ESPN odds to Game format for best bet computation
     const gamesForBestBet = espnOddsData.games.map(espnOdds => convertESPNOddsToGame(espnOdds))

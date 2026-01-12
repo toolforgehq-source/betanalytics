@@ -13,6 +13,77 @@
 
 const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2/sports'
 
+// Redis cache key for ESPN odds
+const ESPN_ODDS_CACHE_KEY = 'espn_odds_cache'
+
+/**
+ * Get Redis client for caching
+ */
+async function getRedisClient() {
+  const url = process.env.KV_REST_API_URL
+  const token = process.env.KV_REST_API_TOKEN
+  
+  if (!url || !token) {
+    console.warn('[ESPN] Redis not configured for ESPN odds caching')
+    return null
+  }
+  
+  return { url, token }
+}
+
+/**
+ * Cache ESPN odds to Redis
+ */
+export async function cacheESPNOdds(oddsData: ESPNOddsData): Promise<void> {
+  const redis = await getRedisClient()
+  if (!redis) return
+  
+  try {
+    await fetch(`${redis.url}/set/${ESPN_ODDS_CACHE_KEY}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(JSON.stringify(oddsData))
+    })
+    
+    // Set 2-hour expiry (ESPN odds don't change as frequently)
+    await fetch(`${redis.url}/expire/${ESPN_ODDS_CACHE_KEY}/${2 * 60 * 60}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    console.log(`[ESPN] Cached ${oddsData.games.length} games to Redis`)
+  } catch (error) {
+    console.error('[ESPN] Error caching ESPN odds:', error)
+  }
+}
+
+/**
+ * Get cached ESPN odds from Redis
+ */
+async function getRedisESPNOdds(): Promise<ESPNOddsData | null> {
+  const redis = await getRedisClient()
+  if (!redis) return null
+  
+  try {
+    const response = await fetch(`${redis.url}/get/${ESPN_ODDS_CACHE_KEY}`, {
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    if (!response.ok) return null
+    
+    const data = await response.json()
+    if (!data.result) return null
+    
+    return JSON.parse(data.result) as ESPNOddsData
+  } catch (error) {
+    console.error('[ESPN] Error getting cached ESPN odds:', error)
+    return null
+  }
+}
+
 // ESPN sport/league mappings
 const ESPN_SPORTS = [
   { sport: 'hockey', league: 'nhl', name: 'NHL' },
@@ -313,17 +384,33 @@ export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
 }
 
 /**
- * Get cached ESPN odds or fetch fresh if expired
+ * Get cached ESPN odds - first try Redis, then in-memory, then fetch fresh
  */
 export async function getCachedESPNOdds(): Promise<ESPNOddsData> {
-  // Check if cache is valid
+  // Check in-memory cache first (fastest)
   if (espnOddsCache && espnOddsCacheExpiry && espnOddsCacheExpiry > new Date()) {
-    console.log(`📊 Using cached ESPN odds (${espnOddsCache.games.length} games)`)
+    console.log(`📊 Using in-memory ESPN odds (${espnOddsCache.games.length} games)`)
     return espnOddsCache
   }
   
-  // Fetch fresh data
-  return fetchAllESPNOdds()
+  // Try Redis cache (persists across serverless invocations)
+  const redisData = await getRedisESPNOdds()
+  if (redisData && redisData.games.length > 0) {
+    console.log(`📊 Using Redis ESPN odds (${redisData.games.length} games)`)
+    // Update in-memory cache
+    espnOddsCache = redisData
+    espnOddsCacheExpiry = new Date(Date.now() + ESPN_ODDS_CACHE_EXPIRY_MS)
+    return redisData
+  }
+  
+  // Fetch fresh data and cache to both in-memory and Redis
+  console.log('📊 Fetching fresh ESPN odds (no cache available)...')
+  const freshData = await fetchAllESPNOdds()
+  
+  // Cache to Redis for persistence across serverless invocations
+  await cacheESPNOdds(freshData)
+  
+  return freshData
 }
 
 /**
