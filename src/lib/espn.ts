@@ -299,11 +299,30 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
 }
 
 /**
- * Fetch all game IDs from ESPN scoreboard for a sport
+ * Get date string in YYYYMMDD format for ESPN API
  */
-async function fetchESPNGameIds(sport: string, league: string): Promise<string[]> {
+function getESPNDateString(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}${month}${day}`
+}
+
+/**
+ * Fetch all game IDs from ESPN scoreboard for a sport
+ * @param sport - ESPN sport category (e.g., 'basketball', 'football')
+ * @param league - ESPN league (e.g., 'nba', 'nfl')
+ * @param date - Optional date to fetch games for (defaults to today)
+ */
+async function fetchESPNGameIds(sport: string, league: string, date?: Date): Promise<string[]> {
   try {
-    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard`
+    let url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard`
+    
+    // Add date parameter if provided
+    if (date) {
+      const dateStr = getESPNDateString(date)
+      url += `?dates=${dateStr}`
+    }
     
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
@@ -333,39 +352,74 @@ async function fetchESPNGameIds(sport: string, league: string): Promise<string[]
 /**
  * Fetch all ESPN odds for all supported sports
  * This is FREE and can be called frequently
+ * Fetches both today and tomorrow's games to support "best bet tomorrow" queries
  */
 export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
   console.log('🔄 Fetching ESPN odds for all sports (FREE)...')
   
   const allOdds: ESPNOdds[] = []
+  const seenGameIds = new Set<string>() // Avoid duplicates
   
-  // Fetch game IDs for all sports in parallel
-  const gameIdPromises = ESPN_ODDS_SPORTS.map(async ({ sport, league, name }) => {
-    const gameIds = await fetchESPNGameIds(sport, league)
-    return { sport, league, name, gameIds }
-  })
+  // Get today and tomorrow dates
+  const today = new Date()
+  const tomorrow = new Date(today)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  
+  console.log(`📅 Fetching games for today (${getESPNDateString(today)}) and tomorrow (${getESPNDateString(tomorrow)})`)
+  
+  // Fetch game IDs for all sports for both today and tomorrow
+  const gameIdPromises = ESPN_ODDS_SPORTS.flatMap(({ sport, league, name }) => [
+    // Fetch today's games
+    fetchESPNGameIds(sport, league, today).then(gameIds => ({ sport, league, name, gameIds, day: 'today' })),
+    // Fetch tomorrow's games
+    fetchESPNGameIds(sport, league, tomorrow).then(gameIds => ({ sport, league, name, gameIds, day: 'tomorrow' }))
+  ])
   
   const sportsWithGameIds = await Promise.all(gameIdPromises)
   
-  // Fetch odds for each game (limit to 10 games per sport to avoid too many requests)
-  for (const { sport, league, name, gameIds } of sportsWithGameIds) {
-    const limitedGameIds = gameIds.slice(0, 10)
+  // Group by sport/league to combine today and tomorrow's games
+  const sportGameMap = new Map<string, { sport: string; league: string; name: string; gameIds: Set<string> }>()
+  
+  for (const { sport, league, name, gameIds, day } of sportsWithGameIds) {
+    const key = `${sport}/${league}`
+    if (!sportGameMap.has(key)) {
+      sportGameMap.set(key, { sport, league, name, gameIds: new Set() })
+    }
+    const entry = sportGameMap.get(key)!
+    for (const gameId of gameIds) {
+      entry.gameIds.add(gameId)
+    }
+    if (gameIds.length > 0) {
+      console.log(`📅 ${name} (${day}): ${gameIds.length} games found`)
+    }
+  }
+  
+  // Fetch odds for each game (limit to 15 games per sport to include both days)
+  for (const entry of Array.from(sportGameMap.values())) {
+    const { sport, league, name, gameIds } = entry
+    const uniqueGameIds = Array.from(gameIds).slice(0, 15)
     
-    if (limitedGameIds.length === 0) {
+    if (uniqueGameIds.length === 0) {
       console.log(`📊 ${name}: No upcoming games`)
       continue
     }
     
     // Fetch odds for each game in parallel
-    const oddsPromises = limitedGameIds.map(gameId => 
+    const oddsPromises = uniqueGameIds.map(gameId => 
       fetchESPNGameOdds(sport, league, gameId, name)
     )
     
     const oddsResults = await Promise.all(oddsPromises)
     const validOdds = oddsResults.filter((o): o is ESPNOdds => o !== null)
     
-    allOdds.push(...validOdds)
-    console.log(`📊 ${name}: ${validOdds.length} games with odds`)
+    // Deduplicate by gameId (in case same game appears in both days)
+    for (const odds of validOdds) {
+      if (!seenGameIds.has(odds.gameId)) {
+        seenGameIds.add(odds.gameId)
+        allOdds.push(odds)
+      }
+    }
+    console.log(`📊 ${name}: ${validOdds.length} games with odds (today + tomorrow)`)
   }
   
   const oddsData: ESPNOddsData = {
