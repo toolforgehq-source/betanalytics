@@ -32,8 +32,11 @@ import {
   formatSportBestBetsForContext,
   getCachedBestProp,
   computeBestProp,
-  formatBestPropForContext
+  formatBestPropForContext,
+  computeBestBets,
+  type BestBetResult
 } from './bet-ranking'
+import type { ESPNOdds } from './espn'
 import { getTrackRecord, formatTrackRecordForContext } from './pick-tracking'
 
 export interface EnrichedGame extends Game {
@@ -87,6 +90,80 @@ function matchGames(oddsGame: Game, espnGame: ESPNGameData): boolean {
     espnAway.split(' ').some(word => oddsAway.includes(word) && word.length > 3)
   
   return homeMatch && awayMatch
+}
+
+/**
+ * Convert ESPN odds to Game format for best bet computation
+ * This allows on-demand computation when the cache is empty
+ */
+function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
+  const sportKeyMap: Record<string, string> = {
+    'NBA': 'basketball_nba',
+    'NFL': 'americanfootball_nfl',
+    'NHL': 'icehockey_nhl',
+    'NCAAB': 'basketball_ncaab',
+    'NCAAF': 'americanfootball_ncaaf',
+    'MLB': 'baseball_mlb',
+    'English Premier League': 'soccer_epl',
+    'La Liga': 'soccer_spain_la_liga',
+    'Bundesliga': 'soccer_germany_bundesliga',
+    'Serie A': 'soccer_italy_serie_a',
+    'Ligue 1': 'soccer_france_ligue_one',
+    'MLS': 'soccer_usa_mls',
+    'UEFA Champions League': 'soccer_uefa_champs_league',
+  }
+  
+  const sportKey = sportKeyMap[espnOdds.league] || espnOdds.sport
+  const provider = espnOdds.provider || 'DraftKings'
+  
+  const spreads = espnOdds.spread !== null ? [{
+    bookmaker: provider,
+    market: 'spreads',
+    outcomes: [
+      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: espnOdds.homeFavorite ? espnOdds.spread : -espnOdds.spread },
+      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: espnOdds.homeFavorite ? -espnOdds.spread : espnOdds.spread }
+    ]
+  }] : []
+  
+  const totals = espnOdds.overUnder !== null ? [{
+    bookmaker: provider,
+    market: 'totals',
+    outcomes: [
+      { name: 'Over', price: espnOdds.overUnderOdds?.over || -110, point: espnOdds.overUnder },
+      { name: 'Under', price: espnOdds.overUnderOdds?.under || -110, point: espnOdds.overUnder }
+    ]
+  }] : []
+  
+  const moneylines = espnOdds.moneyline ? [{
+    bookmaker: provider,
+    market: 'h2h',
+    outcomes: [
+      { name: espnOdds.homeTeam, price: espnOdds.moneyline.home },
+      { name: espnOdds.awayTeam, price: espnOdds.moneyline.away }
+    ]
+  }] : []
+  
+  return {
+    id: espnOdds.gameId,
+    sport: sportKey,
+    sportName: espnOdds.league,
+    homeTeam: espnOdds.homeTeam,
+    awayTeam: espnOdds.awayTeam,
+    commenceTime: espnOdds.commenceTime,
+    spreads,
+    totals,
+    moneylines
+  }
+}
+
+/**
+ * Check if cached best bet result is valid (has required fields)
+ */
+function isValidBestBetResult(result: BestBetResult | null): result is BestBetResult {
+  if (!result) return false
+  if (typeof result.gamesAnalyzed !== 'number') return false
+  if (typeof result.gamesQualified !== 'number') return false
+  return true
 }
 
 /**
@@ -215,8 +292,18 @@ export async function formatCombinedDataForContext(): Promise<string> {
     getTrackRecord().catch(() => null)
   ])
   
-  // Best bets are now computed from cached data (populated by cron job)
-  const bestBetResult = cachedBestBet
+  // Best bets: use cached data if valid, otherwise compute on-demand from ESPN odds
+  let bestBetResult: BestBetResult | null = null
+  if (isValidBestBetResult(cachedBestBet)) {
+    bestBetResult = cachedBestBet
+    console.log('[formatCombinedDataForContext] Using cached best bet')
+  } else if (espnOddsData.games.length > 0) {
+    // Compute on-demand from ESPN odds
+    console.log('[formatCombinedDataForContext] Computing best bet on-demand from ESPN odds...')
+    const gamesForBestBet = espnOddsData.games.map(convertESPNOddsToGame)
+    bestBetResult = computeBestBets(gamesForBestBet)
+    console.log(`[formatCombinedDataForContext] Computed: ${bestBetResult.gamesAnalyzed} games, ${bestBetResult.gamesQualified} qualified`)
+  }
   
   // Use cached parlay (populated by cron job)
   const parlayResult = cachedParlay
