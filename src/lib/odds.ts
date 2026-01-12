@@ -318,35 +318,64 @@ export async function getCachedPlayerProps(): Promise<GamePlayerProps[] | null> 
 
 /**
  * Save player props to Redis cache
+ * Note: Props payloads can be very large, so we store a trimmed version
  */
-export async function setCachedPlayerProps(props: GamePlayerProps[]): Promise<void> {
+export async function setCachedPlayerProps(props: GamePlayerProps[]): Promise<boolean> {
   const redis = await getRedisClient()
-  if (!redis) return
+  if (!redis) {
+    console.log('[setCachedPlayerProps] Redis not configured')
+    return false
+  }
   
   try {
+    // Trim props to reduce payload size - keep only essential data
+    const trimmedProps = props.map(game => ({
+      ...game,
+      // Keep only first 15 players per game to reduce size
+      playersWithProps: game.playersWithProps?.slice(0, 15) || [],
+      // Keep only first 100 props per game (most important ones)
+      props: game.props?.slice(0, 100) || [],
+    }))
+    
     const cacheData = {
-      props,
+      props: trimmedProps,
       lastUpdated: new Date().toISOString()
     }
     
-    await fetch(`${redis.url}/set/${PROPS_CACHE_KEY}`, {
+    const payload = JSON.stringify(JSON.stringify(cacheData))
+    const payloadSizeKB = Math.round(payload.length / 1024)
+    console.log(`[setCachedPlayerProps] Payload size: ${payloadSizeKB}KB for ${props.length} games`)
+    
+    const setResponse = await fetch(`${redis.url}/set/${PROPS_CACHE_KEY}`, {
       method: 'POST',
       headers: { 
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(JSON.stringify(cacheData))
+      body: payload
     })
     
+    if (!setResponse.ok) {
+      const errorText = await setResponse.text()
+      console.error(`[setCachedPlayerProps] Redis SET failed: ${setResponse.status} - ${errorText}`)
+      return false
+    }
+    
     // Set expiry
-    await fetch(`${redis.url}/expire/${PROPS_CACHE_KEY}/${PROPS_CACHE_EXPIRY_SECONDS}`, {
+    const expireResponse = await fetch(`${redis.url}/expire/${PROPS_CACHE_KEY}/${PROPS_CACHE_EXPIRY_SECONDS}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${redis.token}` }
     })
     
-    console.log(`[setCachedPlayerProps] Cached ${props.length} props`)
+    if (!expireResponse.ok) {
+      console.error(`[setCachedPlayerProps] Redis EXPIRE failed: ${expireResponse.status}`)
+    }
+    
+    console.log(`[setCachedPlayerProps] Successfully cached ${trimmedProps.length} games (${payloadSizeKB}KB)`)
+    return true
   } catch (error) {
-    console.error('Error caching props:', error)
+    console.error('[setCachedPlayerProps] Error:', error)
+    return false
   }
 }
 

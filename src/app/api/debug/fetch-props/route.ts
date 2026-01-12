@@ -61,8 +61,8 @@ export async function GET() {
         NCAAF: ncaafProps.length,
       }
       
-      await setCachedPlayerProps(allProps)
-      cacheUpdated = true
+      const cacheWriteSuccess = await setCachedPlayerProps(allProps)
+      cacheUpdated = cacheWriteSuccess
     }
     
     // Re-check cache after update to verify it persisted
