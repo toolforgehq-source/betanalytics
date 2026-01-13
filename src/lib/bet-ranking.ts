@@ -217,17 +217,104 @@ function isThreeWayMarket(game: Game): boolean {
 }
 
 /**
+ * Remove vig from a 3-way market (Home/Draw/Away) to get true probabilities
+ * Takes all three outcomes' implied probabilities and normalizes to sum to 1
+ * 
+ * Example: Home -140 (58.3%), Draw +260 (27.8%), Away +350 (22.2%)
+ * Total = 108.3% (8.3% vig)
+ * True Home = 58.3/108.3 = 53.8%
+ * True Draw = 27.8/108.3 = 25.7%
+ * True Away = 22.2/108.3 = 20.5%
+ */
+function removeVigThreeWay(
+  homeImplied: number, 
+  drawImplied: number, 
+  awayImplied: number
+): { home: number; draw: number; away: number } {
+  const total = homeImplied + drawImplied + awayImplied
+  return {
+    home: homeImplied / total,
+    draw: drawImplied / total,
+    away: awayImplied / total
+  }
+}
+
+/**
+ * Calculate consensus no-vig probability for a team in a 3-way market (soccer)
+ * This properly accounts for the Draw outcome when calculating win probability
+ */
+function calculateConsensusProbabilityThreeWay(
+  game: Game,
+  team: string
+): { consensusProb: number; bookPrices: { book: string; price: number; impliedProb: number; noVigProb: number }[] } | null {
+  const bookPrices: { book: string; price: number; impliedProb: number; noVigProb: number }[] = []
+  
+  const isHomeTeam = team === game.homeTeam
+  
+  for (const ml of game.moneylines) {
+    // Only use reputable books for consensus
+    if (!CONSENSUS_BOOKS.includes(ml.bookmaker)) continue
+    
+    // Must have exactly 3 outcomes (Home, Draw, Away)
+    if (ml.outcomes.length !== 3) continue
+    
+    const homeOutcome = ml.outcomes.find(o => o.name === game.homeTeam)
+    const awayOutcome = ml.outcomes.find(o => o.name === game.awayTeam)
+    const drawOutcome = ml.outcomes.find(o => 
+      o.name.toLowerCase() === 'draw' || 
+      o.name.toLowerCase() === 'tie' ||
+      o.name.toLowerCase() === 'x'
+    )
+    
+    if (!homeOutcome || !awayOutcome || !drawOutcome) continue
+    
+    const homeImplied = americanToImpliedProbability(homeOutcome.price)
+    const awayImplied = americanToImpliedProbability(awayOutcome.price)
+    const drawImplied = americanToImpliedProbability(drawOutcome.price)
+    
+    // Remove vig using 3-way calculation
+    const noVig = removeVigThreeWay(homeImplied, drawImplied, awayImplied)
+    
+    // Get the team's no-vig probability
+    const teamNoVigProb = isHomeTeam ? noVig.home : noVig.away
+    const teamOutcome = isHomeTeam ? homeOutcome : awayOutcome
+    const teamImplied = isHomeTeam ? homeImplied : awayImplied
+    
+    bookPrices.push({
+      book: ml.bookmaker,
+      price: teamOutcome.price,
+      impliedProb: teamImplied,
+      noVigProb: teamNoVigProb
+    })
+  }
+  
+  if (bookPrices.length < 2) {
+    // Need at least 2 books for consensus
+    return null
+  }
+  
+  // Calculate median no-vig probability (more robust than mean)
+  const sortedProbs = bookPrices.map(b => b.noVigProb).sort((a, b) => a - b)
+  const mid = Math.floor(sortedProbs.length / 2)
+  const consensusProb = sortedProbs.length % 2 === 0
+    ? (sortedProbs[mid - 1] + sortedProbs[mid]) / 2
+    : sortedProbs[mid]
+  
+  return { consensusProb, bookPrices }
+}
+
+/**
  * Calculate consensus no-vig probability for a team from multiple books
- * Only works for 2-way markets (excludes soccer 3-way markets)
+ * Handles both 2-way markets (most sports) and 3-way markets (soccer)
  */
 function calculateConsensusProbability(
   game: Game,
   team: string
 ): { consensusProb: number; bookPrices: { book: string; price: number; impliedProb: number; noVigProb: number }[] } | null {
-  // CRITICAL: Skip 3-way markets (soccer win/draw/win)
-  // Our 2-way no-vig calculation doesn't work for 3-way markets
+  // For 3-way markets (soccer), use the specialized 3-way calculation
+  // This properly accounts for Draw probability when calculating win probability
   if (isThreeWayMarket(game)) {
-    return null
+    return calculateConsensusProbabilityThreeWay(game, team)
   }
   
   const bookPrices: { book: string; price: number; impliedProb: number; noVigProb: number }[] = []

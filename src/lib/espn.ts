@@ -187,7 +187,7 @@ export interface ESPNOdds {
   spreadOdds: { home: number; away: number } | null
   overUnder: number | null
   overUnderOdds: { over: number; under: number } | null
-  moneyline: { home: number; away: number } | null
+  moneyline: { home: number; away: number; draw?: number } | null  // draw for soccer 3-way markets
   homeFavorite: boolean
   gameStatus: 'pre' | 'in' | 'post'
   statusDetail: string
@@ -286,7 +286,8 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
       } : null,
       moneyline: pickcenter.homeTeamOdds?.moneyLine && pickcenter.awayTeamOdds?.moneyLine ? {
         home: pickcenter.homeTeamOdds.moneyLine,
-        away: pickcenter.awayTeamOdds.moneyLine
+        away: pickcenter.awayTeamOdds.moneyLine,
+        draw: pickcenter.drawOdds?.moneyLine ?? undefined  // For soccer 3-way markets
       } : null,
       homeFavorite: pickcenter.homeTeamOdds?.favorite ?? false,
       gameStatus: gameState as 'pre' | 'in' | 'post',

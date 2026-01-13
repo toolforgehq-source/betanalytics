@@ -148,7 +148,9 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
     market: 'h2h',
     outcomes: [
       { name: espnOdds.homeTeam, price: espnOdds.moneyline!.home },
-      { name: espnOdds.awayTeam, price: espnOdds.moneyline!.away }
+      { name: espnOdds.awayTeam, price: espnOdds.moneyline!.away },
+      // Include Draw outcome for soccer 3-way markets (if available)
+      ...(espnOdds.moneyline!.draw !== undefined ? [{ name: 'Draw', price: espnOdds.moneyline!.draw }] : [])
     ]
   })) : []
   
