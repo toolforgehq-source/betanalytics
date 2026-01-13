@@ -56,9 +56,13 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
   const [isLoading, setIsLoading] = useState(false)
   const [questionsRemaining, setQuestionsRemaining] = useState(initialQuestionsRemaining)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    // Scroll within the chat container, not the whole page
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight
+    }
   }, [messages])
 
   useEffect(() => {
@@ -219,7 +223,7 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6">
         {messages.map((message) => (
           <div
             key={message.id}
