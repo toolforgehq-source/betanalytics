@@ -390,8 +390,9 @@ export async function setCachedPlayerProps(props: GamePlayerProps[]): Promise<bo
 
 /**
  * Fetch odds for a single sport from The Odds API
+ * Exported for use as fallback when ESPN doesn't have odds
  */
-async function fetchSportOdds(sportKey: string, sportName: string): Promise<Game[]> {
+export async function fetchSportOdds(sportKey: string, sportName: string): Promise<Game[]> {
   const apiKey = process.env.ODDS_API_KEY
   
   if (!apiKey) {

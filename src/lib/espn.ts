@@ -569,6 +569,9 @@ export function formatESPNOddsForContext(oddsData: ESPNOddsData): string {
       
       if (oddsInfo.length > 0) {
         lines.push(`  ${oddsInfo.join(' | ')}`)
+      } else {
+        // Explicitly mark games without odds data so AI doesn't hallucinate
+        lines.push(`  ODDS UNAVAILABLE - Do not guess or invent odds for this game`)
       }
       lines.push(``)
     }

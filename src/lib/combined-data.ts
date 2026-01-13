@@ -19,7 +19,7 @@
  * - Odds API is PAID - used ONLY for player props
  */
 
-import { getCachedPlayerProps, formatPlayerPropsForContext, getCurrentOdds, fetchAllOdds, type GamePlayerProps, type Game } from './odds'
+import { getCachedPlayerProps, formatPlayerPropsForContext, getCurrentOdds, fetchAllOdds, fetchSportOdds, type GamePlayerProps, type Game } from './odds'
 import { getCachedESPNData, getCachedESPNOdds, formatESPNForContext, formatESPNOddsForContext, type ESPNGameData, type ESPNInjury, type ESPNProbable } from './espn'
 import { getWeatherForGames, formatWeatherForContext } from './weather'
 import { getCachedSoccerStats, formatSoccerStatsForContext } from './soccer-stats'
@@ -232,6 +232,83 @@ function mapSportToLeague(sportName: string): string {
 }
 
 /**
+ * Tier 1 sports that should always have odds data
+ * Maps ESPN league name to Odds API sport key
+ */
+const TIER1_SPORTS_FALLBACK: Record<string, { key: string; name: string }> = {
+  'NFL': { key: 'americanfootball_nfl', name: 'NFL' },
+  'NBA': { key: 'basketball_nba', name: 'NBA' },
+  'NHL': { key: 'icehockey_nhl', name: 'NHL' },
+  'NCAAB': { key: 'basketball_ncaab', name: 'NCAAB' },
+  'NCAAF': { key: 'americanfootball_ncaaf', name: 'NCAAF' },
+  'MLB': { key: 'baseball_mlb', name: 'MLB' },
+}
+
+/**
+ * Check if a game has valid odds data (at least one market)
+ */
+function hasValidOdds(game: ESPNOdds): boolean {
+  return game.moneyline !== null || game.spread !== null || game.overUnder !== null
+}
+
+/**
+ * Fetch odds from The Odds API for sports missing from ESPN
+ * Only fetches for Tier 1 sports to minimize API costs
+ */
+async function fetchFallbackOdds(espnGames: ESPNOdds[]): Promise<{ games: Game[]; sportsWithFallback: string[] }> {
+  // Group ESPN games by league and check which have valid odds
+  const leaguesWithOdds = new Set<string>()
+  const leaguesWithGames = new Set<string>()
+  
+  for (const game of espnGames) {
+    leaguesWithGames.add(game.league)
+    if (hasValidOdds(game)) {
+      leaguesWithOdds.add(game.league)
+    }
+  }
+  
+  // Find Tier 1 sports that have games but no odds from ESPN
+  const sportsNeedingFallback: { key: string; name: string }[] = []
+  
+  for (const [league, sportInfo] of Object.entries(TIER1_SPORTS_FALLBACK)) {
+    // Only fetch fallback if:
+    // 1. ESPN has games for this league but no odds, OR
+    // 2. ESPN has no games at all for this league (might be missing entirely)
+    const hasGames = leaguesWithGames.has(league)
+    const hasOdds = leaguesWithOdds.has(league)
+    
+    if (hasGames && !hasOdds) {
+      console.log(`[fetchFallbackOdds] ${league}: Has games but no odds from ESPN, fetching from Odds API`)
+      sportsNeedingFallback.push(sportInfo)
+    }
+  }
+  
+  if (sportsNeedingFallback.length === 0) {
+    return { games: [], sportsWithFallback: [] }
+  }
+  
+  // Fetch odds from The Odds API for missing sports
+  console.log(`[fetchFallbackOdds] Fetching fallback odds for ${sportsNeedingFallback.length} sports: ${sportsNeedingFallback.map(s => s.name).join(', ')}`)
+  
+  const fallbackPromises = sportsNeedingFallback.map(sport => 
+    fetchSportOdds(sport.key, sport.name).catch(err => {
+      console.error(`[fetchFallbackOdds] Failed to fetch ${sport.name}:`, err)
+      return [] as Game[]
+    })
+  )
+  
+  const results = await Promise.all(fallbackPromises)
+  const allFallbackGames = results.flat()
+  
+  console.log(`[fetchFallbackOdds] Got ${allFallbackGames.length} games from Odds API fallback`)
+  
+  return {
+    games: allFallbackGames,
+    sportsWithFallback: sportsNeedingFallback.map(s => s.name)
+  }
+}
+
+/**
  * Get combined sports data from both APIs
  */
 export async function getCombinedSportsData(): Promise<CombinedSportsData> {
@@ -296,6 +373,16 @@ export async function formatCombinedDataForContext(): Promise<string> {
     getCachedESPNData(),
     getCachedPlayerProps().catch(() => [] as GamePlayerProps[])
   ])
+  
+  // FALLBACK: If ESPN is missing odds for any Tier 1 sport, fetch from The Odds API
+  // This ensures we always have odds data for major sports (NFL, NBA, NHL, etc.)
+  const fallbackResult = await fetchFallbackOdds(espnOddsData.games)
+  const fallbackGames = fallbackResult.games
+  const sportsWithFallback = fallbackResult.sportsWithFallback
+  
+  if (fallbackGames.length > 0) {
+    console.log(`[formatCombinedDataForContext] Using ${fallbackGames.length} games from Odds API fallback for: ${sportsWithFallback.join(', ')}`)
+  }
   
   // Use cached props (populated by cron job)
   // NOTE: On-demand props fetching removed to avoid rate limiting (429 errors)
@@ -420,6 +507,12 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push(formatESPNOddsForContext(espnOddsData))
   lines.push('')
   
+  // Add fallback odds from The Odds API (only for sports missing from ESPN)
+  if (fallbackGames.length > 0) {
+    lines.push(formatFallbackOddsForContext(fallbackGames, sportsWithFallback))
+    lines.push('')
+  }
+  
   // Add weather data for outdoor games
   if (weatherMap.size > 0) {
     lines.push(formatWeatherForContext(weatherMap, outdoorGames))
@@ -442,6 +535,90 @@ export async function formatCombinedDataForContext(): Promise<string> {
   
   // Add ESPN data
   lines.push(formatESPNForContext(espnData))
+  
+  return lines.join('\n')
+}
+
+/**
+ * Format fallback odds from The Odds API for context
+ * Used when ESPN doesn't have odds for certain sports
+ */
+function formatFallbackOddsForContext(games: Game[], sportsWithFallback: string[]): string {
+  if (games.length === 0) {
+    return ''
+  }
+  
+  const lines: string[] = []
+  lines.push(`\n=== FALLBACK ODDS (The Odds API) ===`)
+  lines.push(`Source: The Odds API (used because ESPN was missing odds for: ${sportsWithFallback.join(', ')})`)
+  lines.push(`Games: ${games.length}`)
+  lines.push(``)
+  
+  // Group by sport
+  const bySport: Record<string, Game[]> = {}
+  for (const game of games) {
+    const sport = game.sportName || 'Unknown'
+    if (!bySport[sport]) {
+      bySport[sport] = []
+    }
+    bySport[sport].push(game)
+  }
+  
+  for (const sport of Object.keys(bySport)) {
+    const sportGames = bySport[sport]
+    lines.push(`--- ${sport} (${sportGames.length} games) ---`)
+    
+    for (const game of sportGames) {
+      const gameTime = new Date(game.commenceTime).toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+      })
+      
+      lines.push(`${game.awayTeam} @ ${game.homeTeam}`)
+      lines.push(`  Time: ${gameTime} ET`)
+      
+      const oddsInfo: string[] = []
+      
+      // Get spread from first bookmaker
+      if (game.spreads && game.spreads.length > 0) {
+        const spread = game.spreads[0]
+        const homeSpread = spread.outcomes.find(o => o.name === game.homeTeam)
+        if (homeSpread && homeSpread.point !== undefined) {
+          oddsInfo.push(`Spread: ${game.homeTeam} ${homeSpread.point > 0 ? '+' : ''}${homeSpread.point}`)
+        }
+      }
+      
+      // Get total from first bookmaker
+      if (game.totals && game.totals.length > 0) {
+        const total = game.totals[0]
+        const over = total.outcomes.find(o => o.name === 'Over')
+        if (over) {
+          oddsInfo.push(`O/U: ${over.point}`)
+        }
+      }
+      
+      // Get moneyline from first bookmaker
+      if (game.moneylines && game.moneylines.length > 0) {
+        const ml = game.moneylines[0]
+        const homeML = ml.outcomes.find(o => o.name === game.homeTeam)
+        const awayML = ml.outcomes.find(o => o.name === game.awayTeam)
+        if (homeML && awayML) {
+          oddsInfo.push(`ML: ${game.homeTeam} ${homeML.price > 0 ? '+' : ''}${homeML.price} / ${game.awayTeam} ${awayML.price > 0 ? '+' : ''}${awayML.price}`)
+        }
+      }
+      
+      if (oddsInfo.length > 0) {
+        lines.push(`  ${oddsInfo.join(' | ')}`)
+      } else {
+        lines.push(`  ODDS UNAVAILABLE`)
+      }
+      lines.push(``)
+    }
+  }
   
   return lines.join('\n')
 }
