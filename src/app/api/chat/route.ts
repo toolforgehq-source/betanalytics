@@ -630,7 +630,35 @@ IMPORTANT: Use this REAL-TIME data to answer the user's question.
 - Reference actual games and odds from The Odds API
 - Check ESPN injury data before making recommendations
 - Verify starting lineups (especially NHL goalies) from ESPN data
-- Never cite players who may have been traded - use current roster data`
+
+═══════════════════════════════════════════════════════════
+CRITICAL: TEAMMATE/ROSTER CLAIMS RULE
+═══════════════════════════════════════════════════════════
+
+You MUST NOT make claims about:
+- Player hierarchies (e.g., "secondary scorer behind X")
+- Teammate relationships (e.g., "with X out, Y gets more touches")
+- Role descriptions relative to specific players (e.g., "the #2 option after X")
+
+UNLESS that specific teammate's name appears in the provided roster/injury data above.
+
+WHY: Players get traded, waived, or injured frequently. Your training data may be outdated.
+If you're unsure whether a player is still on a team, use GENERIC role descriptions:
+
+WRONG: "Herro is the secondary scorer behind Butler"
+RIGHT: "Herro is one of Miami's primary offensive options"
+
+WRONG: "With Curry out, Poole becomes the main ball-handler"  
+RIGHT: "Check the injury report above to see who's available"
+
+WRONG: "He's the #2 receiver after Jefferson"
+RIGHT: "He's a high-volume target in this offense"
+
+When discussing player props, focus on:
+- The player's own recent performance and matchup
+- Team pace and offensive/defensive rankings
+- The specific line being offered
+- DO NOT reference teammates unless they appear in today's data`
 
     const response = await anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
