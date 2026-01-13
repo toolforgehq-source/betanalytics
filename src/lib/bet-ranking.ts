@@ -649,11 +649,15 @@ export function formatBestBetForContext(result: BestBetResult): string {
       }
     }
     
-    // If still nothing, take the best ROI from all options (even if negative EV)
+    // If still nothing (all negative EV), prioritize HIGHEST PROBABILITY
+    // Users asking "what's the best bet" want something likely to win, not a longshot
+    // with slightly better math. A 65% favorite at -5% ROI is better advice than
+    // a 10% underdog at -4% ROI.
     if (!bestAvailable) {
       const allOptions = [...closestMisses, ...mostLikelyWinners]
       if (allOptions.length > 0) {
-        bestAvailable = allOptions.sort((a, b) => b.roi - a.roi)[0]
+        // Sort by probability (highest first) - this gives users the "safest" lean
+        bestAvailable = allOptions.sort((a, b) => b.consensusProbability - a.consensusProbability)[0]
       }
     }
     
