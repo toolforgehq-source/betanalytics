@@ -27,7 +27,6 @@ export async function GET(request: Request) {
     const fullBackfill = url.searchParams.get('full') === 'true'
     const daysParam = url.searchParams.get('days')
     
-    let games
     let startDate: Date
     const endDate = new Date()
     endDate.setDate(endDate.getDate() - 1) // Yesterday
@@ -44,7 +43,7 @@ export async function GET(request: Request) {
       console.log(`[Elo Debug] Backfilling last ${days} days...`)
     }
     
-    games = await backfillHistoricalGames(startDate, endDate)
+    const games = await backfillHistoricalGames(startDate, endDate)
     
     // Update ratings
     const eloData = await updateEloRatings(games)
