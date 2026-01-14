@@ -62,10 +62,14 @@ export interface FallbackBet {
   bestBook: string
   impliedProbability: number
   edge: number
-  // NEW: Expected Value and ROI calculations
+  // Expected Value and ROI calculations
   expectedValue: number         // EV in dollars per $100 bet
   roi: number                   // ROI as percentage
+  // NEW: Unified score (same formula as RankedBet)
+  score: number                 // Score from -55 to 100
+  // Filter status
   disqualifyReasons: string[]
+  isValuePlay: boolean          // True if qualifies as VALUE PLAY (48%+ prob, 5%+ ROI)
 }
 
 export interface BestBetResult {
@@ -93,10 +97,49 @@ export interface SportBestBets {
   [sportName: string]: RankedBet | null
 }
 
-// Minimum thresholds
-const MIN_PROBABILITY = 0.55      // 55% minimum win probability
-const MIN_EDGE = 0.03             // 3% minimum edge
+// ============================================
+// NEW UNIFIED SCORING SYSTEM
+// ============================================
+// 
+// HARD FILTERS (automatic rejection):
+// - Odds limit: Reject if American odds worse than -250
+// - Probability floor: Reject if win probability below 52%
+// - ROI floor: Reject if ROI worse than -4.5%
+//
+// SCORING FORMULA (100 points max):
+// - Probability Score: 45 points max
+// - ROI Score: 35 points max (negative values SUBTRACT points)
+// - Edge Score: 20 points max (negative values SUBTRACT points)
+//
+// VALUE PLAY EXCEPTION:
+// - Bets with +5% ROI can have probability as low as 48%
+// - These are labeled as "VALUE PLAY" not "BEST BET"
+//
+// PROGRESSIVE FALLBACK (when nothing passes filters):
+// - Attempt 1: All filters (odds -250, prob 52%, ROI -4.5%)
+// - Attempt 2: Relax ROI to -6%
+// - Attempt 3: Relax ROI to -8%
+// - Attempt 4: Relax odds to -300
+// - Attempt 5: Relax prob to 50%
+// - Final: "No recommended bets today"
+
+// Filter thresholds
 const MAX_JUICE_ODDS = -250       // Don't recommend worse than -250
+const MIN_PROBABILITY = 0.52     // 52% minimum win probability
+const MIN_ROI = -4.5             // -4.5% minimum ROI (as percentage)
+
+// VALUE PLAY exception thresholds
+const VALUE_PLAY_MIN_ROI = 5.0   // +5% ROI required for VALUE PLAY
+const VALUE_PLAY_MIN_PROB = 0.48 // 48% minimum probability for VALUE PLAY
+
+// Progressive fallback thresholds
+const FALLBACK_ROI_RELAXED_1 = -6.0  // First relaxation
+const FALLBACK_ROI_RELAXED_2 = -8.0  // Second relaxation
+const FALLBACK_ODDS_RELAXED = -300   // Relaxed odds limit
+const FALLBACK_PROB_RELAXED = 0.50   // Relaxed probability floor
+
+// Legacy thresholds (for qualified bets - stricter)
+const MIN_EDGE = 0.03             // 3% minimum edge for "qualified" bets
 
 // Reputable books for consensus calculation (exclude sharp-only books)
 const CONSENSUS_BOOKS = [
@@ -152,33 +195,79 @@ export function calculateROI(expectedValue: number): number {
 }
 
 /**
- * Calculate bet quality score (0-100)
+ * Calculate bet quality score (-55 to 100)
  * 
- * NEW SCORING SYSTEM:
- * - ROI is the PRIMARY factor (50 points max)
- * - Win probability is SECONDARY (30 points max)
- * - Edge is a MODIFIER (20 points max)
+ * NEW UNIFIED SCORING SYSTEM (45/35/20 weights):
+ * - Probability Score: 45 points max (most important - we want users to win)
+ * - ROI Score: 35 points max (important - negative values SUBTRACT points)
+ * - Edge Score: 20 points max (useful - negative values SUBTRACT points)
  * 
- * This prevents recommending -800 favorites with tiny ROI
+ * This ensures:
+ * - High win rate (users happy they're winning)
+ * - Reasonable value (users not losing too much on -EV days)
+ * - Balanced approach (not just picking highest probability)
+ * 
+ * @param winProbability - Win probability as decimal (0-1, e.g., 0.67 = 67%)
+ * @param edge - Edge as decimal (e.g., 0.03 = 3%, -0.028 = -2.8%)
+ * @param roi - ROI as percentage (e.g., 5.0 = 5%, -4.0 = -4%)
+ * @returns Score from -55 to 100
  */
 function calculateBetScore(
-  winProbability: number,  // 0-1
-  edge: number,            // 0-1 (e.g., 0.05 = 5%)
+  winProbability: number,  // 0-1 (e.g., 0.67 = 67%)
+  edge: number,            // decimal (e.g., 0.03 = 3%)
   roi: number              // percentage (e.g., 5.0 = 5%)
 ): number {
-  // ROI Score (50 points max)
-  // 0% ROI = 0 points, 5% ROI = 25 points, 10%+ ROI = 50 points
-  const roiScore = Math.max(0, Math.min(50, roi * 5))
+  // ============================================
+  // PROBABILITY SCORE: 45 points maximum
+  // ============================================
+  // Formula: ((Win Probability - 50) / 40) × 45
+  // 50% = 0 points, 60% = 11.25 points, 70% = 22.5 points, 90% = 45 points
+  const probPercent = winProbability * 100  // Convert to 0-100 scale
+  const probScore = Math.max(0, Math.min(45, ((probPercent - 50) / 40) * 45))
   
-  // Probability Score (30 points max)
-  // 50% = 0 points, 60% = 15 points, 70%+ = 30 points
-  const probScore = Math.max(0, Math.min(30, (winProbability - 0.5) * 150))
+  // ============================================
+  // ROI SCORE: 35 points maximum (can go negative!)
+  // ============================================
+  // Different formulas for positive vs negative ROI:
+  // - Positive ROI: Score = 17.5 + (ROI / 20) × 17.5
+  // - Negative ROI: Score = 17.5 + (ROI / 10) × 17.5 (penalized more heavily)
+  // 
+  // Examples:
+  // +20% ROI = 35 points (max)
+  // +5% ROI = 21.875 points
+  // 0% ROI = 17.5 points
+  // -4% ROI = 10.5 points
+  // -10% ROI = 0 points
+  // -20% ROI = -17.5 points
+  let roiScore: number
+  if (roi >= 0) {
+    // Positive ROI: rewarded
+    roiScore = 17.5 + (roi / 20) * 17.5
+  } else {
+    // Negative ROI: penalized more heavily
+    roiScore = 17.5 + (roi / 10) * 17.5
+  }
+  roiScore = Math.max(-35, Math.min(35, roiScore))
   
-  // Edge Score (20 points max)
-  // 0% edge = 0 points, 5% edge = 10 points, 10%+ edge = 20 points
-  const edgeScore = Math.max(0, Math.min(20, edge * 200))
+  // ============================================
+  // EDGE SCORE: 20 points maximum (can go negative!)
+  // ============================================
+  // Formula: (Edge / 10) × 20
+  // +10% edge = 20 points (max)
+  // +5% edge = 10 points
+  // 0% edge = 0 points
+  // -2.8% edge = -5.6 points
+  // -10% edge = -20 points
+  const edgePercent = edge * 100  // Convert to percentage
+  const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
   
-  return Math.round(roiScore + probScore + edgeScore)
+  // ============================================
+  // TOTAL SCORE
+  // ============================================
+  // Possible range: -55 to 100 points
+  // - Worst possible: 0 + (-35) + (-20) = -55 points
+  // - Best possible: 45 + 35 + 20 = 100 points
+  return Math.round(probScore + roiScore + edgeScore)
 }
 
 /**
@@ -469,8 +558,11 @@ function analyzeGame(game: Game): RankedBet[] {
 }
 
 /**
- * Analyze a single game WITHOUT filters - returns all bets with disqualify reasons
- * Used for computing fallback data (closest misses, most likely winners)
+ * Analyze a single game WITHOUT strict filters - returns all bets with scores and filter status
+ * Used for:
+ * 1. Computing fallback data when no bets pass strict filters
+ * 2. Finding VALUE PLAY candidates (48%+ prob, 5%+ ROI)
+ * 3. Progressive fallback selection
  */
 function analyzeGameUnfiltered(game: Game): FallbackBet[] {
   const fallbackBets: FallbackBet[] = []
@@ -485,7 +577,7 @@ function analyzeGameUnfiltered(game: Game): FallbackBet[] {
     return []
   }
   
-  // Skip 3-way markets (soccer)
+  // Skip 3-way markets (soccer) for now
   if (isThreeWayMarket(game)) {
     return []
   }
@@ -500,28 +592,28 @@ function analyzeGameUnfiltered(game: Game): FallbackBet[] {
     
     const edge = consensus.consensusProb - bestPrice.impliedProb
     
-    // NEW: Calculate Expected Value and ROI
+    // Calculate Expected Value and ROI
     const ev = calculateExpectedValue(bestPrice.price, consensus.consensusProb)
     const roi = calculateROI(ev)
     
+    // Calculate unified score using new 45/35/20 formula
+    const score = calculateBetScore(consensus.consensusProb, edge, roi)
+    
+    // Check if this qualifies as a VALUE PLAY (48%+ prob, 5%+ ROI)
+    const isValuePlay = consensus.consensusProb >= VALUE_PLAY_MIN_PROB && roi >= VALUE_PLAY_MIN_ROI
+    
     const disqualifyReasons: string[] = []
     
-    // Check why it doesn't qualify
+    // Check against NEW unified filters (odds -250, prob 52%, ROI -4.5%)
     if (bestPrice.price < MAX_JUICE_ODDS) {
-      disqualifyReasons.push(`Juice ${bestPrice.price} worse than -250 max`)
+      disqualifyReasons.push(`Odds ${bestPrice.price} worse than -250 limit`)
     }
-    if (consensus.consensusProb < MIN_PROBABILITY) {
-      disqualifyReasons.push(`Probability ${(consensus.consensusProb * 100).toFixed(1)}% < 55% min`)
+    if (consensus.consensusProb < MIN_PROBABILITY && !isValuePlay) {
+      // VALUE PLAY exception: 48%+ prob is OK if ROI >= 5%
+      disqualifyReasons.push(`Probability ${(consensus.consensusProb * 100).toFixed(1)}% < 52% min`)
     }
-    if (edge < MIN_EDGE) {
-      disqualifyReasons.push(`Edge ${(edge * 100).toFixed(1)}% < 3% min`)
-    }
-    // NEW: Check EV and ROI
-    if (ev <= 0) {
-      disqualifyReasons.push(`Negative EV: $${ev.toFixed(2)} per $100 bet`)
-    }
-    if (roi < 1 && ev > 0) {
-      disqualifyReasons.push(`ROI ${roi.toFixed(1)}% < 1% min (tiny edge on heavy favorite)`)
+    if (roi < MIN_ROI) {
+      disqualifyReasons.push(`ROI ${roi.toFixed(1)}% worse than -4.5% floor`)
     }
     
     fallbackBets.push({
@@ -537,9 +629,11 @@ function analyzeGameUnfiltered(game: Game): FallbackBet[] {
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
       edge: Math.round(edge * 1000) / 10,
-      expectedValue: Math.round(ev * 100) / 100, // e.g., $5.23 or -$2.50
-      roi: Math.round(roi * 100) / 100, // e.g., 5.23% or -2.50%
-      disqualifyReasons
+      expectedValue: Math.round(ev * 100) / 100,
+      roi: Math.round(roi * 100) / 100,
+      score,
+      disqualifyReasons,
+      isValuePlay
     })
   }
   
@@ -547,7 +641,38 @@ function analyzeGameUnfiltered(game: Game): FallbackBet[] {
 }
 
 /**
+ * Check if a bet passes the unified filters
+ * @param bet - The bet to check
+ * @param relaxedOdds - Use relaxed odds limit (-300 instead of -250)
+ * @param relaxedROI - Relaxed ROI floor (e.g., -6% or -8%)
+ * @param relaxedProb - Use relaxed probability floor (50% instead of 52%)
+ */
+function passesFilters(
+  bet: FallbackBet,
+  relaxedOdds: boolean = false,
+  relaxedROI: number = MIN_ROI,
+  relaxedProb: boolean = false
+): boolean {
+  const oddsLimit = relaxedOdds ? FALLBACK_ODDS_RELAXED : MAX_JUICE_ODDS
+  const probLimit = relaxedProb ? FALLBACK_PROB_RELAXED : MIN_PROBABILITY
+  
+  // Check odds limit
+  if (bet.bestPrice < oddsLimit) return false
+  
+  // Check probability floor (with VALUE PLAY exception)
+  const probDecimal = bet.consensusProbability / 100
+  if (probDecimal < probLimit && !bet.isValuePlay) return false
+  
+  // Check ROI floor
+  if (bet.roi < relaxedROI) return false
+  
+  return true
+}
+
+/**
  * Compute the Best Bet of the Day from all available games
+ * Uses the NEW UNIFIED SCORING SYSTEM with progressive fallback
+ * 
  * This is the main entry point - call this on each cron refresh
  */
 export function computeBestBets(games: Game[]): BestBetResult {
@@ -560,13 +685,19 @@ export function computeBestBets(games: Game[]): BestBetResult {
     const bets = analyzeGame(game)
     allRankedBets.push(...bets)
     
-    // Also collect unfiltered bets for fallback data
+    // Also collect unfiltered bets for fallback/scoring
     const unfilteredBets = analyzeGameUnfiltered(game)
     allUnfilteredBets.push(...unfilteredBets)
   }
   
-  // Sort by score (desc), then by game time (asc) for stable tiebreaker
+  // Sort ranked bets by score (desc), then by game time (asc) for stable tiebreaker
   allRankedBets.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
+  })
+  
+  // Sort ALL unfiltered bets by score for fallback selection
+  allUnfilteredBets.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
@@ -579,34 +710,62 @@ export function computeBestBets(games: Game[]): BestBetResult {
     if (games.length === 0) {
       reason = 'No games available'
     } else {
-      reason = 'No games meet criteria (55%+ probability, 3%+ edge, 1%+ ROI, positive EV, max -250 juice)'
+      reason = 'No games meet strict criteria (52%+ prob, -4.5%+ ROI, -250 odds limit)'
     }
   }
   
-  // Compute fallback data (only relevant when no bets qualify)
+  // ============================================
+  // PROGRESSIVE FALLBACK SELECTION
+  // ============================================
+  // When no bets pass strict filters, use progressive relaxation:
+  // 1. Standard filters (odds -250, prob 52%, ROI -4.5%)
+  // 2. Relax ROI to -6%
+  // 3. Relax ROI to -8%
+  // 4. Relax odds to -300
+  // 5. Relax prob to 50%
+  // 6. "No recommended bets today"
+  
   let closestMisses: FallbackBet[] = []
   let mostLikelyWinners: FallbackBet[] = []
   
   if (!bestBet && allUnfilteredBets.length > 0) {
-    // Closest misses: games with reasonable odds (-250 or better) and small positive or neutral edge
-    // These are games that ALMOST qualified
-    closestMisses = allUnfilteredBets
-      .filter(b => b.bestPrice >= MAX_JUICE_ODDS && b.edge >= -1) // Reasonable odds, edge >= -1%
-      .sort((a, b) => b.edge - a.edge) // Sort by edge (highest first)
-      .slice(0, 3)
+    // Attempt 1: Standard filters - find bets that pass all filters
+    let passingBets = allUnfilteredBets.filter(b => passesFilters(b, false, MIN_ROI, false))
     
-    // Most likely winners: highest probability games (may have negative edge)
-    // Filter to reasonable odds only (-250 or better) to avoid extreme favorites
+    // Attempt 2: Relax ROI to -6%
+    if (passingBets.length === 0) {
+      passingBets = allUnfilteredBets.filter(b => passesFilters(b, false, FALLBACK_ROI_RELAXED_1, false))
+    }
+    
+    // Attempt 3: Relax ROI to -8%
+    if (passingBets.length === 0) {
+      passingBets = allUnfilteredBets.filter(b => passesFilters(b, false, FALLBACK_ROI_RELAXED_2, false))
+    }
+    
+    // Attempt 4: Relax odds to -300
+    if (passingBets.length === 0) {
+      passingBets = allUnfilteredBets.filter(b => passesFilters(b, true, FALLBACK_ROI_RELAXED_2, false))
+    }
+    
+    // Attempt 5: Relax prob to 50%
+    if (passingBets.length === 0) {
+      passingBets = allUnfilteredBets.filter(b => passesFilters(b, true, FALLBACK_ROI_RELAXED_2, true))
+    }
+    
+    // closestMisses = bets that passed progressive filters, sorted by score
+    closestMisses = passingBets.slice(0, 5)
+    
+    // mostLikelyWinners = highest probability bets (for context)
     mostLikelyWinners = allUnfilteredBets
-      .filter(b => b.bestPrice >= MAX_JUICE_ODDS) // Reasonable odds only
-      .sort((a, b) => b.consensusProbability - a.consensusProbability) // Sort by probability
-      .slice(0, 3)
+      .filter(b => b.bestPrice >= MAX_JUICE_ODDS)
+      .sort((a, b) => b.consensusProbability - a.consensusProbability)
+      .slice(0, 5)
   }
   
   return {
     bestBet,
     runnerUp,
-    allRankedBets: allRankedBets.slice(0, 10), // Top 10 for context
+    allRankedBets: allRankedBets.slice(0, 10),
     calculatedAt: now,
     gamesAnalyzed: games.length,
     gamesQualified: allRankedBets.length,
@@ -618,6 +777,7 @@ export function computeBestBets(games: Game[]): BestBetResult {
 
 /**
  * Format the best bet result for Claude's context
+ * Uses the NEW UNIFIED SCORING SYSTEM (45/35/20 weights)
  */
 export function formatBestBetForContext(result: BestBetResult): string {
   const lines: string[] = []
@@ -627,38 +787,20 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push('')
   
   if (!result.bestBet) {
-    // Get fallback data
+    // Get fallback data - already sorted by SCORE from computeBestBets
     const closestMisses = result.closestMisses ?? []
     const mostLikelyWinners = result.mostLikelyWinners ?? []
     
-    // Find the BEST AVAILABLE option - prioritize by ROI, then by probability
-    // First try closest misses (better value), then most likely winners
+    // NEW: Select best available by SCORE (not by ROI or probability)
+    // closestMisses are already sorted by score from progressive fallback
     let bestAvailable: FallbackBet | null = null
     
-    // From closest misses, find the one with best ROI that has positive EV
-    const positiveEVMisses = closestMisses.filter(m => m.expectedValue > 0)
-    if (positiveEVMisses.length > 0) {
-      bestAvailable = positiveEVMisses.sort((a, b) => b.roi - a.roi)[0]
-    }
-    
-    // If no positive EV misses, try most likely winners with positive EV
-    if (!bestAvailable) {
-      const positiveEVWinners = mostLikelyWinners.filter(w => w.expectedValue > 0)
-      if (positiveEVWinners.length > 0) {
-        bestAvailable = positiveEVWinners.sort((a, b) => b.roi - a.roi)[0]
-      }
-    }
-    
-    // If still nothing (all negative EV), prioritize HIGHEST PROBABILITY
-    // Users asking "what's the best bet" want something likely to win, not a longshot
-    // with slightly better math. A 65% favorite at -5% ROI is better advice than
-    // a 10% underdog at -4% ROI.
-    if (!bestAvailable) {
-      const allOptions = [...closestMisses, ...mostLikelyWinners]
-      if (allOptions.length > 0) {
-        // Sort by probability (highest first) - this gives users the "safest" lean
-        bestAvailable = allOptions.sort((a, b) => b.consensusProbability - a.consensusProbability)[0]
-      }
+    if (closestMisses.length > 0) {
+      // Take the highest scored bet from progressive fallback
+      bestAvailable = closestMisses[0]
+    } else if (mostLikelyWinners.length > 0) {
+      // Fallback to highest probability if nothing passed progressive filters
+      bestAvailable = mostLikelyWinners[0]
     }
     
     lines.push('NO STRICT VALUE BET AVAILABLE')
@@ -666,48 +808,91 @@ export function formatBestBetForContext(result: BestBetResult): string {
     lines.push('')
     
     if (bestAvailable) {
-      lines.push('=== BEST AVAILABLE LEAN (USE THIS) ===')
+      // Determine if this is a VALUE PLAY
+      const isValuePlay = bestAvailable.isValuePlay
+      const label = isValuePlay ? 'VALUE PLAY' : 'BEST AVAILABLE LEAN'
+      
+      lines.push(`=== ${label} (USE THIS) ===`)
       lines.push('IMPORTANT: When user asks for "best bet", IMMEDIATELY give them this pick.')
       lines.push('DO NOT ask follow-up questions. DO NOT offer multiple options.')
-      lines.push('Just present this as "Today\'s Best Lean" with the disclaimer below.')
       lines.push('')
-      lines.push('BEST AVAILABLE LEAN:')
+      lines.push(`${label}:`)
       lines.push(`Team: ${bestAvailable.team} (Moneyline)`)
       lines.push(`Game: ${bestAvailable.awayTeam} @ ${bestAvailable.homeTeam}`)
       lines.push(`Sport: ${bestAvailable.sportName}`)
       lines.push(`Best Price: ${formatOdds(bestAvailable.bestPrice)} at ${bestAvailable.bestBook}`)
       lines.push('')
+      
+      // NEW: Show SCORE prominently
+      lines.push('SCORE (NEW UNIFIED SYSTEM):')
+      lines.push(`Score: ${bestAvailable.score}/100`)
+      lines.push('')
+      
+      lines.push('SCORE BREAKDOWN:')
+      // Calculate individual score components for display
+      const probPercent = bestAvailable.consensusProbability
+      const probScore = Math.max(0, Math.min(45, ((probPercent - 50) / 40) * 45))
+      const roi = bestAvailable.roi
+      let roiScore: number
+      if (roi >= 0) {
+        roiScore = 17.5 + (roi / 20) * 17.5
+      } else {
+        roiScore = 17.5 + (roi / 10) * 17.5
+      }
+      roiScore = Math.max(-35, Math.min(35, roiScore))
+      const edgePercent = bestAvailable.edge
+      const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
+      
+      lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${probPercent}% win probability)`)
+      lines.push(`- ROI Score: ${roiScore.toFixed(1)}/35 points (${roi.toFixed(2)}% ROI)`)
+      lines.push(`- Edge Score: ${edgeScore.toFixed(1)}/20 points (${edgePercent}% edge)`)
+      lines.push('')
+      
       lines.push('VALUE METRICS:')
       lines.push(`- Win Probability: ${bestAvailable.consensusProbability}%`)
-      lines.push(`- Edge: ${bestAvailable.edge}%`)
       lines.push(`- Expected Value: $${bestAvailable.expectedValue.toFixed(2)} per $100`)
       lines.push(`- ROI: ${bestAvailable.roi.toFixed(2)}%`)
+      lines.push(`- Edge: ${bestAvailable.edge}%`)
       lines.push('')
       
       if (bestAvailable.expectedValue > 0) {
-        lines.push('STATUS: Positive EV - This is a mathematically sound bet, just below our strict thresholds.')
-        lines.push(`Why not "Best Bet": ${bestAvailable.disqualifyReasons.join(', ')}`)
+        lines.push('STATUS: Positive EV - This is a mathematically sound bet.')
+        if (bestAvailable.disqualifyReasons.length > 0) {
+          lines.push(`Note: ${bestAvailable.disqualifyReasons.join(', ')}`)
+        }
       } else {
         lines.push('STATUS: Negative EV - This is NOT a value bet. Only for users who want action.')
         lines.push('DISCLAIMER: "This doesn\'t meet our value criteria. Consider passing or betting small."')
       }
       lines.push('')
+      
+      // Show alternatives with scores
+      if (closestMisses.length > 1) {
+        lines.push('ALTERNATIVE OPTIONS (by score):')
+        for (let i = 1; i < Math.min(4, closestMisses.length); i++) {
+          const alt = closestMisses[i]
+          lines.push(`#${i + 1}: ${alt.team} @ ${formatOdds(alt.bestPrice)} (Score: ${alt.score}/100, Prob: ${alt.consensusProbability}%, ROI: ${alt.roi.toFixed(2)}%)`)
+        }
+        lines.push('')
+      }
+      
       lines.push('RESPONSE FORMAT:')
-      lines.push('## Today\'s Best Lean')
-      lines.push('')
-      lines.push('**Note:** No games meet our strict value criteria today (55%+ probability, 3%+ edge).')
+      lines.push(`## Today's ${isValuePlay ? 'Value Play' : 'Best Lean'}`)
       lines.push('')
       lines.push(`**${bestAvailable.team} ML @ ${formatOdds(bestAvailable.bestPrice)}** (${bestAvailable.bestBook})`)
       lines.push('')
-      lines.push(`Win Probability: ${bestAvailable.consensusProbability}% | Edge: ${bestAvailable.edge}% | EV: $${bestAvailable.expectedValue.toFixed(2)} | ROI: ${bestAvailable.roi.toFixed(2)}%`)
+      lines.push(`**Score: ${bestAvailable.score}/100**`)
+      lines.push(`Win Probability: ${bestAvailable.consensusProbability}% | ROI: ${bestAvailable.roi.toFixed(2)}% | Edge: ${bestAvailable.edge}%`)
       lines.push('')
-      lines.push('[Add 2-3 sentences about why this is the best available option and any relevant game factors]')
+      lines.push('[Add 2-3 sentences about why this scores highest and any relevant game factors from the data]')
       lines.push('')
-      lines.push('**Recommendation:** This is a lean, not a lock. Consider smaller bet size.')
+      if (bestAvailable.expectedValue < 0) {
+        lines.push('**Note:** This has negative expected value. Consider smaller bet size or passing.')
+      }
     } else {
-      lines.push('NO GAMES AVAILABLE')
-      lines.push('There are no games with odds data available right now.')
-      lines.push('Tell the user: "No games with odds data available right now. Check back later."')
+      lines.push('NO RECOMMENDED BET TODAY')
+      lines.push('No games pass our filters (odds -250, prob 52%, ROI -4.5%) even with relaxation.')
+      lines.push('Tell the user: "No recommended bets today. All options have poor value or low probability."')
     }
     lines.push('')
     
@@ -721,18 +906,41 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push(`Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
   lines.push(`Sport: ${bet.sportName}`)
   lines.push(`Game Time: ${formatTime(bet.commenceTime)}`)
-  lines.push(`Score: ${bet.score}/100 (EV-based ranking)`)
   lines.push('')
+  
+  // NEW: Show SCORE prominently with breakdown
+  lines.push('SCORE (NEW UNIFIED SYSTEM):')
+  lines.push(`Score: ${bet.score}/100`)
+  lines.push('')
+  
+  lines.push('SCORE BREAKDOWN:')
+  const probPercent = bet.consensusProbability
+  const probScore = Math.max(0, Math.min(45, ((probPercent - 50) / 40) * 45))
+  const roi = bet.roi
+  let roiScore: number
+  if (roi >= 0) {
+    roiScore = 17.5 + (roi / 20) * 17.5
+  } else {
+    roiScore = 17.5 + (roi / 10) * 17.5
+  }
+  roiScore = Math.max(-35, Math.min(35, roiScore))
+  const edgePercent = bet.edge
+  const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
+  
+  lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${probPercent}% win probability)`)
+  lines.push(`- ROI Score: ${roiScore.toFixed(1)}/35 points (${roi.toFixed(2)}% ROI)`)
+  lines.push(`- Edge Score: ${edgeScore.toFixed(1)}/20 points (${edgePercent}% edge)`)
+  lines.push('')
+  
   lines.push('VALUE CALCULATION:')
   lines.push(`- Consensus Win Probability: ${bet.consensusProbability}% (no-vig median from ${bet.allBookPrices.length} books)`)
   lines.push(`- Best Available Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
   lines.push(`- Implied Probability from Best Price: ${bet.impliedProbability}%`)
   lines.push(`- EDGE: ${bet.consensusProbability}% - ${bet.impliedProbability}% = ${bet.edge}%`)
   lines.push('')
-  lines.push('EXPECTED VALUE (KEY METRIC):')
+  lines.push('EXPECTED VALUE:')
   lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
   lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
-  lines.push(`- This means: For every $100 bet, you expect to profit $${bet.expectedValue.toFixed(2)} on average`)
   lines.push('')
   lines.push('ALL BOOK PRICES:')
   const bookPrices = bet.allBookPrices || []
@@ -743,20 +951,16 @@ export function formatBestBetForContext(result: BestBetResult): string {
   if (result.runnerUp) {
     const ru = result.runnerUp
     lines.push('')
-    lines.push('RUNNER-UP (Value Play):')
+    lines.push('RUNNER-UP:')
     lines.push(`Team: ${ru.team} (Moneyline)`)
     lines.push(`Game: ${ru.awayTeam} @ ${ru.homeTeam}`)
-    lines.push(`Consensus Probability: ${ru.consensusProbability}%`)
-    lines.push(`Best Price: ${formatOdds(ru.bestPrice)} at ${ru.bestBook}`)
-    lines.push(`Edge: ${ru.edge}% | EV: $${ru.expectedValue.toFixed(2)} | ROI: ${ru.roi.toFixed(2)}%`)
-    lines.push(`Score: ${ru.score}/100`)
+    lines.push(`Score: ${ru.score}/100 | Prob: ${ru.consensusProbability}% | ROI: ${ru.roi.toFixed(2)}%`)
   }
   
   lines.push('')
   lines.push('IMPORTANT: When user asks for "best bet", present the BEST BET above.')
-  lines.push('This bet was selected because it has the HIGHEST SCORE (based on EV + probability + edge).')
-  lines.push('Do NOT recommend bets with negative EV or ROI < 1% - those are bad value even if high probability.')
-  lines.push('Your job is to EXPLAIN the value (EV, ROI) not just the probability.')
+  lines.push('This bet was selected because it has the HIGHEST SCORE using the unified 45/35/20 formula.')
+  lines.push('Always show the score and breakdown in your response.')
   
   return lines.join('\n')
 }
