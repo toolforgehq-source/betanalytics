@@ -11,7 +11,8 @@ import {
   updatePlayerStats, 
   getPlayerStatsInfo,
   getPlayerStatsData,
-  getPlayerPropProbability
+  getPlayerPropProbability,
+  clearProcessedGames
 } from '@/lib/player-stats'
 
 export const dynamic = 'force-dynamic'
@@ -32,6 +33,38 @@ export async function GET(request: Request) {
         success: true,
         action: 'info',
         data: info,
+        durationMs: Date.now() - startTime
+      })
+    }
+    
+    // Action: reset - clear processed games and re-process all sports
+    if (action === 'reset') {
+      console.log('[PlayerStats Debug] Clearing processed games list...')
+      const cleared = await clearProcessedGames()
+      
+      if (!cleared) {
+        return NextResponse.json({
+          success: false,
+          action: 'reset',
+          error: 'Failed to clear processed games',
+          durationMs: Date.now() - startTime
+        }, { status: 500 })
+      }
+      
+      // Now run update for specified days
+      console.log(`[PlayerStats Debug] Re-processing games for ${days} days...`)
+      const result = await updatePlayerStats(days)
+      const info = await getPlayerStatsInfo()
+      
+      return NextResponse.json({
+        success: true,
+        action: 'reset',
+        message: 'Cleared processed games and re-processed all sports',
+        daysProcessed: days,
+        gamesProcessed: result.gamesProcessed,
+        playersUpdated: result.playersUpdated,
+        errors: result.errors,
+        stats: info,
         durationMs: Date.now() - startTime
       })
     }

@@ -293,6 +293,31 @@ async function saveProcessedPlayerGameIds(gameIds: Set<string>): Promise<void> {
   }
 }
 
+/**
+ * Clear processed games list to allow re-processing
+ * Useful for backfilling or fixing data issues
+ */
+export async function clearProcessedGames(): Promise<boolean> {
+  const redis = await getRedisClient()
+  if (!redis) return false
+  
+  try {
+    await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['DEL', PLAYER_PROCESSED_GAMES_KEY])
+    })
+    console.log('[PlayerStats] Cleared processed games list')
+    return true
+  } catch (error) {
+    console.error('[PlayerStats] Error clearing processed games:', error)
+    return false
+  }
+}
+
 // ============================================
 // ESPN DATA FETCHING
 // ============================================
