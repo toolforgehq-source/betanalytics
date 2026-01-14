@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { fetchSportPlayerProps, setCachedPlayerProps, type GamePlayerProps } from "@/lib/odds"
-import { computeBestProp, cacheBestProp } from "@/lib/bet-ranking"
+import { computeBestPropWithModel, cacheBestProp } from "@/lib/bet-ranking"
 
 /**
  * Cron endpoint to fetch player props from Odds API (PAID)
@@ -61,8 +61,8 @@ export async function GET(request: Request) {
     await setCachedPlayerProps(allProps)
     console.log(`[fetch-props] Cached ${allProps.length} games with player props`)
     
-    console.log("[fetch-props] Computing best prop of the day...")
-    const bestPropResult = computeBestProp(allProps)
+    console.log("[fetch-props] Computing best prop of the day (with model enhancement)...")
+    const bestPropResult = await computeBestPropWithModel(allProps)
     await cacheBestProp(bestPropResult)
     
     const bestPropInfo = bestPropResult.bestProp 
