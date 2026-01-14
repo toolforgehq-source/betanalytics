@@ -13,7 +13,9 @@ import { NextResponse } from 'next/server'
 import { 
   backfillHistoricalGames,
   updateEloRatings, 
-  getEloStats 
+  getEloStats,
+  saveEloRatings,
+  getEloRatings
 } from '@/lib/elo'
 
 export const runtime = 'edge'
@@ -48,6 +50,12 @@ export async function GET(request: Request) {
     // Update ratings (this also saves to Redis)
     const eloData = await updateEloRatings(games)
     
+    // Explicitly save again and check result
+    const saveResult = await saveEloRatings(eloData)
+    
+    // Read back immediately to verify
+    const readBack = await getEloRatings()
+    
     // Get stats for response (re-read from Redis to verify save worked)
     const stats = await getEloStats()
     
@@ -80,7 +88,9 @@ export async function GET(request: Request) {
       durationMs: duration,
       // Debug: also include stats from Redis to compare
       redisStats: stats,
-      hasRedisConfig
+      hasRedisConfig,
+      saveResult,
+      readBackTeams: readBack ? Object.keys(readBack.ratings || {}).length : 0
     })
     
   } catch (error) {
