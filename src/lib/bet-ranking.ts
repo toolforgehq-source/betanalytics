@@ -15,6 +15,8 @@
  */
 
 import type { Game } from './odds'
+// Elo system is available via ./elo - will be integrated once ratings are populated
+// import { getEloWinProbabilityByName, getEloStats } from './elo'
 
 export interface RankedBet {
   gameId: string
