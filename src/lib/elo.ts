@@ -223,16 +223,23 @@ export async function saveEloRatings(ratings: EloRatings): Promise<void> {
   if (!redis) return
   
   try {
+    // Ensure ratings object has proper structure
+    const safeRatings: EloRatings = {
+      ratings: ratings.ratings || {},
+      lastUpdated: ratings.lastUpdated || new Date().toISOString(),
+      gamesProcessed: ratings.gamesProcessed || 0
+    }
+    
     await fetch(`${redis.url}/set/${ELO_RATINGS_KEY}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(JSON.stringify(ratings))
+      body: JSON.stringify(JSON.stringify(safeRatings))
     })
     
-    console.log(`[Elo] Saved ratings for ${Object.keys(ratings.ratings).length} teams`)
+    console.log(`[Elo] Saved ratings for ${Object.keys(safeRatings.ratings).length} teams`)
   } catch (error) {
     console.error('[Elo] Error saving ratings:', error)
   }
@@ -468,13 +475,16 @@ export async function backfillHistoricalGames(
 export async function updateEloRatings(games: GameResult[]): Promise<EloRatings> {
   // Get existing ratings or initialize
   let eloData = await getEloRatings()
-  if (!eloData) {
+  if (!eloData || !eloData.ratings) {
     eloData = {
       ratings: {},
       lastUpdated: new Date().toISOString(),
       gamesProcessed: 0
     }
   }
+  // Ensure ratings object exists (defensive)
+  eloData.ratings = eloData.ratings || {}
+  eloData.gamesProcessed = eloData.gamesProcessed || 0
   
   // Get already processed game IDs to avoid duplicates
   const processedIds = await getProcessedGameIds()
@@ -611,6 +621,9 @@ export async function getEloWinProbabilityByName(
   const eloData = await getEloRatings()
   if (!eloData) return null
   
+  // Defensive: ensure ratings object exists
+  const ratings = eloData.ratings || {}
+  
   // Find teams by name (case-insensitive partial match)
   const normalizeTeamName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '')
   const homeNorm = normalizeTeamName(homeTeamName)
@@ -619,7 +632,7 @@ export async function getEloWinProbabilityByName(
   let homeTeam: TeamRating | null = null
   let awayTeam: TeamRating | null = null
   
-  for (const rating of Object.values(eloData.ratings)) {
+  for (const rating of Object.values(ratings)) {
     if (rating.league !== league) continue
     
     const teamNorm = normalizeTeamName(rating.teamName)
@@ -668,7 +681,10 @@ export async function getLeagueRatings(league: string): Promise<TeamRating[]> {
   const eloData = await getEloRatings()
   if (!eloData) return []
   
-  return Object.values(eloData.ratings)
+  // Defensive: ensure ratings object exists
+  const ratings = eloData.ratings || {}
+  
+  return Object.values(ratings)
     .filter(r => r.league === league)
     .sort((a, b) => b.rating - a.rating)
 }
@@ -685,15 +701,18 @@ export async function getEloStats(): Promise<{
   const eloData = await getEloRatings()
   if (!eloData) return null
   
+  // Defensive: ensure ratings object exists
+  const ratings = eloData.ratings || {}
+  
   const leagueCounts: Record<string, number> = {}
-  for (const rating of Object.values(eloData.ratings)) {
+  for (const rating of Object.values(ratings)) {
     leagueCounts[rating.league] = (leagueCounts[rating.league] || 0) + 1
   }
   
   return {
-    totalTeams: Object.keys(eloData.ratings).length,
-    totalGamesProcessed: eloData.gamesProcessed,
-    lastUpdated: eloData.lastUpdated,
+    totalTeams: Object.keys(ratings).length,
+    totalGamesProcessed: eloData.gamesProcessed || 0,
+    lastUpdated: eloData.lastUpdated || new Date().toISOString(),
     leagueCounts
   }
 }
