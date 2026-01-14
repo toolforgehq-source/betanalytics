@@ -200,7 +200,8 @@ export async function getEloRatings(): Promise<EloRatings | null> {
   
   try {
     const response = await fetch(`${redis.url}/get/${ELO_RATINGS_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
+      headers: { Authorization: `Bearer ${redis.token}` },
+      cache: 'no-store'  // Prevent Next.js from caching/deduping this request
     })
     
     if (!response.ok) return null
@@ -265,7 +266,8 @@ export async function getProcessedGameIds(): Promise<Set<string>> {
   
   try {
     const response = await fetch(`${redis.url}/get/${ELO_PROCESSED_GAMES_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
+      headers: { Authorization: `Bearer ${redis.token}` },
+      cache: 'no-store'  // Prevent Next.js from caching/deduping this request
     })
     
     if (!response.ok) return new Set()
