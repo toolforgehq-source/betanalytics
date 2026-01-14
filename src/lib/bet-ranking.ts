@@ -15,8 +15,7 @@
  */
 
 import type { Game } from './odds'
-// Elo system is available via ./elo - will be integrated once ratings are populated
-// import { getEloWinProbabilityByName, getEloStats } from './elo'
+import { getPlayerPropProbability, getPlayerStatsData } from './player-stats'
 
 export interface RankedBet {
   gameId: string
@@ -1350,6 +1349,12 @@ export interface RankedProp {
   
   score: number
   calculatedAt: string
+  
+  // NEW: Model-based probability from player stats (when available)
+  modelProbability?: number      // Our independent probability estimate
+  modelAverage?: number          // Player's rolling average for this stat
+  modelGamesPlayed?: number      // How many games our model has for this player
+  modelEdge?: number             // Edge based on model probability vs implied
 }
 
 export interface BestPropResult {
@@ -1521,6 +1526,128 @@ export function computeBestProp(propsData: GamePlayerProps[]): BestPropResult {
   }
 }
 
+// Minimum games required before using model probability
+const MIN_GAMES_FOR_MODEL = 8
+
+// Map Odds API market names to our stat names
+const MARKET_TO_STAT: Record<string, string> = {
+  'player_points': 'points',
+  'player_rebounds': 'rebounds',
+  'player_assists': 'assists',
+  'player_threes': 'threePointersMade',
+  'player_pass_yds': 'passingYards',
+  'player_rush_yds': 'rushingYards',
+  'player_reception_yds': 'receivingYards',
+}
+
+// Map sport names from Odds API to our sport names
+const SPORT_NAME_MAP: Record<string, string> = {
+  'basketball_nba': 'NBA',
+  'basketball_ncaab': 'NCAAB',
+  'americanfootball_nfl': 'NFL',
+  'americanfootball_ncaaf': 'NCAAF',
+  'icehockey_nhl': 'NHL',
+  'baseball_mlb': 'MLB',
+}
+
+/**
+ * Compute Best Prop with Model Enhancement
+ * 
+ * This async version enhances props with our player stats model probability
+ * when we have sufficient data (8+ games tracked for the player).
+ * 
+ * The model probability is used to:
+ * 1. Provide an independent estimate (not derived from sportsbook odds)
+ * 2. Calculate model-based edge
+ * 3. Boost score for props where model agrees with consensus
+ */
+export async function computeBestPropWithModel(propsData: GamePlayerProps[]): Promise<BestPropResult> {
+  // First, compute using the standard consensus method
+  const baseResult = computeBestProp(propsData)
+  
+  // If no props qualified, return as-is
+  if (baseResult.allRankedProps.length === 0) {
+    return baseResult
+  }
+  
+  // Try to load player stats data
+  const playerStatsData = await getPlayerStatsData()
+  if (!playerStatsData || Object.keys(playerStatsData.players).length === 0) {
+    // No player stats available, return base result
+    console.log('[BetRanking] No player stats data available for model enhancement')
+    return baseResult
+  }
+  
+  console.log(`[BetRanking] Enhancing props with model data (${Object.keys(playerStatsData.players).length} players tracked)`)
+  
+  // Enhance each ranked prop with model probability
+  const enhancedProps: RankedProp[] = []
+  
+  for (const prop of baseResult.allRankedProps) {
+    // Map the sport name
+    const sportName = SPORT_NAME_MAP[prop.sport] || prop.sport
+    
+    // Map the market to our stat name
+    const statName = MARKET_TO_STAT[prop.market]
+    if (!statName) {
+      // Unknown market, keep original
+      enhancedProps.push(prop)
+      continue
+    }
+    
+    // Try to get model probability for this player/stat/line
+    const modelResult = await getPlayerPropProbability(
+      prop.playerName,
+      sportName,
+      statName,
+      prop.line
+    )
+    
+    if (!modelResult || modelResult.gamesPlayed < MIN_GAMES_FOR_MODEL) {
+      // Not enough data for this player, keep original
+      enhancedProps.push(prop)
+      continue
+    }
+    
+    // Calculate model-based edge
+    const modelProbPercent = modelResult.probability * 100
+    const modelEdge = modelProbPercent - prop.impliedProbability
+    
+    // Enhance the prop with model data
+    const enhancedProp: RankedProp = {
+      ...prop,
+      modelProbability: Math.round(modelProbPercent * 10) / 10,
+      modelAverage: Math.round(modelResult.average * 10) / 10,
+      modelGamesPlayed: modelResult.gamesPlayed,
+      modelEdge: Math.round(modelEdge * 10) / 10,
+    }
+    
+    // Boost score if model agrees with consensus (both show positive edge)
+    if (modelEdge > 0 && prop.edge > 0) {
+      // Model and consensus agree - boost score by 10%
+      enhancedProp.score = prop.score * 1.1
+    } else if (modelEdge > 5) {
+      // Model shows strong edge even if consensus doesn't - slight boost
+      enhancedProp.score = prop.score * 1.05
+    }
+    
+    enhancedProps.push(enhancedProp)
+  }
+  
+  // Re-sort by score
+  enhancedProps.sort((a, b) => b.score - a.score)
+  
+  return {
+    bestProp: enhancedProps[0] || null,
+    runnerUp: enhancedProps[1] || null,
+    allRankedProps: enhancedProps.slice(0, 10),
+    calculatedAt: baseResult.calculatedAt,
+    propsAnalyzed: baseResult.propsAnalyzed,
+    propsQualified: enhancedProps.length,
+    reason: baseResult.reason
+  }
+}
+
 /**
  * Format best prop result for Claude's context
  */
@@ -1562,6 +1689,19 @@ export function formatBestPropForContext(result: BestPropResult): string {
   lines.push(`- Best Available Price: ${formatOdds(prop.bestPrice)} at ${prop.bestBook}`)
   lines.push(`- Implied Probability: ${prop.impliedProbability}%`)
   lines.push(`- EDGE: ${prop.edge}%`)
+  
+  // Show model-based probability if available
+  if (prop.modelProbability !== undefined && prop.modelGamesPlayed !== undefined) {
+    lines.push('')
+    lines.push('MODEL ANALYSIS (based on player historical stats):')
+    lines.push(`- Model Probability: ${prop.modelProbability}% (based on ${prop.modelGamesPlayed} games)`)
+    lines.push(`- Player Average: ${prop.modelAverage} ${prop.marketDisplay}`)
+    lines.push(`- Model Edge: ${prop.modelEdge}%`)
+    if (prop.modelEdge !== undefined && prop.modelEdge > 0 && prop.edge > 0) {
+      lines.push('- CONFIDENCE: HIGH (both consensus and model show positive edge)')
+    }
+  }
+  
   lines.push('')
   lines.push('ALL BOOK PRICES:')
   for (const book of prop.allBookPrices) {
