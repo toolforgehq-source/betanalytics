@@ -392,8 +392,9 @@ async function fetchGameBoxScore(
       const opponentName = isHome ? awayTeam.team?.displayName : homeTeam.team?.displayName
       
       // Get the statistics array (different structure per sport)
+      // NHL uses 'keys' instead of 'names' for stat names
       for (const statGroup of teamData.statistics || []) {
-        const statNames = statGroup.names || []
+        const statNames = statGroup.names || (statGroup as unknown as { keys?: string[] }).keys || []
         
         for (const athlete of statGroup.athletes || []) {
           if (athlete.didNotPlay) continue
@@ -455,12 +456,13 @@ async function fetchGameBoxScore(
               }
             }
           } else if (sportName === 'NHL') {
-            // Hockey: G, A, +/-, S, SM, PN, PIM, HT, TK, GV, SHF, TOI
-            const gIndex = statNames.indexOf('G')
-            const aIndex = statNames.indexOf('A')
-            const sIndex = statNames.indexOf('S')
-            const toiIndex = statNames.indexOf('TOI')
-            const svIndex = statNames.indexOf('SV')  // For goalies
+            // Hockey stats - ESPN uses full key names: goals, assists, shotsTotal, timeOnIce
+            // Try both short labels (G, A, S, TOI) and full keys (goals, assists, shotsTotal, timeOnIce)
+            const gIndex = statNames.indexOf('goals') >= 0 ? statNames.indexOf('goals') : statNames.indexOf('G')
+            const aIndex = statNames.indexOf('assists') >= 0 ? statNames.indexOf('assists') : statNames.indexOf('A')
+            const sIndex = statNames.indexOf('shotsTotal') >= 0 ? statNames.indexOf('shotsTotal') : statNames.indexOf('S')
+            const toiIndex = statNames.indexOf('timeOnIce') >= 0 ? statNames.indexOf('timeOnIce') : statNames.indexOf('TOI')
+            const svIndex = statNames.indexOf('saves') >= 0 ? statNames.indexOf('saves') : statNames.indexOf('SV')
             
             if (toiIndex >= 0) {
               const toiStr = stats[toiIndex] || '0:00'
