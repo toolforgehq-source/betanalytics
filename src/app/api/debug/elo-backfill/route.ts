@@ -53,6 +53,15 @@ export async function GET(request: Request) {
     
     const duration = Date.now() - startTime
     
+    // Get team count directly from eloData (more reliable than re-reading from Redis)
+    const teamCount = Object.keys(eloData.ratings || {}).length
+    
+    // Calculate league counts from eloData directly
+    const leagueCounts: Record<string, number> = {}
+    for (const rating of Object.values(eloData.ratings || {})) {
+      leagueCounts[rating.league] = (leagueCounts[rating.league] || 0) + 1
+    }
+    
     return NextResponse.json({
       success: true,
       message: fullBackfill ? 'Full backfill complete' : `Backfill complete`,
@@ -61,11 +70,13 @@ export async function GET(request: Request) {
         end: endDate.toISOString().split('T')[0]
       },
       gamesProcessed: games.length,
-      totalTeams: stats?.totalTeams || 0,
-      totalGamesProcessed: stats?.totalGamesProcessed || 0,
-      leagueCounts: stats?.leagueCounts || {},
+      totalTeams: teamCount,
+      totalGamesProcessed: eloData.gamesProcessed,
+      leagueCounts: leagueCounts,
       lastUpdated: eloData.lastUpdated,
-      durationMs: duration
+      durationMs: duration,
+      // Debug: also include stats from Redis to compare
+      redisStats: stats
     })
     
   } catch (error) {
