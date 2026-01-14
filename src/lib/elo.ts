@@ -199,8 +199,14 @@ export async function getEloRatings(): Promise<EloRatings | null> {
   if (!redis) return null
   
   try {
-    const response = await fetch(`${redis.url}/get/${ELO_RATINGS_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` },
+    // Use Upstash REST API format: POST with command array
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['GET', ELO_RATINGS_KEY]),
       cache: 'no-store'  // Prevent Next.js from caching/deduping this request
     })
     
@@ -234,18 +240,25 @@ export async function saveEloRatings(ratings: EloRatings): Promise<boolean> {
       gamesProcessed: ratings.gamesProcessed || 0
     }
     
-    const response = await fetch(`${redis.url}/set/${ELO_RATINGS_KEY}`, {
+    // Use Upstash REST API format: POST with command array
+    const response = await fetch(redis.url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(JSON.stringify(safeRatings))
+      body: JSON.stringify(['SET', ELO_RATINGS_KEY, JSON.stringify(safeRatings)])
     })
     
     if (!response.ok) {
       const errorText = await response.text()
       console.error(`[Elo] Failed to save ratings: ${response.status} - ${errorText}`)
+      return false
+    }
+    
+    const data = await response.json()
+    if (data.error) {
+      console.error(`[Elo] Redis error: ${data.error}`)
       return false
     }
     
@@ -265,8 +278,14 @@ export async function getProcessedGameIds(): Promise<Set<string>> {
   if (!redis) return new Set()
   
   try {
-    const response = await fetch(`${redis.url}/get/${ELO_PROCESSED_GAMES_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` },
+    // Use Upstash REST API format: POST with command array
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['GET', ELO_PROCESSED_GAMES_KEY]),
       cache: 'no-store'  // Prevent Next.js from caching/deduping this request
     })
     
@@ -292,13 +311,14 @@ export async function saveProcessedGameIds(gameIds: Set<string>): Promise<void> 
   
   try {
     const gameIdsArray = Array.from(gameIds)
-    await fetch(`${redis.url}/set/${ELO_PROCESSED_GAMES_KEY}`, {
+    // Use Upstash REST API format: POST with command array
+    await fetch(redis.url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(JSON.stringify(gameIdsArray))
+      body: JSON.stringify(['SET', ELO_PROCESSED_GAMES_KEY, JSON.stringify(gameIdsArray)])
     })
   } catch (error) {
     console.error('[Elo] Error saving processed games:', error)
