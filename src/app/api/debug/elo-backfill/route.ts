@@ -45,11 +45,14 @@ export async function GET(request: Request) {
     
     const games = await backfillHistoricalGames(startDate, endDate)
     
-    // Update ratings
+    // Update ratings (this also saves to Redis)
     const eloData = await updateEloRatings(games)
     
-    // Get stats for response
+    // Get stats for response (re-read from Redis to verify save worked)
     const stats = await getEloStats()
+    
+    // Check if Redis env vars are configured
+    const hasRedisConfig = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
     
     const duration = Date.now() - startTime
     
@@ -76,7 +79,8 @@ export async function GET(request: Request) {
       lastUpdated: eloData.lastUpdated,
       durationMs: duration,
       // Debug: also include stats from Redis to compare
-      redisStats: stats
+      redisStats: stats,
+      hasRedisConfig
     })
     
   } catch (error) {

@@ -218,9 +218,12 @@ export async function getEloRatings(): Promise<EloRatings | null> {
 /**
  * Save Elo ratings to Redis
  */
-export async function saveEloRatings(ratings: EloRatings): Promise<void> {
+export async function saveEloRatings(ratings: EloRatings): Promise<boolean> {
   const redis = await getRedisClient()
-  if (!redis) return
+  if (!redis) {
+    console.warn('[Elo] Redis not configured, cannot save ratings')
+    return false
+  }
   
   try {
     // Ensure ratings object has proper structure
@@ -230,7 +233,7 @@ export async function saveEloRatings(ratings: EloRatings): Promise<void> {
       gamesProcessed: ratings.gamesProcessed || 0
     }
     
-    await fetch(`${redis.url}/set/${ELO_RATINGS_KEY}`, {
+    const response = await fetch(`${redis.url}/set/${ELO_RATINGS_KEY}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${redis.token}`,
@@ -239,9 +242,17 @@ export async function saveEloRatings(ratings: EloRatings): Promise<void> {
       body: JSON.stringify(JSON.stringify(safeRatings))
     })
     
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error(`[Elo] Failed to save ratings: ${response.status} - ${errorText}`)
+      return false
+    }
+    
     console.log(`[Elo] Saved ratings for ${Object.keys(safeRatings.ratings).length} teams`)
+    return true
   } catch (error) {
     console.error('[Elo] Error saving ratings:', error)
+    return false
   }
 }
 
