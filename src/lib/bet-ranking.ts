@@ -79,6 +79,11 @@ export interface FallbackBet {
   // Filter status
   disqualifyReasons: string[]
   isValuePlay: boolean          // True if qualifies as VALUE PLAY (48%+ prob, 5%+ ROI)
+  // Elo model data (when available)
+  eloProbability?: number       // Our Elo model's win probability
+  eloConfidence?: string        // Confidence level based on games played
+  homeElo?: number              // Home team's Elo rating
+  awayElo?: number              // Away team's Elo rating
 }
 
 export interface BestBetResult {
@@ -910,8 +915,22 @@ export function formatBestBetForContext(result: BestBetResult): string {
       lines.push(`- Edge Score: ${edgeScore.toFixed(1)}/20 points (${edgePercent}% edge)`)
       lines.push('')
       
+      // Show Elo model data if available for fallback bets
+      if (bestAvailable.eloProbability !== undefined) {
+        lines.push('MODEL SOURCE: ELO RATING SYSTEM')
+        lines.push(`- Elo Confidence: ${bestAvailable.eloConfidence || 'unknown'}`)
+        lines.push(`- Elo Model Probability: ${bestAvailable.eloProbability}%`)
+        if (bestAvailable.homeElo && bestAvailable.awayElo) {
+          lines.push(`- Home Elo: ${bestAvailable.homeElo} | Away Elo: ${bestAvailable.awayElo}`)
+        }
+        lines.push('')
+      } else {
+        lines.push('MODEL SOURCE: MARKET CONSENSUS (Elo unavailable for this game)')
+        lines.push('')
+      }
+      
       lines.push('VALUE METRICS:')
-      lines.push(`- Win Probability: ${bestAvailable.consensusProbability}%`)
+      lines.push(`- Win Probability: ${bestAvailable.eloProbability !== undefined ? bestAvailable.eloProbability : bestAvailable.consensusProbability}% (${bestAvailable.eloProbability !== undefined ? 'Elo model' : 'market consensus'})`)
       lines.push(`- Expected Value: $${bestAvailable.expectedValue.toFixed(2)} per $100`)
       lines.push(`- ROI: ${bestAvailable.roi.toFixed(2)}%`)
       lines.push(`- Edge: ${bestAvailable.edge}%`)
@@ -994,11 +1013,30 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push(`- Edge Score: ${edgeScore.toFixed(1)}/20 points (${edgePercent}% edge)`)
   lines.push('')
   
+  // Show Elo model data if available
+  if (bet.eloProbability !== undefined) {
+    lines.push('=== ELO MODEL PREDICTION ===')
+    lines.push(`Model Source: ELO RATING SYSTEM (confidence: ${bet.eloConfidence || 'unknown'})`)
+    lines.push(`- Elo Model Win Probability: ${bet.eloProbability}%`)
+    lines.push(`- Market Consensus Probability: ${bet.consensusProbability}%`)
+    if (bet.homeElo && bet.awayElo) {
+      lines.push(`- Home Team Elo: ${bet.homeElo} | Away Team Elo: ${bet.awayElo}`)
+    }
+    lines.push(`- Edge is calculated using ELO probability vs market implied probability`)
+    lines.push('')
+  }
+  
   lines.push('VALUE CALCULATION:')
-  lines.push(`- Consensus Win Probability: ${bet.consensusProbability}% (no-vig median from ${bet.allBookPrices.length} books)`)
+  if (bet.eloProbability !== undefined) {
+    lines.push(`- Model Win Probability (Elo): ${bet.eloProbability}%`)
+    lines.push(`- Market Consensus Probability: ${bet.consensusProbability}% (no-vig median from ${bet.allBookPrices.length} books)`)
+  } else {
+    lines.push(`- Model Win Probability: ${bet.consensusProbability}% (market consensus - Elo unavailable)`)
+  }
   lines.push(`- Best Available Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
   lines.push(`- Implied Probability from Best Price: ${bet.impliedProbability}%`)
-  lines.push(`- EDGE: ${bet.consensusProbability}% - ${bet.impliedProbability}% = ${bet.edge}%`)
+  const modelProb = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+  lines.push(`- EDGE: ${modelProb}% (model) - ${bet.impliedProbability}% (implied) = ${bet.edge}%`)
   lines.push('')
   lines.push('EXPECTED VALUE:')
   lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
