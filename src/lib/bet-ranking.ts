@@ -1667,13 +1667,19 @@ const MIN_GAMES_FOR_MODEL = 8
 
 // Map Odds API market names to our stat names
 const MARKET_TO_STAT: Record<string, string> = {
+  // NBA stats
   'player_points': 'points',
   'player_rebounds': 'rebounds',
   'player_assists': 'assists',
   'player_threes': 'threePointersMade',
+  // NFL stats
   'player_pass_yds': 'passingYards',
   'player_rush_yds': 'rushingYards',
   'player_reception_yds': 'receivingYards',
+  // NHL stats (hockey uses same market names but different context)
+  'player_goals': 'goals',
+  'player_shots_on_goal': 'shotsOnGoal',
+  'player_power_play_points': 'powerPlayPoints',
 }
 
 // Map sport names from Odds API to our sport names
@@ -1789,6 +1795,31 @@ export async function computeBestPropWithModel(propsData: GamePlayerProps[]): Pr
  */
 export function formatBestPropForContext(result: BestPropResult): string {
   const lines: string[] = []
+  
+  // FIRST: Compact list of TOP 10 props for parlay building
+  // This gives Claude multiple options with model data to choose from
+  lines.push('=== TOP 10 RANKED PLAYER PROPS (FOR PARLAYS) ===')
+  lines.push('INSTRUCTION: For PrizePicks/Underdog/player prop parlays, ONLY pick from this list.')
+  lines.push('Each prop includes model probability and edge - use these values in your response.')
+  lines.push('')
+  
+  if (result.allRankedProps && result.allRankedProps.length > 0) {
+    for (let i = 0; i < result.allRankedProps.length; i++) {
+      const p = result.allRankedProps[i]
+      const modelProb = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
+      const modelEdge = p.modelEdge !== undefined ? p.modelEdge : p.edge
+      const gamesPlayed = p.modelGamesPlayed !== undefined ? p.modelGamesPlayed : 0
+      const sportName = SPORT_NAME_MAP[p.sport] || p.sport
+      
+      lines.push(`#${i + 1}: ${p.playerName} ${p.pick} ${p.line} ${p.marketDisplay} (${sportName})`)
+      lines.push(`   Game: ${p.awayTeam} @ ${p.homeTeam}`)
+      lines.push(`   Model Prob: ${modelProb}% | Edge: ${modelEdge}% | Games: ${gamesPlayed} | Best: ${formatOdds(p.bestPrice)} @ ${p.bestBook}`)
+      lines.push('')
+    }
+  } else {
+    lines.push('No ranked props available.')
+    lines.push('')
+  }
   
   lines.push('=== PRE-COMPUTED BEST PROP OF THE DAY ===')
   lines.push('')
