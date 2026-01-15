@@ -15,7 +15,9 @@ import {
   updateEloRatings, 
   getEloStats,
   saveEloRatings,
-  getEloRatings
+  getEloRatings,
+  getLeagueRatings,
+  getEloWinProbabilityByName
 } from '@/lib/elo'
 
 export const runtime = 'edge'
@@ -26,6 +28,45 @@ export async function GET(request: Request) {
   
   try {
     const url = new URL(request.url)
+    const action = url.searchParams.get('action')
+    
+    // Action: Get ratings for a league
+    if (action === 'ratings') {
+      const league = url.searchParams.get('league') || 'NBA'
+      const ratings = await getLeagueRatings(league)
+      return NextResponse.json({
+        success: true,
+        league,
+        teamCount: ratings.length,
+        ratings: ratings.map(r => ({
+          team: r.teamName,
+          rating: r.rating,
+          gamesPlayed: r.gamesPlayed,
+          lastUpdated: r.lastUpdated
+        }))
+      })
+    }
+    
+    // Action: Get win probability for a matchup
+    if (action === 'matchup') {
+      const league = url.searchParams.get('league') || 'NBA'
+      const home = url.searchParams.get('home') || ''
+      const away = url.searchParams.get('away') || ''
+      
+      if (!home || !away) {
+        return NextResponse.json({ error: 'Missing home or away team' }, { status: 400 })
+      }
+      
+      const result = await getEloWinProbabilityByName(league, home, away)
+      return NextResponse.json({
+        success: true,
+        league,
+        homeTeam: home,
+        awayTeam: away,
+        eloResult: result
+      })
+    }
+    
     const fullBackfill = url.searchParams.get('full') === 'true'
     const daysParam = url.searchParams.get('days')
     
