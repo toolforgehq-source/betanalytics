@@ -279,8 +279,8 @@ export default function ChatPageClient({
                 ) : (
                   <>
                     <QuickAction emoji="🎯" text="Best Bet Today" onClick={() => handleQuickAction("What's the best bet today?")} />
-                    <QuickAction emoji="🎲" text="Build Parlay" onClick={() => handleQuickAction("Build me a 3-leg parlay for PrizePicks")} />
-                    <QuickAction emoji="💎" text="Arbitrage Finder" onClick={() => handleQuickAction("Find arbitrage opportunities for me")} />
+                    <QuickAction emoji="🎲" text="Build Player Parlay" onClick={() => handleQuickAction("Build me a 3-leg player prop parlay for PrizePicks")} />
+                    <QuickAction emoji="🏈" text="Build Team Parlay" onClick={() => handleQuickAction("Build me a 3-team moneyline parlay")} />
                   </>
                 )}
                 <QuickAction 
