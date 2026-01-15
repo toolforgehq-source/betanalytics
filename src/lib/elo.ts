@@ -458,12 +458,19 @@ export async function fetchYesterdaysGames(): Promise<GameResult[]> {
 /**
  * Backfill historical games from a date range
  * Used for initial setup to build ratings from season start
+ * @param leagueFilter - Optional: only process specific league(s)
  */
 export async function backfillHistoricalGames(
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  leagueFilter?: string | string[]
 ): Promise<GameResult[]> {
-  console.log(`[Elo] Backfilling games from ${formatDateForESPN(startDate)} to ${formatDateForESPN(endDate)}...`)
+  // Determine which leagues to process
+  const leaguesToProcess = leagueFilter 
+    ? (Array.isArray(leagueFilter) ? leagueFilter : [leagueFilter])
+    : Object.keys(LEAGUE_TO_ESPN)
+  
+  console.log(`[Elo] Backfilling games from ${formatDateForESPN(startDate)} to ${formatDateForESPN(endDate)} for leagues: ${leaguesToProcess.join(', ')}...`)
   
   const allGames: GameResult[] = []
   const currentDate = new Date(startDate)
@@ -471,7 +478,10 @@ export async function backfillHistoricalGames(
   while (currentDate <= endDate) {
     const dateStr = formatDateForESPN(currentDate)
     
-    for (const [leagueName, espnInfo] of Object.entries(LEAGUE_TO_ESPN)) {
+    for (const leagueName of leaguesToProcess) {
+      const espnInfo = LEAGUE_TO_ESPN[leagueName]
+      if (!espnInfo) continue
+      
       const games = await fetchCompletedGames(
         espnInfo.sport,
         espnInfo.league,
@@ -496,6 +506,9 @@ export async function backfillHistoricalGames(
   console.log(`[Elo] Backfill complete: ${allGames.length} total games`)
   return allGames
 }
+
+// Export the league list for use in debug endpoints
+export const SUPPORTED_LEAGUES = Object.keys(LEAGUE_TO_ESPN)
 
 // ============================================
 // MAIN UPDATE FUNCTION

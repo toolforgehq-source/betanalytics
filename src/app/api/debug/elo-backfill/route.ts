@@ -17,7 +17,8 @@ import {
   saveEloRatings,
   getEloRatings,
   getLeagueRatings,
-  getEloWinProbabilityByName
+  getEloWinProbabilityByName,
+  SUPPORTED_LEAGUES
 } from '@/lib/elo'
 
 export const runtime = 'edge'
@@ -67,8 +68,18 @@ export async function GET(request: Request) {
       })
     }
     
+    // Action: List supported leagues
+    if (action === 'leagues') {
+      return NextResponse.json({
+        success: true,
+        leagues: SUPPORTED_LEAGUES,
+        message: 'Use ?league=NBA (or other) to backfill a specific league'
+      })
+    }
+    
     const fullBackfill = url.searchParams.get('full') === 'true'
     const daysParam = url.searchParams.get('days')
+    const leagueParam = url.searchParams.get('league') // Single league filter
     
     let startDate: Date
     const endDate = new Date()
@@ -77,16 +88,17 @@ export async function GET(request: Request) {
     if (fullBackfill) {
       // Full backfill from season start (October 2025)
       startDate = new Date('2025-10-01')
-      console.log('[Elo Debug] Running full backfill from season start...')
+      console.log(`[Elo Debug] Running full backfill from season start${leagueParam ? ` for ${leagueParam}` : ''}...`)
     } else {
       // Backfill last N days (default 7)
       const days = parseInt(daysParam || '7', 10)
       startDate = new Date()
       startDate.setDate(startDate.getDate() - days)
-      console.log(`[Elo Debug] Backfilling last ${days} days...`)
+      console.log(`[Elo Debug] Backfilling last ${days} days${leagueParam ? ` for ${leagueParam}` : ''}...`)
     }
     
-    const games = await backfillHistoricalGames(startDate, endDate)
+    // Pass league filter if specified
+    const games = await backfillHistoricalGames(startDate, endDate, leagueParam || undefined)
     
     // Update ratings (this also saves to Redis)
     const eloData = await updateEloRatings(games)
