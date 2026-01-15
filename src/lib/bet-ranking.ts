@@ -1189,8 +1189,12 @@ export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult 
   }
   
   // Filter to only include bets from different games
-  // Sort by probability (highest first)
-  const sortedBets = [...allRankedBets].sort((a, b) => b.consensusProbability - a.consensusProbability)
+  // Sort by MODEL probability (Elo when available, market consensus as fallback) - highest first
+  const sortedBets = [...allRankedBets].sort((a, b) => {
+    const aProb = a.eloProbability !== undefined ? a.eloProbability : a.consensusProbability
+    const bProb = b.eloProbability !== undefined ? b.eloProbability : b.consensusProbability
+    return bProb - aProb
+  })
   
   // Build safe parlay (2 legs) - pick top 2 from different games
   const safeParlay: RankedBet[] = []
@@ -1212,9 +1216,10 @@ export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult 
     if (aggressiveParlay.length === 3) break
   }
   
-  // Calculate combined probability (multiply individual probabilities)
+  // Calculate combined probability using MODEL probability (Elo when available)
+  const getModelProb = (bet: RankedBet) => bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
   const safeCombinedProb = safeParlay.length === 2
-    ? (safeParlay[0].consensusProbability / 100) * (safeParlay[1].consensusProbability / 100) * 100
+    ? (getModelProb(safeParlay[0]) / 100) * (getModelProb(safeParlay[1]) / 100) * 100
     : null
   
   return {
