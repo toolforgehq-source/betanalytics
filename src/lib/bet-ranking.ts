@@ -17,6 +17,7 @@
 import type { Game } from './odds'
 import { getPlayerPropProbability, getPlayerStatsData } from './player-stats'
 import { trackBestBet, trackParlay, trackSportBet, trackPropBet } from './recommendation-tracking'
+import { getEloWinProbabilityByName } from './elo'
 
 export interface RankedBet {
   gameId: string
@@ -31,13 +32,19 @@ export interface RankedBet {
   betType: 'moneyline'
   
   // Probability and edge calculations
-  consensusProbability: number  // No-vig average across books
+  consensusProbability: number  // No-vig average across books (market fair value)
   bestPrice: number             // Best available American odds
   bestBook: string              // Which book has the best price
   impliedProbability: number    // Implied prob from best price
-  edge: number                  // consensus - implied
+  edge: number                  // modelProbability - impliedProbability (Elo-based edge)
   
-  // NEW: Expected Value and ROI calculations
+  // Elo model data (when available)
+  eloProbability?: number       // Our Elo model's win probability
+  eloConfidence?: string        // Confidence level based on games played
+  homeElo?: number              // Home team's Elo rating
+  awayElo?: number              // Away team's Elo rating
+  
+  // Expected Value and ROI calculations (based on Elo probability when available)
   expectedValue: number         // EV in dollars per $100 bet
   roi: number                   // ROI as percentage
   
@@ -148,6 +155,23 @@ const CONSENSUS_BOOKS = [
   'DraftKings', 'FanDuel', 'BetMGM', 'Caesars', 'PointsBet',
   'BetRivers', 'Unibet', 'Barstool', 'WynnBET', 'SuperBook'
 ]
+
+// Map odds API sport codes to Elo league names
+const SPORT_TO_ELO_LEAGUE: Record<string, string> = {
+  'basketball_nba': 'NBA',
+  'basketball_ncaab': 'NCAAB',
+  'americanfootball_nfl': 'NFL',
+  'americanfootball_ncaaf': 'NCAAF',
+  'icehockey_nhl': 'NHL',
+  'baseball_mlb': 'MLB',
+  'soccer_epl': 'soccer_epl',
+  'soccer_spain_la_liga': 'soccer_spain_la_liga',
+  'soccer_germany_bundesliga': 'soccer_germany_bundesliga',
+  'soccer_italy_serie_a': 'soccer_italy_serie_a',
+  'soccer_france_ligue_one': 'soccer_france_ligue_one',
+  'soccer_usa_mls': 'soccer_usa_mls',
+  'soccer_uefa_champs_league': 'soccer_uefa_champs_league',
+}
 
 /**
  * Convert American odds to implied probability
@@ -485,7 +509,7 @@ function findBestPrice(
 /**
  * Analyze a single game and return ranked bets for both teams
  */
-function analyzeGame(game: Game): RankedBet[] {
+async function analyzeGame(game: Game): Promise<RankedBet[]> {
   const rankedBets: RankedBet[] = []
   const now = new Date().toISOString()
   
@@ -499,6 +523,18 @@ function analyzeGame(game: Game): RankedBet[] {
     return []
   }
   
+  // Get Elo prediction for this game (if available)
+  const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
+  let eloResult: { probability: number; homeRating: number; awayRating: number; confidence: string } | null = null
+  
+  if (eloLeague) {
+    try {
+      eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam)
+    } catch (error) {
+      console.error('[analyzeGame] Error fetching Elo:', error)
+    }
+  }
+  
   // Analyze both teams
   for (const team of [game.homeTeam, game.awayTeam]) {
     const consensus = calculateConsensusProbability(game, team)
@@ -510,25 +546,45 @@ function analyzeGame(game: Game): RankedBet[] {
     // Check juice constraint (don't recommend worse than -250)
     if (bestPrice.price < MAX_JUICE_ODDS) continue
     
-    const edge = consensus.consensusProb - bestPrice.impliedProb
+    // Determine model probability: use Elo if available and confident, else use market consensus
+    const isHomeTeam = team === game.homeTeam
+    let modelProbability = consensus.consensusProb
+    let eloProbability: number | undefined
+    let eloConfidence: string | undefined
+    let homeElo: number | undefined
+    let awayElo: number | undefined
     
-    // NEW: Calculate Expected Value and ROI
-    const ev = calculateExpectedValue(bestPrice.price, consensus.consensusProb)
+    if (eloResult && eloResult.confidence !== 'very_low') {
+      // Elo returns home team win probability, so flip for away team
+      eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
+      eloConfidence = eloResult.confidence
+      homeElo = eloResult.homeRating
+      awayElo = eloResult.awayRating
+      
+      // Use Elo as the model probability for edge calculation
+      modelProbability = eloProbability
+    }
+    
+    // Calculate edge: model probability - implied probability from best price
+    // This is the key change: edge is now based on our Elo model vs market
+    const edge = modelProbability - bestPrice.impliedProb
+    
+    // Calculate Expected Value and ROI using MODEL probability (Elo when available)
+    const ev = calculateExpectedValue(bestPrice.price, modelProbability)
     const roi = calculateROI(ev)
     
-    // Check minimum thresholds
-    if (consensus.consensusProb < MIN_PROBABILITY) continue
+    // Check minimum thresholds using MODEL probability
+    if (modelProbability < MIN_PROBABILITY) continue
     if (edge < MIN_EDGE) continue
     
-    // NEW: Also require positive EV (this is the key fix!)
+    // Also require positive EV
     if (ev <= 0) continue
     
-    // NEW: Require minimum ROI of 1% to avoid tiny-edge heavy favorites
+    // Require minimum ROI of 1% to avoid tiny-edge heavy favorites
     if (roi < 1) continue
     
-    // NEW: Calculate score using EV-based scoring system
-    // This prioritizes ROI over raw probability
-    const score = calculateBetScore(consensus.consensusProb, edge, roi)
+    // Calculate score using EV-based scoring system
+    const score = calculateBetScore(modelProbability, edge, roi)
     
     rankedBets.push({
       gameId: game.id,
@@ -539,13 +595,17 @@ function analyzeGame(game: Game): RankedBet[] {
       commenceTime: game.commenceTime,
       team,
       betType: 'moneyline',
-      consensusProbability: Math.round(consensus.consensusProb * 1000) / 10, // e.g., 62.5%
+      consensusProbability: Math.round(consensus.consensusProb * 1000) / 10, // Market fair value
       bestPrice: bestPrice.price,
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
-      edge: Math.round(edge * 1000) / 10,
-      expectedValue: Math.round(ev * 100) / 100, // e.g., $5.23
-      roi: Math.round(roi * 100) / 100, // e.g., 5.23%
+      edge: Math.round(edge * 1000) / 10, // Now based on Elo vs market
+      eloProbability: eloProbability ? Math.round(eloProbability * 1000) / 10 : undefined,
+      eloConfidence,
+      homeElo,
+      awayElo,
+      expectedValue: Math.round(ev * 100) / 100,
+      roi: Math.round(roi * 100) / 100,
       allBookPrices: consensus.bookPrices.map(b => ({
         book: b.book,
         price: b.price,
@@ -677,14 +737,14 @@ function passesFilters(
  * 
  * This is the main entry point - call this on each cron refresh
  */
-export function computeBestBets(games: Game[]): BestBetResult {
+export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
   const now = new Date().toISOString()
   const allRankedBets: RankedBet[] = []
   const allUnfilteredBets: FallbackBet[] = []
   
-  // Analyze all games
+  // Analyze all games (now async to fetch Elo data)
   for (const game of games) {
-    const bets = analyzeGame(game)
+    const bets = await analyzeGame(game)
     allRankedBets.push(...bets)
     
     // Also collect unfiltered bets for fallback/scoring

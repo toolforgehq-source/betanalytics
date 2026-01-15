@@ -149,7 +149,7 @@ export async function GET(request: Request) {
     
     // Compute and cache the best bet using only TODAY's games
     console.log("Computing best bet from today's games...")
-    const bestBetResult = computeBestBets(todaysGames)
+    const bestBetResult = await computeBestBets(todaysGames)
     await cacheBestBet(bestBetResult)
     
     console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)

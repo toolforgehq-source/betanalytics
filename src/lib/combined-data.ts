@@ -421,7 +421,7 @@ export async function formatCombinedDataForContext(): Promise<string> {
     // Filter to today's games only so "best bet today" returns a game happening TODAY
     const todaysGames = allGames.filter(game => isGameToday(game.commenceTime))
     console.log(`[formatCombinedDataForContext] Filtered to ${todaysGames.length} games today (ET) out of ${allGames.length} total`)
-    bestBetResult = computeBestBets(todaysGames)
+    bestBetResult = await computeBestBets(todaysGames)
     console.log(`[formatCombinedDataForContext] Computed: ${bestBetResult.gamesAnalyzed} games, ${bestBetResult.gamesQualified} qualified`)
   }
   
