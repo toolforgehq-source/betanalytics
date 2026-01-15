@@ -16,6 +16,7 @@
 
 import type { Game } from './odds'
 import { getPlayerPropProbability, getPlayerStatsData } from './player-stats'
+import { trackBestBet, trackParlay, trackSportBet, trackPropBet } from './recommendation-tracking'
 
 export interface RankedBet {
   gameId: string
@@ -1024,6 +1025,11 @@ export async function cacheBestBet(result: BestBetResult): Promise<void> {
       headers: { Authorization: `Bearer ${redis.token}` }
     })
     
+    // Track the recommendation for performance monitoring
+    if (result.bestBet) {
+      await trackBestBet(result.bestBet)
+    }
+    
     console.log('[cacheBestBet] Cached best bet:', result.bestBet?.team || 'none')
   } catch (error) {
     console.error('[cacheBestBet] Error caching best bet:', error)
@@ -1242,6 +1248,14 @@ export async function cacheParlay(parlay: ParlayResult): Promise<void> {
       method: 'POST',
       headers: { Authorization: `Bearer ${redis.token}` }
     })
+    
+    // Track parlays for performance monitoring
+    if (parlay.safeParlay && parlay.safeParlay.length > 0) {
+      await trackParlay(parlay.safeParlay, 'safe')
+    }
+    if (parlay.aggressiveParlay && parlay.aggressiveParlay.length > 0) {
+      await trackParlay(parlay.aggressiveParlay, 'aggressive')
+    }
   } catch (error) {
     console.error('[cacheParlay] Error:', error)
   }
@@ -1291,6 +1305,13 @@ export async function cacheSportBets(sportBets: SportBestBets): Promise<void> {
       method: 'POST',
       headers: { Authorization: `Bearer ${redis.token}` }
     })
+    
+    // Track sport-specific bets for performance monitoring
+    for (const [sportName, bet] of Object.entries(sportBets)) {
+      if (bet) {
+        await trackSportBet(bet, sportName)
+      }
+    }
   } catch (error) {
     console.error('[cacheSportBets] Error:', error)
   }
@@ -1747,6 +1768,11 @@ export async function cacheBestProp(result: BestPropResult): Promise<void> {
       method: 'POST',
       headers: { Authorization: `Bearer ${redis.token}` }
     })
+    
+    // Track prop bet for performance monitoring
+    if (result.bestProp) {
+      await trackPropBet(result.bestProp)
+    }
   } catch (error) {
     console.error('[cacheBestProp] Error:', error)
   }
