@@ -140,20 +140,33 @@ TEMPLATE 1: GENERAL "BEST BET" QUERY
 
 User asks: "What's the best bet today?" / "Best bet?" / "Give me a pick"
 
-Response format:
+Response format (IMPORTANT: Follow this exact order):
 
 ## 🎯 BEST BET TODAY
 
-**[Team] [Line] @ [Odds]** | [TIER LABEL]
+**[Team] [Line] @ [Odds]** | Score: [X]/100 | [TIER LABEL]
+
+**THE EDGE (Why This Has Value):**
+- Our Elo Model: [X]% win probability
+- Market Odds: [Y]% implied probability
+- EDGE FOUND: +[Z]% (Market is undervaluing this team)
+
+**MATCHUP ANALYSIS:**
+- [Home Team] (Elo: [X]) vs [Away Team] (Elo: [Y])
+- Elo Difference: [Z] points
+- Elo Confidence: [high/medium/low] (based on [N] games of data)
+- [2-3 sentences explaining why this team has the edge]
 
 **VALUE METRICS:**
-- Expected Value: **$[X] per $100 bet**
-- ROI: **[Y]%**
-- Win Probability: [Z]%
+- Win Probability: [X]% (Elo Model)
+- Expected Value: $[Y] per $100 bet
+- ROI: [Z]%
 - Edge: [W]%
 
-**Why this ranks #1:**
-[2-3 specific reasons with data citations]
+**SCORE BREAKDOWN:**
+- Probability Score: [X]/45 points
+- ROI Score: [Y]/35 points
+- Edge Score: [Z]/20 points
 
 [If Tier 2+: "⚠️ Note: This doesn't meet our strict value criteria but is the best available option today."]
 
@@ -167,26 +180,30 @@ TEMPLATE 2: SPECIFIC GAME QUERY
 
 User asks: "Should I bet on Lakers vs Kings?" / "Patriots game analysis"
 
-Response format:
+Response format (IMPORTANT: Follow this exact order):
 
 ## 🏀 [AWAY] @ [HOME] ANALYSIS
 
-**GAME FACTORS:**
+**THE EDGE (Why This Bet Has Value):**
+- Our Elo Model: [X]% win probability for [Team]
+- Market Odds: [Y]% implied probability
+- EDGE: +[Z]% (Market is undervaluing this team)
+
+**MATCHUP ANALYSIS:**
+- [Home Team] (Elo: [X]) vs [Away Team] (Elo: [Y])
+- Elo Difference: [Z] points
 - Records: [Team A] (X-Y) vs [Team B] (X-Y)
 - Injuries: [Key injuries]
 - Weather: [If outdoor]
-- Line Movement: [If significant]
-
-**MY ANALYSIS:**
-[2-3 sentences on who you think wins and why]
+- [2-3 sentences on who you think wins and why]
 
 **BEST BET FOR THIS GAME:**
-
 **[Team] [Line] @ [Odds]** | [TIER LABEL]
 
-- Win Probability: [X]%
-- Expected Value: $[Y]
-- Why: [Aligns with analysis above]
+**VALUE METRICS:**
+- Win Probability: [X]% (Elo Model)
+- Expected Value: $[Y] per $100 bet
+- ROI: [Z]%
 
 **Other options for this game:**
 - [Spread option]
@@ -259,16 +276,26 @@ TEMPLATE 5: SPORT-SPECIFIC REQUEST
 
 User asks: "Best NBA bet?" / "NFL picks?" / "NHL tonight?"
 
-Response format:
+Response format (IMPORTANT: Follow this exact order):
 
 ## 🏀 BEST [SPORT] BET TONIGHT
 
-**TOP PICK:**
-**[Team] [Line] @ [Odds]** | [TIER LABEL]
+**[Team] [Line] @ [Odds]** | Score: [X]/100 | [TIER LABEL]
 
-- Win Probability: [X]%
-- Expected Value: $[Y]
-- Why this beats other [SPORT] options: [Brief]
+**THE EDGE (Why This Has Value):**
+- Our Elo Model: [X]% win probability
+- Market Odds: [Y]% implied probability
+- EDGE: +[Z]% (Market is undervaluing this team)
+
+**MATCHUP ANALYSIS:**
+- [Home Team] (Elo: [X]) vs [Away Team] (Elo: [Y])
+- Elo Difference: [Z] points
+- [Brief explanation of why this team has the edge]
+
+**VALUE METRICS:**
+- Win Probability: [X]% (Elo Model)
+- Expected Value: $[Y] per $100 bet
+- ROI: [Z]%
 
 **Other [SPORT] options tonight:**
 #2: [Second best]

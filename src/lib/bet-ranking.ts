@@ -899,23 +899,43 @@ export function formatBestBetForContext(result: BestBetResult): string {
       const fbModelProbPercent = bestAvailable.eloProbability !== undefined ? bestAvailable.eloProbability : bestAvailable.consensusProbability
       const fbModelSource = bestAvailable.eloProbability !== undefined ? 'Elo Model' : 'Market Consensus'
       
-      // LEAD WITH THE EDGE if Elo is available
+      // 1. LEAD WITH THE EDGE - most important
+      lines.push('=== THE EDGE (Why This Bet Has Value) ===')
       if (bestAvailable.eloProbability !== undefined) {
-        lines.push('=== THE EDGE (Why This Bet Has Value) ===')
         lines.push(`Our Elo Model: ${bestAvailable.eloProbability}% win probability`)
         lines.push(`Market Odds (${formatOdds(bestAvailable.bestPrice)}): ${bestAvailable.impliedProbability}% implied probability`)
         lines.push(`EDGE FOUND: +${bestAvailable.edge}% (Market is undervaluing this team)`)
-        lines.push('')
-        if (bestAvailable.homeElo && bestAvailable.awayElo) {
-          lines.push('MATCHUP:')
-          lines.push(`- ${bestAvailable.homeTeam} (Elo: ${bestAvailable.homeElo})`)
-          lines.push(`- ${bestAvailable.awayTeam} (Elo: ${bestAvailable.awayElo})`)
-          lines.push(`- Elo Confidence: ${bestAvailable.eloConfidence || 'unknown'}`)
-          lines.push('')
-        }
+      } else {
+        lines.push(`Market Consensus: ${bestAvailable.consensusProbability}% win probability`)
+        lines.push(`Best Odds (${formatOdds(bestAvailable.bestPrice)}): ${bestAvailable.impliedProbability}% implied probability`)
+        lines.push(`EDGE: +${bestAvailable.edge}% vs market`)
       }
+      lines.push('')
       
-      lines.push('SCORE BREAKDOWN:')
+      // 2. MATCHUP ANALYSIS
+      lines.push('=== MATCHUP ANALYSIS ===')
+      if (bestAvailable.homeElo && bestAvailable.awayElo) {
+        lines.push(`${bestAvailable.homeTeam} (Elo: ${bestAvailable.homeElo}) vs ${bestAvailable.awayTeam} (Elo: ${bestAvailable.awayElo})`)
+        const eloDiff = Math.abs(bestAvailable.homeElo - bestAvailable.awayElo)
+        lines.push(`Elo Difference: ${eloDiff} points`)
+        lines.push(`Elo Confidence: ${bestAvailable.eloConfidence || 'unknown'}`)
+      } else {
+        lines.push(`${bestAvailable.awayTeam} @ ${bestAvailable.homeTeam}`)
+        lines.push('Elo ratings not available - using market consensus')
+      }
+      lines.push('')
+      
+      // 3. VALUE METRICS
+      lines.push('=== VALUE METRICS ===')
+      lines.push(`- Win Probability: ${fbModelProbPercent}% (${fbModelSource})`)
+      lines.push(`- Expected Value: $${bestAvailable.expectedValue.toFixed(2)} per $100`)
+      lines.push(`- ROI: ${bestAvailable.roi.toFixed(2)}%`)
+      lines.push(`- Edge: ${bestAvailable.edge}%`)
+      lines.push(`- Best Price: ${formatOdds(bestAvailable.bestPrice)} at ${bestAvailable.bestBook}`)
+      lines.push('')
+      
+      // 4. SCORE BREAKDOWN
+      lines.push('=== SCORE BREAKDOWN ===')
       const probScore = Math.max(0, Math.min(45, ((fbModelProbPercent - 50) / 40) * 45))
       const roi = bestAvailable.roi
       let roiScore: number
@@ -928,16 +948,9 @@ export function formatBestBetForContext(result: BestBetResult): string {
       const edgePercent = bestAvailable.edge
       const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
       
-      lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${fbModelSource} predicts ${fbModelProbPercent}%)`)
+      lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${fbModelProbPercent}% win probability)`)
       lines.push(`- ROI Score: ${roiScore.toFixed(1)}/35 points (${roi.toFixed(2)}% expected return)`)
       lines.push(`- Edge Score: ${edgeScore.toFixed(1)}/20 points (${edgePercent}% edge vs market)`)
-      lines.push('')
-      
-      lines.push('VALUE METRICS:')
-      lines.push(`- Model Win Probability: ${fbModelProbPercent}% (${fbModelSource})`)
-      lines.push(`- Expected Value: $${bestAvailable.expectedValue.toFixed(2)} per $100`)
-      lines.push(`- ROI: ${bestAvailable.roi.toFixed(2)}%`)
-      lines.push(`- Edge: ${bestAvailable.edge}%`)
       lines.push('')
       
       if (bestAvailable.expectedValue > 0) {
@@ -1002,25 +1015,45 @@ export function formatBestBetForContext(result: BestBetResult): string {
   const modelProbPercent = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
   const modelSource = bet.eloProbability !== undefined ? 'Elo Model' : 'Market Consensus'
   
-  // LEAD WITH THE EDGE - This is why the bet is valuable
+  // 1. LEAD WITH THE EDGE - This is why the bet is valuable (most important)
+  lines.push('=== THE EDGE (Why This Bet Has Value) ===')
   if (bet.eloProbability !== undefined) {
-    lines.push('=== THE EDGE (Why This Bet Has Value) ===')
     lines.push(`Our Elo Model: ${bet.eloProbability}% win probability`)
     lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
     lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing this team)`)
     lines.push('')
     lines.push(`This is a significant market inefficiency - our model based on ${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data sees this team as stronger than the betting market thinks.`)
-    lines.push('')
-    if (bet.homeElo && bet.awayElo) {
-      lines.push('MATCHUP:')
-      lines.push(`- ${bet.homeTeam} (Elo: ${bet.homeElo})`)
-      lines.push(`- ${bet.awayTeam} (Elo: ${bet.awayElo})`)
-      lines.push(`- Elo Confidence: ${bet.eloConfidence || 'unknown'}`)
-      lines.push('')
-    }
+  } else {
+    lines.push(`Market Consensus: ${bet.consensusProbability}% win probability`)
+    lines.push(`Best Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
+    lines.push(`EDGE: +${bet.edge}% vs market`)
   }
+  lines.push('')
   
-  lines.push('SCORE BREAKDOWN:')
+  // 2. MATCHUP ANALYSIS - Elo ratings and context
+  lines.push('=== MATCHUP ANALYSIS ===')
+  if (bet.homeElo && bet.awayElo) {
+    lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo})`)
+    const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
+    lines.push(`Elo Difference: ${eloDiff} points`)
+    lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+  } else {
+    lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
+    lines.push('Elo ratings not available - using market consensus')
+  }
+  lines.push('')
+  
+  // 3. VALUE METRICS - EV, ROI, Win Probability
+  lines.push('=== VALUE METRICS ===')
+  lines.push(`- Win Probability: ${modelProbPercent}% (${modelSource})`)
+  lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
+  lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
+  lines.push(`- Edge: ${bet.edge}%`)
+  lines.push(`- Best Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
+  lines.push('')
+  
+  // 4. SCORE BREAKDOWN - Technical details for users who want to dig deeper
+  lines.push('=== SCORE BREAKDOWN ===')
   const probScore = Math.max(0, Math.min(45, ((modelProbPercent - 50) / 40) * 45))
   const roi = bet.roi
   let roiScore: number
@@ -1033,26 +1066,9 @@ export function formatBestBetForContext(result: BestBetResult): string {
   const edgePercent = bet.edge
   const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
   
-  lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${modelSource} predicts ${modelProbPercent}%)`)
+  lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${modelProbPercent}% win probability)`)
   lines.push(`- ROI Score: ${roiScore.toFixed(1)}/35 points (${roi.toFixed(2)}% expected return)`)
   lines.push(`- Edge Score: ${edgeScore.toFixed(1)}/20 points (${edgePercent}% edge vs market)`)
-  lines.push('')
-  
-  lines.push('VALUE CALCULATION:')
-  if (bet.eloProbability !== undefined) {
-    lines.push(`- Model Win Probability (Elo): ${bet.eloProbability}%`)
-    lines.push(`- Market Consensus Probability: ${bet.consensusProbability}% (no-vig median from ${bet.allBookPrices.length} books)`)
-  } else {
-    lines.push(`- Model Win Probability: ${bet.consensusProbability}% (market consensus - Elo unavailable)`)
-  }
-  lines.push(`- Best Available Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
-  lines.push(`- Implied Probability from Best Price: ${bet.impliedProbability}%`)
-  const modelProb = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
-  lines.push(`- EDGE: ${modelProb}% (model) - ${bet.impliedProbability}% (implied) = ${bet.edge}%`)
-  lines.push('')
-  lines.push('EXPECTED VALUE:')
-  lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
-  lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
   lines.push('')
   lines.push('ALL BOOK PRICES:')
   const bookPrices = bet.allBookPrices || []
