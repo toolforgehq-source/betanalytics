@@ -2116,36 +2116,49 @@ export async function computeBestPropModelFirst(propsData: GamePlayerProps[]): P
 /**
  * Format best prop result for Claude's context
  * 
- * @param result - The strict-filter best prop result (for single prop recommendations)
- * @param modelFirstProps - Optional model-first props (for parlays) - uses player stats as primary ranking
+ * NOW USES MODEL-FIRST APPROACH FOR ALL PLAYER PROP QUESTIONS (like Elo for teams)
+ * 
+ * @param result - Legacy strict-filter result (kept for backwards compatibility)
+ * @param modelFirstProps - Model-first props - uses player stats as PRIMARY ranking for ALL prop questions
  */
 export function formatBestPropForContext(result: BestPropResult, modelFirstProps?: BestPropResult | null): string {
   const lines: string[] = []
   
-  // FIRST: Compact list of TOP 10 props for parlay building
-  // Use MODEL-FIRST props if available (ranked by player stats like Elo for teams)
-  // Otherwise fall back to strict-filter props
-  const parlayProps = modelFirstProps?.allRankedProps && modelFirstProps.allRankedProps.length > 0 
+  // Use MODEL-FIRST props as the PRIMARY source for ALL player prop questions
+  // This is like how we use Elo for team-based game recommendations
+  const rankedProps = modelFirstProps?.allRankedProps && modelFirstProps.allRankedProps.length > 0 
     ? modelFirstProps.allRankedProps 
-    : result.allRankedProps
+    : result.allRankedProps || []
   
-  lines.push('=== TOP 10 RANKED PLAYER PROPS (FOR PARLAYS) ===')
-  lines.push('INSTRUCTION: For PrizePicks/Underdog/player prop parlays, ONLY pick from this list.')
-  lines.push('Each prop includes model probability and edge - use these values in your response.')
+  // Find the best prop with positive edge (for "best prop" recommendations)
+  const propsWithPositiveEdge = rankedProps.filter(p => {
+    const edge = p.modelEdge !== undefined ? p.modelEdge : p.edge
+    return edge > 0
+  })
+  
+  // Best prop is the top-ranked prop with positive edge
+  const bestProp = propsWithPositiveEdge.length > 0 ? propsWithPositiveEdge[0] : null
+  const runnerUp = propsWithPositiveEdge.length > 1 ? propsWithPositiveEdge[1] : null
+  
+  // FIRST: Compact list of TOP 10 props for parlay building AND general prop questions
+  lines.push('=== TOP 10 RANKED PLAYER PROPS ===')
+  lines.push('INSTRUCTION: For ALL player prop questions (single props, parlays, PrizePicks, Underdog), use this list.')
   lines.push('Props are ranked by our player stats model (like Elo for teams).')
+  lines.push('Each prop includes model probability and edge - use these values in your response.')
   lines.push('')
   
-  if (parlayProps && parlayProps.length > 0) {
-    for (let i = 0; i < parlayProps.length; i++) {
-      const p = parlayProps[i]
+  if (rankedProps.length > 0) {
+    for (let i = 0; i < rankedProps.length; i++) {
+      const p = rankedProps[i]
       const modelProb = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
       const modelEdge = p.modelEdge !== undefined ? p.modelEdge : p.edge
       const gamesPlayed = p.modelGamesPlayed !== undefined ? p.modelGamesPlayed : 0
       const sportName = SPORT_NAME_MAP[p.sport] || p.sport
+      const edgeLabel = modelEdge > 0 ? `+${modelEdge}%` : `${modelEdge}%`
       
       lines.push(`#${i + 1}: ${p.playerName} ${p.pick} ${p.line} ${p.marketDisplay} (${sportName})`)
       lines.push(`   Game: ${p.awayTeam} @ ${p.homeTeam}`)
-      lines.push(`   Model Prob: ${modelProb}% | Edge: ${modelEdge}% | Games: ${gamesPlayed} | Best: ${formatOdds(p.bestPrice)} @ ${p.bestBook}`)
+      lines.push(`   Model Prob: ${modelProb}% | Edge: ${edgeLabel} | Games: ${gamesPlayed} | Best: ${formatOdds(p.bestPrice)} @ ${p.bestBook}`)
       lines.push('')
     }
   } else {
@@ -2153,84 +2166,94 @@ export function formatBestPropForContext(result: BestPropResult, modelFirstProps
     lines.push('')
   }
   
-  lines.push('=== PRE-COMPUTED BEST PROP OF THE DAY ===')
+  // BEST PROP OF THE DAY - Top prop with positive edge
+  lines.push('=== BEST PROP OF THE DAY ===')
   lines.push('')
   
-  if (!result.bestProp) {
-    lines.push(`NO BEST PROP AVAILABLE: ${result.reason}`)
-    lines.push('')
-    lines.push('When user asks for a prop bet, respond with this two-tier message:')
-    lines.push('')
-    lines.push('TIER 1 - EXPLAIN WHY NO PROP:')
-    lines.push('"No high-confidence prop bets today. Our criteria (55% probability, 3% edge, max -250 juice) ensure we only recommend +EV player props."')
-    lines.push('')
-    lines.push('"Today\'s prop market doesn\'t have any lines with enough edge to recommend."')
-    lines.push('')
-    lines.push('TIER 2 - OFFER ALTERNATIVES:')
-    lines.push('"If you still want a prop bet, I can show you:"')
-    lines.push('- "Closest misses - Props that nearly qualified (reasonable odds, small edge)"')
-    lines.push('- "Popular props - High-volume props that many bettors are taking (informational only)"')
-    lines.push('')
-    lines.push('"Which would you like to see? Note: These are NOT recommendations - just informational."')
-    lines.push('')
-    return lines.join('\n')
-  }
-  
-  const prop = result.bestProp
-  
-  // LEAD WITH THE EDGE - This is why the prop has value
-  lines.push('=== THE EDGE (Why This Prop Has Value) ===')
-  
-  // Use model probability if available, otherwise consensus
-  const modelProb = prop.modelProbability !== undefined ? prop.modelProbability : prop.consensusProbability
-  const modelSource = prop.modelProbability !== undefined ? `Historical Stats (${prop.modelGamesPlayed} games)` : `Market Consensus (${prop.booksWithLine} books)`
-  const edgeToShow = prop.modelEdge !== undefined ? prop.modelEdge : prop.edge
-  
-  lines.push(`Our Model: ${modelProb}% probability (${modelSource})`)
-  lines.push(`Market Odds (${formatOdds(prop.bestPrice)}): ${prop.impliedProbability}% implied probability`)
-  lines.push(`EDGE FOUND: +${edgeToShow}% (Market is undervaluing this prop)`)
-  lines.push('')
-  
-  // Show player stats context if model data available
-  if (prop.modelProbability !== undefined && prop.modelGamesPlayed !== undefined) {
-    lines.push(`Player Average: ${prop.modelAverage} ${prop.marketDisplay} (line is ${prop.line})`)
-    lines.push(`Sample Size: ${prop.modelGamesPlayed} games`)
-    if (prop.modelEdge !== undefined && prop.modelEdge > 0 && prop.edge > 0) {
-      lines.push('CONFIDENCE: HIGH (both historical stats and market consensus show positive edge)')
+  if (!bestProp) {
+    // No props with positive edge, but we still have ranked props to show
+    if (rankedProps.length > 0) {
+      lines.push('NO +EV PROP TODAY: None of the ranked props have positive edge.')
+      lines.push('')
+      lines.push('However, here are the BEST AVAILABLE props ranked by our model:')
+      lines.push('')
+      
+      // Show top 3 as "best available" (not recommendations)
+      for (let i = 0; i < Math.min(3, rankedProps.length); i++) {
+        const p = rankedProps[i]
+        const modelProb = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
+        const modelEdge = p.modelEdge !== undefined ? p.modelEdge : p.edge
+        lines.push(`${i + 1}. ${p.playerName} ${p.pick} ${p.line} ${p.marketDisplay}`)
+        lines.push(`   Model Prob: ${modelProb}% | Edge: ${modelEdge}% | Best: ${formatOdds(p.bestPrice)} @ ${p.bestBook}`)
+        lines.push('')
+      }
+      
+      lines.push('NOTE: These are the highest-ranked props by our model but do NOT have positive edge.')
+      lines.push('Present these as "best available" options, not as recommendations.')
+    } else {
+      lines.push('NO PROPS AVAILABLE: No player props data available.')
+      lines.push('')
     }
+  } else {
+    // We have a best prop with positive edge
+    const modelProb = bestProp.modelProbability !== undefined ? bestProp.modelProbability : bestProp.consensusProbability
+    const modelSource = bestProp.modelProbability !== undefined ? `Historical Stats (${bestProp.modelGamesPlayed} games)` : `Market Consensus (${bestProp.booksWithLine} books)`
+    const edgeToShow = bestProp.modelEdge !== undefined ? bestProp.modelEdge : bestProp.edge
+    
+    // LEAD WITH THE EDGE
+    lines.push('=== THE EDGE (Why This Prop Has Value) ===')
+    lines.push(`Our Model: ${modelProb}% probability (${modelSource})`)
+    lines.push(`Market Odds (${formatOdds(bestProp.bestPrice)}): ${bestProp.impliedProbability}% implied probability`)
+    lines.push(`EDGE FOUND: +${edgeToShow}% (Market is undervaluing this prop)`)
     lines.push('')
-  }
-  
-  lines.push('BEST PROP OF THE DAY:')
-  lines.push(`Player: ${prop.playerName}`)
-  lines.push(`Prop: ${prop.pick} ${prop.line} ${prop.marketDisplay}`)
-  lines.push(`Game: ${prop.awayTeam} @ ${prop.homeTeam}`)
-  lines.push(`Best Price: ${formatOdds(prop.bestPrice)} at ${prop.bestBook}`)
-  lines.push('')
-  
-  lines.push('PROBABILITY BREAKDOWN:')
-  lines.push(`- Model Probability: ${modelProb}% (${modelSource})`)
-  lines.push(`- Market Consensus: ${prop.consensusProbability}% (no-vig from ${prop.booksWithLine} books)`)
-  lines.push(`- Implied from Best Price: ${prop.impliedProbability}%`)
-  lines.push(`- Edge vs Market: ${edgeToShow}%`)
-  lines.push('')
-  
-  lines.push('ALL BOOK PRICES:')
-  for (const book of prop.allBookPrices) {
-    lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
-  }
-  
-  if (result.runnerUp) {
-    const ru = result.runnerUp
+    
+    // Show player stats context if model data available
+    if (bestProp.modelProbability !== undefined && bestProp.modelGamesPlayed !== undefined) {
+      lines.push(`Player Average: ${bestProp.modelAverage} ${bestProp.marketDisplay} (line is ${bestProp.line})`)
+      lines.push(`Sample Size: ${bestProp.modelGamesPlayed} games`)
+      if (bestProp.modelEdge !== undefined && bestProp.modelEdge > 0 && bestProp.edge > 0) {
+        lines.push('CONFIDENCE: HIGH (both historical stats and market consensus show positive edge)')
+      }
+      lines.push('')
+    }
+    
+    lines.push('BEST PROP:')
+    lines.push(`Player: ${bestProp.playerName}`)
+    lines.push(`Prop: ${bestProp.pick} ${bestProp.line} ${bestProp.marketDisplay}`)
+    lines.push(`Game: ${bestProp.awayTeam} @ ${bestProp.homeTeam}`)
+    lines.push(`Best Price: ${formatOdds(bestProp.bestPrice)} at ${bestProp.bestBook}`)
     lines.push('')
-    lines.push('RUNNER-UP PROP:')
-    lines.push(`${ru.playerName} ${ru.pick} ${ru.line} ${ru.marketDisplay}`)
-    lines.push(`Probability: ${ru.consensusProbability}% | Edge: ${ru.edge}%`)
+    
+    lines.push('PROBABILITY BREAKDOWN:')
+    lines.push(`- Model Probability: ${modelProb}% (${modelSource})`)
+    lines.push(`- Market Consensus: ${bestProp.consensusProbability}% (no-vig from ${bestProp.booksWithLine} books)`)
+    lines.push(`- Implied from Best Price: ${bestProp.impliedProbability}%`)
+    lines.push(`- Edge vs Market: +${edgeToShow}%`)
+    lines.push('')
+    
+    if (bestProp.allBookPrices && bestProp.allBookPrices.length > 0) {
+      lines.push('ALL BOOK PRICES:')
+      for (const book of bestProp.allBookPrices) {
+        lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
+      }
+      lines.push('')
+    }
+    
+    if (runnerUp) {
+      const ruProb = runnerUp.modelProbability !== undefined ? runnerUp.modelProbability : runnerUp.consensusProbability
+      const ruEdge = runnerUp.modelEdge !== undefined ? runnerUp.modelEdge : runnerUp.edge
+      lines.push('RUNNER-UP PROP:')
+      lines.push(`${runnerUp.playerName} ${runnerUp.pick} ${runnerUp.line} ${runnerUp.marketDisplay}`)
+      lines.push(`Model Prob: ${ruProb}% | Edge: +${ruEdge}%`)
+      lines.push('')
+    }
   }
   
-  lines.push('')
-  lines.push('IMPORTANT: When user asks for a prop bet, present the BEST PROP above.')
-  lines.push('Do NOT pick a different prop. This is the pre-computed best prop based on market consensus.')
+  lines.push('INSTRUCTIONS FOR PLAYER PROP QUESTIONS:')
+  lines.push('- For "best prop" / "prop bet" questions: Present the BEST PROP above (if positive edge) or best available (if no positive edge)')
+  lines.push('- For parlays / PrizePicks / Underdog: Pick from the TOP 10 RANKED PLAYER PROPS list')
+  lines.push('- Always include the model probability and edge in your response')
+  lines.push('- Props are ranked by our player stats model (like Elo for teams)')
   
   return lines.join('\n')
 }
