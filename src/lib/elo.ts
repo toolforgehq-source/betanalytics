@@ -752,6 +752,71 @@ export async function getEloWinProbabilityByName(
 }
 
 /**
+ * Get Elo win probability with injury adjustments
+ * This is the main function to use for predictions that account for injuries
+ */
+export async function getEloWinProbabilityWithInjuries(
+  league: string,
+  homeTeamName: string,
+  awayTeamName: string,
+  injuries: InjuryInfo[],
+  homeTopScorers?: PlayerImportance[],
+  awayTopScorers?: PlayerImportance[],
+  homePitcher?: PitcherInfo | null,
+  awayPitcher?: PitcherInfo | null
+): Promise<{ 
+  probability: number
+  homeRating: number
+  awayRating: number
+  homeEffectiveRating: number
+  awayEffectiveRating: number
+  confidence: string
+  homeAdjustments: string[]
+  awayAdjustments: string[]
+} | null> {
+  // First get base Elo ratings
+  const baseResult = await getEloWinProbabilityByName(league, homeTeamName, awayTeamName)
+  if (!baseResult) return null
+  
+  // Calculate effective ratings with injury adjustments
+  const homeEffective = calculateEffectiveElo(
+    baseResult.homeRating,
+    league,
+    homeTeamName,
+    injuries,
+    homeTopScorers,
+    homePitcher
+  )
+  
+  const awayEffective = calculateEffectiveElo(
+    baseResult.awayRating,
+    league,
+    awayTeamName,
+    injuries,
+    awayTopScorers,
+    awayPitcher
+  )
+  
+  // Calculate win probability using effective ratings
+  const probability = calculateWinProbability(
+    homeEffective.effectiveRating,
+    awayEffective.effectiveRating,
+    league
+  )
+  
+  return {
+    probability,
+    homeRating: baseResult.homeRating,
+    awayRating: baseResult.awayRating,
+    homeEffectiveRating: homeEffective.effectiveRating,
+    awayEffectiveRating: awayEffective.effectiveRating,
+    confidence: baseResult.confidence,
+    homeAdjustments: homeEffective.adjustments,
+    awayAdjustments: awayEffective.adjustments
+  }
+}
+
+/**
  * Get all ratings for a league (for display/debugging)
  */
 export async function getLeagueRatings(league: string): Promise<TeamRating[]> {
@@ -791,5 +856,321 @@ export async function getEloStats(): Promise<{
     totalGamesProcessed: eloData.gamesProcessed || 0,
     lastUpdated: eloData.lastUpdated || new Date().toISOString(),
     leagueCounts
+  }
+}
+
+// ============================================
+// INJURY ADJUSTMENTS
+// ============================================
+
+/**
+ * Injury status multipliers - how much of the penalty to apply
+ * Out = 100%, Doubtful = 70%, Questionable = 15% (they usually play)
+ */
+const INJURY_STATUS_MULTIPLIER: Record<string, number> = {
+  'out': 1.0,
+  'injured reserve': 1.0,
+  'ir': 1.0,
+  'doubtful': 0.7,
+  'questionable': 0.15,
+  'probable': 0,
+  'day-to-day': 0,
+  'active': 0,
+}
+
+/**
+ * Get the status multiplier for an injury status string
+ */
+function getStatusMultiplier(status: string): number {
+  const normalizedStatus = status.toLowerCase().trim()
+  
+  // Check for exact matches first
+  if (INJURY_STATUS_MULTIPLIER[normalizedStatus] !== undefined) {
+    return INJURY_STATUS_MULTIPLIER[normalizedStatus]
+  }
+  
+  // Check for partial matches
+  for (const [key, value] of Object.entries(INJURY_STATUS_MULTIPLIER)) {
+    if (normalizedStatus.includes(key)) {
+      return value
+    }
+  }
+  
+  // Default: if status is unknown but player is on injury report, assume 50%
+  return 0.5
+}
+
+/**
+ * Injury data structure (matches ESPN injury format)
+ */
+export interface InjuryInfo {
+  team: string
+  player: string
+  status: string
+  details?: string
+  position?: string
+}
+
+/**
+ * MLB Pitcher info for starting pitcher adjustments
+ */
+export interface PitcherInfo {
+  name: string
+  team: string
+  era?: number
+}
+
+/**
+ * Player importance info from player stats
+ */
+export interface PlayerImportance {
+  playerName: string
+  teamName: string
+  sport: string
+  scoringAverage: number  // points for NBA/NCAAB, goals for NHL, yards for NFL
+  isTopScorer: boolean    // true if in top 3 scorers for team
+}
+
+/**
+ * Calculate injury adjustment for a team
+ * Returns negative Elo points to subtract from team's rating
+ * 
+ * Rules:
+ * - NFL/NCAAF: Starting QB out = -80 Elo
+ * - NHL: Starting goalie out = -30 Elo
+ * - NBA/NCAAB/NHL: Top 3 scorer out = -20 Elo each
+ * - Fallback: -5 Elo per starter out (for sports without good player data)
+ * - Status multipliers: Out=100%, Doubtful=70%, Questionable=15%
+ */
+export function calculateInjuryAdjustment(
+  league: string,
+  teamName: string,
+  injuries: InjuryInfo[],
+  topScorers?: PlayerImportance[],
+  isStartingQB?: (playerName: string, teamName: string) => boolean,
+  isStartingGoalie?: (playerName: string, teamName: string) => boolean
+): { adjustment: number; details: string[] } {
+  let totalAdjustment = 0
+  const details: string[] = []
+  
+  // Filter injuries for this team
+  const teamInjuries = injuries.filter(inj => {
+    const injTeamNorm = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const teamNorm = teamName.toLowerCase().replace(/[^a-z0-9]/g, '')
+    return injTeamNorm.includes(teamNorm) || teamNorm.includes(injTeamNorm)
+  })
+  
+  if (teamInjuries.length === 0) {
+    return { adjustment: 0, details: [] }
+  }
+  
+  // Skip soccer - no adjustments per user request
+  if (league.startsWith('soccer_')) {
+    return { adjustment: 0, details: ['Soccer: no injury adjustments applied'] }
+  }
+  
+  for (const injury of teamInjuries) {
+    const statusMultiplier = getStatusMultiplier(injury.status)
+    if (statusMultiplier === 0) continue  // Player is probable/active, skip
+    
+    const playerNameLower = injury.player.toLowerCase()
+    const positionLower = (injury.position || injury.details || '').toLowerCase()
+    
+    // NFL/NCAAF: Check for starting QB
+    if (league === 'NFL' || league === 'NCAAF') {
+      const isQB = positionLower.includes('qb') || 
+                   positionLower.includes('quarterback') ||
+                   (isStartingQB && isStartingQB(injury.player, teamName))
+      
+      if (isQB) {
+        // Only apply if it's likely the starting QB (first QB on injury list or explicitly marked)
+        const qbPenalty = Math.round(-80 * statusMultiplier)
+        totalAdjustment += qbPenalty
+        details.push(`${injury.player} (QB, ${injury.status}): ${qbPenalty} Elo`)
+        continue  // Don't double-count as top scorer
+      }
+    }
+    
+    // NHL: Check for starting goalie
+    if (league === 'NHL') {
+      const isGoalie = positionLower.includes('g') || 
+                       positionLower.includes('goalie') ||
+                       positionLower.includes('goaltender') ||
+                       (isStartingGoalie && isStartingGoalie(injury.player, teamName))
+      
+      if (isGoalie) {
+        const goaliePenalty = Math.round(-30 * statusMultiplier)
+        totalAdjustment += goaliePenalty
+        details.push(`${injury.player} (Goalie, ${injury.status}): ${goaliePenalty} Elo`)
+        continue
+      }
+    }
+    
+    // Check if player is a top 3 scorer for the team
+    if (topScorers && topScorers.length > 0) {
+      const isTopScorer = topScorers.some(scorer => {
+        const scorerNameNorm = scorer.playerName.toLowerCase().replace(/[^a-z]/g, '')
+        const injuryNameNorm = playerNameLower.replace(/[^a-z]/g, '')
+        return scorerNameNorm.includes(injuryNameNorm) || injuryNameNorm.includes(scorerNameNorm)
+      })
+      
+      if (isTopScorer) {
+        const topScorerPenalty = Math.round(-20 * statusMultiplier)
+        totalAdjustment += topScorerPenalty
+        details.push(`${injury.player} (Top Scorer, ${injury.status}): ${topScorerPenalty} Elo`)
+        continue
+      }
+    }
+    
+    // Fallback: -5 Elo per injured player (for starters/significant players)
+    // Only apply if status indicates they're actually out/doubtful
+    if (statusMultiplier >= 0.5) {
+      const fallbackPenalty = Math.round(-5 * statusMultiplier)
+      totalAdjustment += fallbackPenalty
+      details.push(`${injury.player} (${injury.status}): ${fallbackPenalty} Elo`)
+    }
+  }
+  
+  return { adjustment: totalAdjustment, details }
+}
+
+/**
+ * Calculate MLB starting pitcher adjustment
+ * Good pitchers ADD Elo to the team
+ * 
+ * Rules:
+ * - ERA < 3.0 = +20 Elo
+ * - ERA < 3.8 = +10 Elo
+ * - ERA >= 3.8 or unknown = +0 Elo
+ */
+export function calculatePitcherAdjustment(
+  pitcher: PitcherInfo | null
+): { adjustment: number; details: string } {
+  if (!pitcher || pitcher.era === undefined) {
+    return { adjustment: 0, details: 'No starting pitcher info available' }
+  }
+  
+  if (pitcher.era < 3.0) {
+    return { 
+      adjustment: 20, 
+      details: `${pitcher.name} (ERA ${pitcher.era.toFixed(2)}): +20 Elo (elite pitcher)` 
+    }
+  }
+  
+  if (pitcher.era < 3.8) {
+    return { 
+      adjustment: 10, 
+      details: `${pitcher.name} (ERA ${pitcher.era.toFixed(2)}): +10 Elo (good pitcher)` 
+    }
+  }
+  
+  return { 
+    adjustment: 0, 
+    details: `${pitcher.name} (ERA ${pitcher.era.toFixed(2)}): +0 Elo (average pitcher)` 
+  }
+}
+
+/**
+ * Calculate effective Elo rating for a team, accounting for injuries and pitchers
+ * This is used at prediction time - the stored Elo rating is NOT modified
+ */
+export function calculateEffectiveElo(
+  baseRating: number,
+  league: string,
+  teamName: string,
+  injuries: InjuryInfo[],
+  topScorers?: PlayerImportance[],
+  pitcher?: PitcherInfo | null,
+  isStartingQB?: (playerName: string, teamName: string) => boolean,
+  isStartingGoalie?: (playerName: string, teamName: string) => boolean
+): { effectiveRating: number; baseRating: number; adjustments: string[] } {
+  const adjustments: string[] = []
+  let effectiveRating = baseRating
+  
+  // Apply injury adjustments
+  const injuryResult = calculateInjuryAdjustment(
+    league, 
+    teamName, 
+    injuries, 
+    topScorers,
+    isStartingQB,
+    isStartingGoalie
+  )
+  
+  if (injuryResult.adjustment !== 0) {
+    effectiveRating += injuryResult.adjustment
+    adjustments.push(...injuryResult.details)
+  }
+  
+  // Apply MLB pitcher adjustment
+  if (league === 'MLB' && pitcher) {
+    const pitcherResult = calculatePitcherAdjustment(pitcher)
+    if (pitcherResult.adjustment !== 0) {
+      effectiveRating += pitcherResult.adjustment
+      adjustments.push(pitcherResult.details)
+    }
+  }
+  
+  return {
+    effectiveRating,
+    baseRating,
+    adjustments
+  }
+}
+
+/**
+ * Calculate win probability with injury adjustments
+ * This is the main function to use for predictions that account for injuries
+ */
+export function calculateWinProbabilityWithInjuries(
+  homeRating: number,
+  awayRating: number,
+  league: string,
+  homeTeamName: string,
+  awayTeamName: string,
+  injuries: InjuryInfo[],
+  homeTopScorers?: PlayerImportance[],
+  awayTopScorers?: PlayerImportance[],
+  homePitcher?: PitcherInfo | null,
+  awayPitcher?: PitcherInfo | null
+): { 
+  probability: number
+  homeEffectiveRating: number
+  awayEffectiveRating: number
+  homeAdjustments: string[]
+  awayAdjustments: string[]
+} {
+  // Calculate effective ratings for both teams
+  const homeEffective = calculateEffectiveElo(
+    homeRating,
+    league,
+    homeTeamName,
+    injuries,
+    homeTopScorers,
+    homePitcher
+  )
+  
+  const awayEffective = calculateEffectiveElo(
+    awayRating,
+    league,
+    awayTeamName,
+    injuries,
+    awayTopScorers,
+    awayPitcher
+  )
+  
+  // Calculate win probability using effective ratings
+  const probability = calculateWinProbability(
+    homeEffective.effectiveRating,
+    awayEffective.effectiveRating,
+    league
+  )
+  
+  return {
+    probability,
+    homeEffectiveRating: homeEffective.effectiveRating,
+    awayEffectiveRating: awayEffective.effectiveRating,
+    homeAdjustments: homeEffective.adjustments,
+    awayAdjustments: awayEffective.adjustments
   }
 }

@@ -15,9 +15,14 @@
  */
 
 import type { Game } from './odds'
-import { getPlayerPropProbability, getPlayerStatsData } from './player-stats'
+import { getPlayerPropProbability, getPlayerStatsData, type PlayerStats } from './player-stats'
 import { trackBestBet, trackParlay, trackSportBet, trackPropBet } from './recommendation-tracking'
-import { getEloWinProbabilityByName } from './elo'
+import { 
+  getEloWinProbabilityByName, 
+  getEloWinProbabilityWithInjuries,
+  type InjuryInfo,
+  type PlayerImportance
+} from './elo'
 
 export interface RankedBet {
   gameId: string
@@ -514,7 +519,62 @@ function findBestPrice(
 /**
  * Analyze a single game and return ranked bets for both teams
  */
-async function analyzeGame(game: Game): Promise<RankedBet[]> {
+/**
+ * Get top 3 scorers for a team from player stats data
+ * Used for injury adjustment calculations
+ */
+async function getTopScorersForTeam(
+  teamName: string,
+  sport: string
+): Promise<PlayerImportance[]> {
+  try {
+    const playerStats = await getPlayerStatsData()
+    if (!playerStats || !playerStats.players) return []
+    
+    // Filter players for this team and sport (players is a Record, not an array)
+    const allPlayers = Object.values(playerStats.players)
+    const teamPlayers = allPlayers.filter((p: PlayerStats) => {
+      const playerTeamNorm = p.teamName.toLowerCase().replace(/[^a-z0-9]/g, '')
+      const teamNorm = teamName.toLowerCase().replace(/[^a-z0-9]/g, '')
+      return (playerTeamNorm.includes(teamNorm) || teamNorm.includes(playerTeamNorm)) &&
+             p.sport.toLowerCase() === sport.toLowerCase()
+    })
+    
+    // Get scoring average based on sport
+    const getScoringAverage = (player: PlayerStats): number => {
+      if (sport === 'basketball_nba' || sport === 'basketball_ncaab') {
+        return player.averages?.points || 0
+      } else if (sport === 'icehockey_nhl') {
+        return player.averages?.goals || 0
+      } else if (sport === 'americanfootball_nfl' || sport === 'americanfootball_ncaaf') {
+        // For NFL/NCAAF, use total yards as a proxy for importance
+        return (player.averages?.passingYards || 0) + 
+               (player.averages?.rushingYards || 0) + 
+               (player.averages?.receivingYards || 0)
+      }
+      return 0
+    }
+    
+    // Sort by scoring average and take top 3
+    const sortedPlayers = teamPlayers
+      .map((p: PlayerStats) => ({
+        playerName: p.playerName,
+        teamName: p.teamName,
+        sport: p.sport,
+        scoringAverage: getScoringAverage(p),
+        isTopScorer: true
+      }))
+      .sort((a: PlayerImportance, b: PlayerImportance) => b.scoringAverage - a.scoringAverage)
+      .slice(0, 3)
+    
+    return sortedPlayers
+  } catch (error) {
+    console.error('[getTopScorersForTeam] Error:', error)
+    return []
+  }
+}
+
+async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedBet[]> {
   const rankedBets: RankedBet[] = []
   const now = new Date().toISOString()
   
@@ -530,11 +590,63 @@ async function analyzeGame(game: Game): Promise<RankedBet[]> {
   
   // Get Elo prediction for this game (if available)
   const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
-  let eloResult: { probability: number; homeRating: number; awayRating: number; confidence: string } | null = null
+  let eloResult: { 
+    probability: number
+    homeRating: number
+    awayRating: number
+    confidence: string
+    homeEffectiveRating?: number
+    awayEffectiveRating?: number
+    homeAdjustments?: string[]
+    awayAdjustments?: string[]
+  } | null = null
   
   if (eloLeague) {
     try {
-      eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam)
+      // If injuries are provided, use injury-adjusted Elo
+      if (injuries && injuries.length > 0) {
+        // Get top scorers for both teams (for NBA/NCAAB/NHL injury adjustments)
+        const [homeTopScorers, awayTopScorers] = await Promise.all([
+          getTopScorersForTeam(game.homeTeam, game.sport),
+          getTopScorersForTeam(game.awayTeam, game.sport)
+        ])
+        
+        const injuryResult = await getEloWinProbabilityWithInjuries(
+          eloLeague,
+          game.homeTeam,
+          game.awayTeam,
+          injuries,
+          homeTopScorers,
+          awayTopScorers
+        )
+        
+        if (injuryResult) {
+          eloResult = {
+            probability: injuryResult.probability,
+            homeRating: injuryResult.homeRating,
+            awayRating: injuryResult.awayRating,
+            confidence: injuryResult.confidence,
+            homeEffectiveRating: injuryResult.homeEffectiveRating,
+            awayEffectiveRating: injuryResult.awayEffectiveRating,
+            homeAdjustments: injuryResult.homeAdjustments,
+            awayAdjustments: injuryResult.awayAdjustments
+          }
+          
+          // Log injury adjustments for debugging
+          if (injuryResult.homeAdjustments.length > 0 || injuryResult.awayAdjustments.length > 0) {
+            console.log(`[analyzeGame] Injury adjustments for ${game.homeTeam} vs ${game.awayTeam}:`)
+            if (injuryResult.homeAdjustments.length > 0) {
+              console.log(`  ${game.homeTeam}: ${injuryResult.homeAdjustments.join(', ')}`)
+            }
+            if (injuryResult.awayAdjustments.length > 0) {
+              console.log(`  ${game.awayTeam}: ${injuryResult.awayAdjustments.join(', ')}`)
+            }
+          }
+        }
+      } else {
+        // No injuries, use standard Elo
+        eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam)
+      }
     } catch (error) {
       console.error('[analyzeGame] Error fetching Elo:', error)
     }
