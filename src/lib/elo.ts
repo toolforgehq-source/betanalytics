@@ -38,6 +38,30 @@ const K_FACTORS: Record<string, number> = {
   'soccer_uefa_champs_league': 25,
 }
 
+// Recency decay factor: applied before each game update to shrink ratings toward baseline
+// This makes recent games more impactful than older games
+// decay^30 gives the relative weight of a game 30 games ago vs a recent game
+// 0.98^30 = 0.55 (game 30 ago has 55% weight of recent game)
+// 0.97^30 = 0.40 (game 30 ago has 40% weight)
+// 0.95^30 = 0.21 (game 30 ago has 21% weight)
+// Higher decay = more stability, lower decay = more recency bias
+const RECENCY_DECAY: Record<string, number> = {
+  'NBA': 0.98,      // 82 games - moderate recency, ~55% weight at 30 games ago
+  'NFL': 0.96,      // 17 games - higher recency needed, ~29% weight at 30 games ago
+  'NHL': 0.98,      // 82 games - moderate recency
+  'MLB': 0.99,      // 162 games - very stable, ~74% weight at 30 games ago
+  'NCAAB': 0.97,    // Fewer games - more recency, ~40% weight at 30 games ago
+  'NCAAF': 0.95,    // Very few games - highest recency, ~21% weight at 30 games ago
+  // Soccer leagues - moderate recency
+  'soccer_epl': 0.98,
+  'soccer_spain_la_liga': 0.98,
+  'soccer_germany_bundesliga': 0.98,
+  'soccer_italy_serie_a': 0.98,
+  'soccer_france_ligue_one': 0.98,
+  'soccer_usa_mls': 0.98,
+  'soccer_uefa_champs_league': 0.98,
+}
+
 // Home advantage in Elo points (added to home team's rating for prediction)
 const HOME_ADVANTAGE: Record<string, number> = {
   'NBA': 100,
@@ -574,6 +598,13 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
     
     const homeTeam = eloData.ratings[homeKey]
     const awayTeam = eloData.ratings[awayKey]
+    
+    // Apply recency decay before updating - this shrinks ratings toward baseline (1500)
+    // so that older games have less impact on the current rating
+    // Formula: rating = baseline + (rating - baseline) * decay
+    const decay = RECENCY_DECAY[game.league] || 0.98
+    homeTeam.rating = Math.round(DEFAULT_RATING + (homeTeam.rating - DEFAULT_RATING) * decay)
+    awayTeam.rating = Math.round(DEFAULT_RATING + (awayTeam.rating - DEFAULT_RATING) * decay)
     
     // Update ratings
     const { newHomeRating, newAwayRating } = updateRatingsAfterGame(
