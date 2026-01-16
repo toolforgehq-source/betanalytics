@@ -31,6 +31,7 @@ import {
   getCachedSportBets,
   formatSportBestBetsForContext,
   getCachedBestProp,
+  getCachedModelFirstProps,
   computeBestProp,
   formatBestPropForContext,
   computeBestBets,
@@ -397,15 +398,16 @@ export async function formatCombinedDataForContext(): Promise<string> {
     .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.league))
     .map(g => ({ id: g.gameId, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.league }))
   
-  // Fetch weather, soccer stats, best bet, parlay, sport bets, best prop, and track record in parallel
+  // Fetch weather, soccer stats, best bet, parlay, sport bets, best prop, model-first props, and track record in parallel
   // NOTE: Line movement is now computed from ESPN odds snapshots (handled by cron job)
-  const [weatherMap, soccerStats, cachedBestBet, cachedParlay, cachedSportBets, cachedBestProp, trackRecord] = await Promise.all([
+  const [weatherMap, soccerStats, cachedBestBet, cachedParlay, cachedSportBets, cachedBestProp, cachedModelFirstProps, trackRecord] = await Promise.all([
     getWeatherForGames(outdoorGames).catch(() => new Map()),
     getCachedSoccerStats().catch(() => ({ leagues: [], lastUpdated: new Date().toISOString(), error: 'Failed to fetch' })),
     getCachedBestBet().catch(() => null),
     getCachedParlay().catch(() => null),
     getCachedSportBets().catch(() => null),
     getCachedBestProp().catch(() => null),
+    getCachedModelFirstProps().catch(() => null),
     getTrackRecord().catch(() => null)
   ])
   
@@ -471,7 +473,8 @@ export async function formatCombinedDataForContext(): Promise<string> {
   }
   
   // BEST PROP OF THE DAY - For users asking about player props
-  lines.push(formatBestPropForContext(bestPropResult))
+  // Pass model-first props for the parlay list (uses player stats as primary ranking like Elo)
+  lines.push(formatBestPropForContext(bestPropResult, cachedModelFirstProps))
   lines.push('')
   
   // Header with data freshness info

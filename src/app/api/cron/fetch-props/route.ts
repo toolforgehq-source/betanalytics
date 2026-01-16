@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { fetchSportPlayerProps, setCachedPlayerProps, type GamePlayerProps } from "@/lib/odds"
-import { computeBestPropWithModel, cacheBestProp } from "@/lib/bet-ranking"
+import { computeBestPropWithModel, cacheBestProp, computeBestPropModelFirst, cacheModelFirstProps } from "@/lib/bet-ranking"
 
 /**
  * Cron endpoint to fetch player props from Odds API (PAID)
@@ -69,6 +69,13 @@ export async function GET(request: Request) {
       ? `${bestPropResult.bestProp.playerName} ${bestPropResult.bestProp.pick} ${bestPropResult.bestProp.line}`
       : 'none'
     console.log(`[fetch-props] Best prop: ${bestPropInfo}`)
+    
+    // Also compute and cache model-first props for parlays
+    // This uses player stats as the PRIMARY ranking (like Elo for teams)
+    console.log("[fetch-props] Computing model-first props for parlays...")
+    const modelFirstResult = await computeBestPropModelFirst(allProps)
+    await cacheModelFirstProps(modelFirstResult)
+    console.log(`[fetch-props] Model-first props: ${modelFirstResult.allRankedProps.length} props ranked`)
     
     return NextResponse.json({
       success: true,

@@ -1919,21 +1919,225 @@ export async function computeBestPropWithModel(propsData: GamePlayerProps[]): Pr
 }
 
 /**
- * Format best prop result for Claude's context
+ * Compute props using MODEL-FIRST approach (like Elo for teams)
+ * 
+ * This function uses the player stats model as the PRIMARY ranking system,
+ * not just an enhancement layer. It will always return props ranked by model
+ * probability, even if they don't meet strict +EV criteria.
+ * 
+ * Used for: Player prop parlays, "best available" prop requests
+ * 
+ * Algorithm:
+ * 1. Get all available props (no strict filtering)
+ * 2. For each prop, calculate model probability using player stats
+ * 3. Rank by model probability/edge
+ * 4. Return top props based on model (with honest labeling)
  */
-export function formatBestPropForContext(result: BestPropResult): string {
+export async function computeBestPropModelFirst(propsData: GamePlayerProps[]): Promise<BestPropResult> {
+  const now = new Date().toISOString()
+  
+  if (!propsData || propsData.length === 0) {
+    return {
+      bestProp: null,
+      runnerUp: null,
+      allRankedProps: [],
+      calculatedAt: now,
+      propsAnalyzed: 0,
+      propsQualified: 0,
+      reason: 'No player props data available'
+    }
+  }
+  
+  // Load player stats data - this is our "Elo" for players
+  const playerStatsData = await getPlayerStatsData()
+  const hasModelData = playerStatsData && Object.keys(playerStatsData.players).length > 0
+  
+  if (hasModelData) {
+    console.log(`[BetRanking] Model-first props: ${Object.keys(playerStatsData.players).length} players tracked`)
+  }
+  
+  const allRankedProps: RankedProp[] = []
+  let propsAnalyzed = 0
+  
+  // Process each game's props
+  for (const game of propsData) {
+    // Group props by player + market + line
+    const propGroups = new Map<string, PlayerProp[]>()
+    
+    for (const prop of game.props) {
+      const key = `${prop.playerName}|${prop.market}|${prop.line}`
+      const existing = propGroups.get(key) || []
+      existing.push(prop)
+      propGroups.set(key, existing)
+      propsAnalyzed++
+    }
+    
+    // Analyze each group (even with just 1 book for model-first approach)
+    const propGroupEntries = Array.from(propGroups.entries())
+    for (const [key, props] of propGroupEntries) {
+      const [playerName, market, lineStr] = key.split('|')
+      const line = parseFloat(lineStr)
+      
+      // Calculate implied probabilities from available books
+      const overPrices = props.map(p => p.overOdds)
+      const underPrices = props.map(p => p.underOdds)
+      
+      const overImpliedProbs = overPrices.map(p => americanToImpliedProbability(p))
+      const underImpliedProbs = underPrices.map(p => americanToImpliedProbability(p))
+      
+      // Calculate consensus (or single-book) probability
+      const avgOverImplied = overImpliedProbs.reduce((a, b) => a + b, 0) / overImpliedProbs.length
+      const avgUnderImplied = underImpliedProbs.reduce((a, b) => a + b, 0) / underImpliedProbs.length
+      const totalImplied = avgOverImplied + avgUnderImplied
+      
+      const overNoVig = (avgOverImplied / totalImplied) * 100
+      const underNoVig = (avgUnderImplied / totalImplied) * 100
+      
+      // Find best prices
+      const bestOverPrice = Math.max(...overPrices)
+      const bestUnderPrice = Math.max(...underPrices)
+      
+      const overBestImplied = americanToImpliedProbability(bestOverPrice) * 100
+      const underBestImplied = americanToImpliedProbability(bestUnderPrice) * 100
+      
+      // Try to get model probability for this player
+      let modelResult: { probability: number; average: number; gamesPlayed: number } | null = null
+      
+      if (hasModelData) {
+        const sportName = SPORT_NAME_MAP[game.sport] || game.sport
+        const statName = MARKET_TO_STAT[market]
+        
+        if (statName) {
+          modelResult = await getPlayerPropProbability(playerName, sportName, statName, line)
+        }
+      }
+      
+      // Analyze both Over and Under
+      const sides: Array<{
+        pick: 'Over' | 'Under'
+        consensusProb: number
+        bestPrice: number
+        bestImplied: number
+        marketEdge: number
+        prices: number[]
+      }> = [
+        { pick: 'Over', consensusProb: overNoVig, bestPrice: bestOverPrice, bestImplied: overBestImplied, marketEdge: overNoVig - overBestImplied, prices: overPrices },
+        { pick: 'Under', consensusProb: underNoVig, bestPrice: bestUnderPrice, bestImplied: underBestImplied, marketEdge: underNoVig - underBestImplied, prices: underPrices }
+      ]
+      
+      for (const side of sides) {
+        // Skip extreme juice (worse than -300)
+        if (side.bestPrice < -300) continue
+        
+        // Find which book has the best price
+        const bestBookIndex = side.prices.indexOf(side.bestPrice)
+        const bestBook = props[bestBookIndex]?.bookmaker || 'Unknown'
+        
+        // Build all book prices
+        const allBookPrices = props.map(p => ({
+          book: p.bookmaker,
+          price: side.pick === 'Over' ? p.overOdds : p.underOdds,
+          impliedProb: Math.round(americanToImpliedProbability(side.pick === 'Over' ? p.overOdds : p.underOdds) * 1000) / 10
+        }))
+        
+        // Calculate model-based values
+        let modelProbability: number | undefined
+        let modelAverage: number | undefined
+        let modelGamesPlayed: number | undefined
+        let modelEdge: number | undefined
+        let score: number
+        
+        if (modelResult && modelResult.gamesPlayed >= 5) {
+          // We have model data - use it as primary ranking
+          // For Over: model probability is P(actual > line)
+          // For Under: model probability is 1 - P(actual > line)
+          const rawModelProb = side.pick === 'Over' ? modelResult.probability : (1 - modelResult.probability)
+          modelProbability = Math.round(rawModelProb * 1000) / 10
+          modelAverage = Math.round(modelResult.average * 10) / 10
+          modelGamesPlayed = modelResult.gamesPlayed
+          modelEdge = Math.round((modelProbability - side.bestImplied) * 10) / 10
+          
+          // Score based on MODEL probability and edge (model-first!)
+          score = modelProbability * 0.6 + Math.max(0, modelEdge) * 0.4
+        } else {
+          // No model data - fall back to market consensus
+          score = side.consensusProb * 0.6 + Math.max(0, side.marketEdge) * 0.4
+        }
+        
+        allRankedProps.push({
+          gameId: game.gameId,
+          sport: game.sport,
+          homeTeam: game.homeTeam,
+          awayTeam: game.awayTeam,
+          commenceTime: game.commenceTime,
+          playerName,
+          market,
+          marketDisplay: MARKET_DISPLAY[market] || market,
+          line,
+          pick: side.pick,
+          consensusProbability: Math.round(side.consensusProb * 10) / 10,
+          bestPrice: side.bestPrice,
+          bestBook,
+          impliedProbability: Math.round(side.bestImplied * 10) / 10,
+          edge: Math.round(side.marketEdge * 10) / 10,
+          booksWithLine: props.length,
+          allBookPrices,
+          score,
+          calculatedAt: now,
+          modelProbability,
+          modelAverage,
+          modelGamesPlayed,
+          modelEdge
+        })
+      }
+    }
+  }
+  
+  // Sort by score (model-first ranking)
+  allRankedProps.sort((a, b) => b.score - a.score)
+  
+  // Filter to only include props with reasonable probability (at least 40%)
+  const viableProps = allRankedProps.filter(p => {
+    const prob = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
+    return prob >= 40
+  })
+  
+  return {
+    bestProp: viableProps[0] || null,
+    runnerUp: viableProps[1] || null,
+    allRankedProps: viableProps.slice(0, 10),
+    calculatedAt: now,
+    propsAnalyzed,
+    propsQualified: viableProps.length,
+    reason: viableProps.length === 0 ? 'No props with sufficient model data or probability' : null
+  }
+}
+
+/**
+ * Format best prop result for Claude's context
+ * 
+ * @param result - The strict-filter best prop result (for single prop recommendations)
+ * @param modelFirstProps - Optional model-first props (for parlays) - uses player stats as primary ranking
+ */
+export function formatBestPropForContext(result: BestPropResult, modelFirstProps?: BestPropResult | null): string {
   const lines: string[] = []
   
   // FIRST: Compact list of TOP 10 props for parlay building
-  // This gives Claude multiple options with model data to choose from
+  // Use MODEL-FIRST props if available (ranked by player stats like Elo for teams)
+  // Otherwise fall back to strict-filter props
+  const parlayProps = modelFirstProps?.allRankedProps && modelFirstProps.allRankedProps.length > 0 
+    ? modelFirstProps.allRankedProps 
+    : result.allRankedProps
+  
   lines.push('=== TOP 10 RANKED PLAYER PROPS (FOR PARLAYS) ===')
   lines.push('INSTRUCTION: For PrizePicks/Underdog/player prop parlays, ONLY pick from this list.')
   lines.push('Each prop includes model probability and edge - use these values in your response.')
+  lines.push('Props are ranked by our player stats model (like Elo for teams).')
   lines.push('')
   
-  if (result.allRankedProps && result.allRankedProps.length > 0) {
-    for (let i = 0; i < result.allRankedProps.length; i++) {
-      const p = result.allRankedProps[i]
+  if (parlayProps && parlayProps.length > 0) {
+    for (let i = 0; i < parlayProps.length; i++) {
+      const p = parlayProps[i]
       const modelProb = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
       const modelEdge = p.modelEdge !== undefined ? p.modelEdge : p.edge
       const gamesPlayed = p.modelGamesPlayed !== undefined ? p.modelGamesPlayed : 0
@@ -2084,6 +2288,60 @@ export async function getCachedBestProp(): Promise<BestPropResult | null> {
     return JSON.parse(data.result) as BestPropResult
   } catch (error) {
     console.error('[getCachedBestProp] Error:', error)
+    return null
+  }
+}
+
+// Cache key for model-first props (for parlays)
+const MODEL_FIRST_PROPS_CACHE_KEY = 'betanalytics:model-first-props'
+
+/**
+ * Cache model-first props result (for parlays)
+ */
+export async function cacheModelFirstProps(result: BestPropResult): Promise<void> {
+  const redis = await getRedisClient()
+  if (!redis) return
+  
+  try {
+    await fetch(`${redis.url}/set/${MODEL_FIRST_PROPS_CACHE_KEY}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(JSON.stringify(result))
+    })
+    
+    await fetch(`${redis.url}/expire/${MODEL_FIRST_PROPS_CACHE_KEY}/${4 * 60 * 60}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    console.log(`[cacheModelFirstProps] Cached ${result.allRankedProps.length} model-first props for parlays`)
+  } catch (error) {
+    console.error('[cacheModelFirstProps] Error:', error)
+  }
+}
+
+/**
+ * Get cached model-first props (for parlays)
+ */
+export async function getCachedModelFirstProps(): Promise<BestPropResult | null> {
+  const redis = await getRedisClient()
+  if (!redis) return null
+  
+  try {
+    const response = await fetch(`${redis.url}/get/${MODEL_FIRST_PROPS_CACHE_KEY}`, {
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    if (!response.ok) return null
+    const data = await response.json()
+    if (!data.result) return null
+    
+    return JSON.parse(data.result) as BestPropResult
+  } catch (error) {
+    console.error('[getCachedModelFirstProps] Error:', error)
     return null
   }
 }
