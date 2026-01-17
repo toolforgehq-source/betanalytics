@@ -81,6 +81,108 @@ const HOME_ADVANTAGE: Record<string, number> = {
 }
 
 // ============================================
+// SPREAD & TOTAL PARAMETERS (Elo → Margin/Points)
+// ============================================
+
+// MARGIN_BETA: Converts Elo difference to expected point margin
+// Formula: expectedMargin = MARGIN_BETA[league] * eloDiff
+// These values are calibrated from historical data:
+// - NFL: 25 Elo points ≈ 1 point margin → beta = 0.04
+// - NBA: 28 Elo points ≈ 1 point margin → beta = 0.036
+// - NHL: 100 Elo points ≈ 1 goal margin → beta = 0.01
+const MARGIN_BETA: Record<string, number> = {
+  'NBA': 0.036,      // 28 Elo pts = 1 point margin
+  'NFL': 0.04,       // 25 Elo pts = 1 point margin
+  'NHL': 0.01,       // 100 Elo pts = 1 goal margin
+  'MLB': 0.008,      // 125 Elo pts = 1 run margin
+  'NCAAB': 0.036,    // Similar to NBA
+  'NCAAF': 0.04,     // Similar to NFL
+  // Soccer - goals are harder to predict
+  'soccer_epl': 0.008,
+  'soccer_spain_la_liga': 0.008,
+  'soccer_germany_bundesliga': 0.008,
+  'soccer_italy_serie_a': 0.008,
+  'soccer_france_ligue_one': 0.008,
+  'soccer_usa_mls': 0.008,
+  'soccer_uefa_champs_league': 0.008,
+}
+
+// MARGIN_SIGMA: Standard deviation of game margins (for Normal distribution)
+// Used to calculate P(cover spread) = 1 - NormalCDF((spread - expectedMargin) / sigma)
+const MARGIN_SIGMA: Record<string, number> = {
+  'NBA': 12.0,       // NBA games have ~12 point std dev in margins
+  'NFL': 13.5,       // NFL games have ~13.5 point std dev
+  'NHL': 1.8,        // NHL games have ~1.8 goal std dev
+  'MLB': 2.5,        // MLB games have ~2.5 run std dev
+  'NCAAB': 11.0,     // College basketball slightly tighter
+  'NCAAF': 16.0,     // College football more variance
+  // Soccer - low scoring, high variance relative to mean
+  'soccer_epl': 1.5,
+  'soccer_spain_la_liga': 1.5,
+  'soccer_germany_bundesliga': 1.6,
+  'soccer_italy_serie_a': 1.4,
+  'soccer_france_ligue_one': 1.5,
+  'soccer_usa_mls': 1.6,
+  'soccer_uefa_champs_league': 1.5,
+}
+
+// TOTAL_BASELINE: Average total points per game (league baseline)
+// Used to estimate expected total from Elo ratings
+const TOTAL_BASELINE: Record<string, number> = {
+  'NBA': 224,        // NBA averages ~224 total points
+  'NFL': 46,         // NFL averages ~46 total points
+  'NHL': 6.0,        // NHL averages ~6 total goals
+  'MLB': 8.5,        // MLB averages ~8.5 total runs
+  'NCAAB': 145,      // College basketball ~145 total
+  'NCAAF': 54,       // College football ~54 total
+  // Soccer - low scoring
+  'soccer_epl': 2.7,
+  'soccer_spain_la_liga': 2.6,
+  'soccer_germany_bundesliga': 3.0,
+  'soccer_italy_serie_a': 2.5,
+  'soccer_france_ligue_one': 2.6,
+  'soccer_usa_mls': 2.8,
+  'soccer_uefa_champs_league': 2.8,
+}
+
+// TOTAL_SIGMA: Standard deviation of total points (for Normal distribution)
+const TOTAL_SIGMA: Record<string, number> = {
+  'NBA': 22,         // NBA totals have ~22 point std dev
+  'NFL': 13,         // NFL totals have ~13 point std dev
+  'NHL': 2.0,        // NHL totals have ~2 goal std dev
+  'MLB': 3.5,        // MLB totals have ~3.5 run std dev
+  'NCAAB': 18,       // College basketball
+  'NCAAF': 15,       // College football
+  // Soccer
+  'soccer_epl': 1.4,
+  'soccer_spain_la_liga': 1.4,
+  'soccer_germany_bundesliga': 1.5,
+  'soccer_italy_serie_a': 1.3,
+  'soccer_france_ligue_one': 1.4,
+  'soccer_usa_mls': 1.5,
+  'soccer_uefa_champs_league': 1.4,
+}
+
+// TOTAL_ELO_FACTOR: How much combined Elo strength affects total
+// Higher combined Elo (both teams strong) → slightly higher scoring
+// Formula: expectedTotal = baseline + TOTAL_ELO_FACTOR * (avgElo - 1500)
+const TOTAL_ELO_FACTOR: Record<string, number> = {
+  'NBA': 0.02,       // 50 Elo above average → +1 point total
+  'NFL': 0.01,       // 100 Elo above average → +1 point total
+  'NHL': 0.002,      // 500 Elo above average → +1 goal total
+  'MLB': 0.003,      // 333 Elo above average → +1 run total
+  'NCAAB': 0.02,
+  'NCAAF': 0.01,
+  'soccer_epl': 0.002,
+  'soccer_spain_la_liga': 0.002,
+  'soccer_germany_bundesliga': 0.002,
+  'soccer_italy_serie_a': 0.002,
+  'soccer_france_ligue_one': 0.002,
+  'soccer_usa_mls': 0.002,
+  'soccer_uefa_champs_league': 0.002,
+}
+
+// ============================================
 // TYPES
 // ============================================
 
@@ -1172,5 +1274,279 @@ export function calculateWinProbabilityWithInjuries(
     awayEffectiveRating: awayEffective.effectiveRating,
     homeAdjustments: homeEffective.adjustments,
     awayAdjustments: awayEffective.adjustments
+  }
+}
+
+// ============================================
+// ELO-BASED SPREAD & TOTAL PREDICTIONS
+// ============================================
+
+/**
+ * Standard Normal CDF approximation (Abramowitz and Stegun)
+ * Used for calculating probabilities from z-scores
+ */
+function normalCDF(x: number): number {
+  const a1 = 0.254829592
+  const a2 = -0.284496736
+  const a3 = 1.421413741
+  const a4 = -1.453152027
+  const a5 = 1.061405429
+  const p = 0.3275911
+
+  const sign = x < 0 ? -1 : 1
+  x = Math.abs(x)
+
+  const t = 1.0 / (1.0 + p * x)
+  const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x)
+
+  return 0.5 * (1.0 + sign * y)
+}
+
+/**
+ * Calculate expected margin of victory from Elo ratings
+ * Positive = home team expected to win by that margin
+ * Negative = away team expected to win by that margin
+ * 
+ * @param homeElo - Home team's Elo rating (can be effective rating with injury adjustments)
+ * @param awayElo - Away team's Elo rating
+ * @param league - League name for sport-specific parameters
+ */
+export function calculateExpectedMargin(
+  homeElo: number,
+  awayElo: number,
+  league: string
+): number {
+  const homeAdvantage = HOME_ADVANTAGE[league] || 70
+  const beta = MARGIN_BETA[league] || 0.03
+  
+  // Elo diff including home advantage
+  const eloDiff = (homeElo + homeAdvantage) - awayElo
+  
+  // Convert to expected margin
+  return beta * eloDiff
+}
+
+/**
+ * Calculate probability of covering a spread using Elo ratings
+ * 
+ * @param homeElo - Home team's Elo rating
+ * @param awayElo - Away team's Elo rating
+ * @param spread - The spread line (negative = home favored, positive = away favored)
+ *                 e.g., -3.5 means home must win by > 3.5 to cover
+ * @param league - League name for sport-specific parameters
+ * @param forHome - If true, calculate P(home covers), else P(away covers)
+ * @returns Probability of covering (0-1)
+ */
+export function calculateSpreadCoverProbability(
+  homeElo: number,
+  awayElo: number,
+  spread: number,
+  league: string,
+  forHome: boolean = true
+): { probability: number; expectedMargin: number; confidence: string } {
+  const sigma = MARGIN_SIGMA[league] || 12
+  const expectedMargin = calculateExpectedMargin(homeElo, awayElo, league)
+  
+  // For home team covering: P(margin > spread)
+  // For away team covering: P(margin < -spread) = P(-margin > spread) = 1 - P(margin > -spread)
+  // Note: spread is from home team's perspective (home -3.5 means home must win by > 3.5)
+  
+  let probability: number
+  if (forHome) {
+    // Home covers if actual margin > spread
+    // P(margin > spread) = 1 - NormalCDF((spread - expectedMargin) / sigma)
+    const zScore = (spread - expectedMargin) / sigma
+    probability = 1 - normalCDF(zScore)
+  } else {
+    // Away covers if actual margin < spread (home doesn't cover)
+    // This is the complement of home covering
+    const zScore = (spread - expectedMargin) / sigma
+    probability = normalCDF(zScore)
+  }
+  
+  // Determine confidence based on how far from 50% the probability is
+  const edgeFromEven = Math.abs(probability - 0.5)
+  let confidence: string
+  if (edgeFromEven > 0.15) {
+    confidence = 'high'
+  } else if (edgeFromEven > 0.08) {
+    confidence = 'medium'
+  } else {
+    confidence = 'low'
+  }
+  
+  return {
+    probability: Math.max(0.01, Math.min(0.99, probability)), // Clamp to avoid extreme values
+    expectedMargin,
+    confidence
+  }
+}
+
+/**
+ * Calculate expected total points from Elo ratings
+ * Uses league baseline + adjustment based on combined team strength
+ * 
+ * @param homeElo - Home team's Elo rating
+ * @param awayElo - Away team's Elo rating
+ * @param league - League name for sport-specific parameters
+ */
+export function calculateExpectedTotal(
+  homeElo: number,
+  awayElo: number,
+  league: string
+): number {
+  const baseline = TOTAL_BASELINE[league] || 200
+  const eloFactor = TOTAL_ELO_FACTOR[league] || 0.01
+  
+  // Average Elo of both teams relative to baseline (1500)
+  const avgElo = (homeElo + awayElo) / 2
+  const eloAboveAverage = avgElo - 1500
+  
+  // Higher combined Elo → slightly higher expected total
+  // (Better teams tend to score more)
+  return baseline + eloFactor * eloAboveAverage
+}
+
+/**
+ * Calculate probability of total going over/under a line using Elo ratings
+ * 
+ * @param homeElo - Home team's Elo rating
+ * @param awayElo - Away team's Elo rating
+ * @param totalLine - The total line (e.g., 224.5)
+ * @param league - League name for sport-specific parameters
+ * @param isOver - If true, calculate P(over), else P(under)
+ * @returns Probability of over/under (0-1)
+ */
+export function calculateTotalProbability(
+  homeElo: number,
+  awayElo: number,
+  totalLine: number,
+  league: string,
+  isOver: boolean = true
+): { probability: number; expectedTotal: number; confidence: string } {
+  const sigma = TOTAL_SIGMA[league] || 15
+  const expectedTotal = calculateExpectedTotal(homeElo, awayElo, league)
+  
+  // P(over) = P(total > line) = 1 - NormalCDF((line - expectedTotal) / sigma)
+  // P(under) = P(total < line) = NormalCDF((line - expectedTotal) / sigma)
+  
+  const zScore = (totalLine - expectedTotal) / sigma
+  let probability: number
+  
+  if (isOver) {
+    probability = 1 - normalCDF(zScore)
+  } else {
+    probability = normalCDF(zScore)
+  }
+  
+  // Determine confidence based on how far from 50% the probability is
+  const edgeFromEven = Math.abs(probability - 0.5)
+  let confidence: string
+  if (edgeFromEven > 0.15) {
+    confidence = 'high'
+  } else if (edgeFromEven > 0.08) {
+    confidence = 'medium'
+  } else {
+    confidence = 'low'
+  }
+  
+  return {
+    probability: Math.max(0.01, Math.min(0.99, probability)), // Clamp to avoid extreme values
+    expectedTotal,
+    confidence
+  }
+}
+
+/**
+ * Get Elo-based spread cover probability by team names
+ * Convenience function that looks up Elo ratings and calculates spread probability
+ */
+export async function getEloSpreadProbabilityByName(
+  league: string,
+  homeTeamName: string,
+  awayTeamName: string,
+  spread: number,
+  forHome: boolean = true
+): Promise<{
+  probability: number
+  expectedMargin: number
+  homeRating: number
+  awayRating: number
+  confidence: string
+} | null> {
+  const eloData = await getEloRatings()
+  if (!eloData) return null
+  
+  // Find teams by name (case-insensitive partial match)
+  const homeKey = Object.keys(eloData.ratings).find(key => {
+    const rating = eloData.ratings[key]
+    return rating.league === league && 
+           rating.teamName.toLowerCase().includes(homeTeamName.toLowerCase())
+  })
+  
+  const awayKey = Object.keys(eloData.ratings).find(key => {
+    const rating = eloData.ratings[key]
+    return rating.league === league && 
+           rating.teamName.toLowerCase().includes(awayTeamName.toLowerCase())
+  })
+  
+  if (!homeKey || !awayKey) return null
+  
+  const homeRating = eloData.ratings[homeKey].rating
+  const awayRating = eloData.ratings[awayKey].rating
+  
+  const result = calculateSpreadCoverProbability(homeRating, awayRating, spread, league, forHome)
+  
+  return {
+    ...result,
+    homeRating,
+    awayRating
+  }
+}
+
+/**
+ * Get Elo-based total probability by team names
+ * Convenience function that looks up Elo ratings and calculates total probability
+ */
+export async function getEloTotalProbabilityByName(
+  league: string,
+  homeTeamName: string,
+  awayTeamName: string,
+  totalLine: number,
+  isOver: boolean = true
+): Promise<{
+  probability: number
+  expectedTotal: number
+  homeRating: number
+  awayRating: number
+  confidence: string
+} | null> {
+  const eloData = await getEloRatings()
+  if (!eloData) return null
+  
+  // Find teams by name (case-insensitive partial match)
+  const homeKey = Object.keys(eloData.ratings).find(key => {
+    const rating = eloData.ratings[key]
+    return rating.league === league && 
+           rating.teamName.toLowerCase().includes(homeTeamName.toLowerCase())
+  })
+  
+  const awayKey = Object.keys(eloData.ratings).find(key => {
+    const rating = eloData.ratings[key]
+    return rating.league === league && 
+           rating.teamName.toLowerCase().includes(awayTeamName.toLowerCase())
+  })
+  
+  if (!homeKey || !awayKey) return null
+  
+  const homeRating = eloData.ratings[homeKey].rating
+  const awayRating = eloData.ratings[awayKey].rating
+  
+  const result = calculateTotalProbability(homeRating, awayRating, totalLine, league, isOver)
+  
+  return {
+    ...result,
+    homeRating,
+    awayRating
   }
 }
