@@ -34,7 +34,8 @@ export interface RankedBet {
   
   // The recommended bet
   team: string
-  betType: 'moneyline'
+  betType: 'moneyline' | 'spread'
+  line?: number  // For spread bets (e.g., -3.5, +7)
   
   // Probability and edge calculations
   consensusProbability: number  // No-vig average across books (market fair value)
@@ -159,6 +160,11 @@ const FALLBACK_PROB_RELAXED = 0.50   // Relaxed probability floor
 
 // Legacy thresholds (for qualified bets - stricter)
 const MIN_EDGE = 0.03             // 3% minimum edge for "qualified" bets
+
+// Spread-specific thresholds (more relaxed since spreads are ~50% probability)
+const MIN_SPREAD_PROBABILITY = 0.48  // 48% minimum for spreads (they're designed to be ~50%)
+const MIN_SPREAD_EDGE = 0.01         // 1% minimum edge for spreads (edges are smaller from line shopping)
+const MIN_SPREAD_ROI = 0.5           // 0.5% minimum ROI for spreads
 
 // Reputable books for consensus calculation (exclude sharp-only books)
 const CONSENSUS_BOOKS = [
@@ -733,6 +739,92 @@ async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedB
     })
   }
   
+  // SPREAD ANALYSIS - uses market consensus (no Elo for cover probability)
+  if (game.spreads && game.spreads.length > 0) {
+    // Group spreads by team and line
+    const spreadLines = new Map<string, { outcome: { name: string; price: number; point: number }; book: string }[]>()
+    
+    for (const spread of game.spreads) {
+      for (const outcome of spread.outcomes) {
+        if (outcome.point !== undefined) {
+          const key = `${outcome.name}|${outcome.point}`
+          if (!spreadLines.has(key)) spreadLines.set(key, [])
+          spreadLines.get(key)!.push({ outcome: { ...outcome, point: outcome.point }, book: spread.bookmaker })
+        }
+      }
+    }
+    
+    // Evaluate each unique spread line
+    spreadLines.forEach((entries, key) => {
+      const [teamName, pointStr] = key.split('|')
+      const point = parseFloat(pointStr)
+      
+      // Find best price across all books
+      const bestEntry = entries.reduce((best, curr) => 
+        curr.outcome.price > best.outcome.price ? curr : best
+      )
+      
+      // Calculate consensus probability using market prices (no Elo for spreads)
+      const consensusProb = calculateSpreadTotalConsensus(
+        entries.map(e => e.outcome),
+        game.spreads.map(s => ({ bookmaker: s.bookmaker, outcomes: s.outcomes.map(o => ({ ...o, point: o.point ?? 0 })) })),
+        teamName,
+        point
+      )
+      
+      // Calculate implied probability from best price
+      const impliedProb = americanToImpliedProbability(bestEntry.outcome.price)
+      
+      // Edge is consensus probability - implied probability (line shopping value)
+      const edge = consensusProb - impliedProb
+      
+      // Calculate EV and ROI
+      const ev = calculateExpectedValue(bestEntry.outcome.price, consensusProb)
+      const roi = calculateROI(ev)
+      
+      // Apply spread-specific thresholds (more relaxed than moneyline)
+      if (consensusProb < MIN_SPREAD_PROBABILITY) return
+      if (edge < MIN_SPREAD_EDGE) return
+      if (ev <= 0) return
+      if (roi < MIN_SPREAD_ROI) return
+      
+      // Check juice constraint
+      if (bestEntry.outcome.price < MAX_JUICE_ODDS) return
+      
+      // Calculate score
+      const score = calculateBetScore(consensusProb, edge, roi)
+      
+      // Collect all book prices for this spread
+      const allBookPrices = entries.map(e => ({
+        book: e.book,
+        price: e.outcome.price,
+        impliedProb: Math.round(americanToImpliedProbability(e.outcome.price) * 1000) / 10
+      }))
+      
+      rankedBets.push({
+        gameId: game.id,
+        sport: game.sport,
+        sportName: game.sportName,
+        homeTeam: game.homeTeam,
+        awayTeam: game.awayTeam,
+        commenceTime: game.commenceTime,
+        team: teamName,
+        betType: 'spread',
+        line: point,
+        consensusProbability: Math.round(consensusProb * 1000) / 10,
+        bestPrice: bestEntry.outcome.price,
+        bestBook: bestEntry.book,
+        impliedProbability: Math.round(impliedProb * 1000) / 10,
+        edge: Math.round(edge * 1000) / 10,
+        expectedValue: Math.round(ev * 100) / 100,
+        roi: Math.round(roi * 100) / 100,
+        allBookPrices,
+        score,
+        calculatedAt: now
+      })
+    })
+  }
+  
   return rankedBets
 }
 
@@ -1111,9 +1203,12 @@ export function formatBestBetForContext(result: BestBetResult): string {
   
   const bet = result.bestBet
   
-  lines.push('BEST BET OF THE DAY:')
-  lines.push(`Team: ${bet.team} (Moneyline)`)
-  lines.push(`Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
+    lines.push('BEST BET OF THE DAY:')
+    const betTypeDisplay = bet.betType === 'spread' && bet.line !== undefined 
+      ? `Spread ${bet.line > 0 ? '+' : ''}${bet.line}` 
+      : 'Moneyline'
+    lines.push(`Team: ${bet.team} (${betTypeDisplay})`)
+    lines.push(`Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
   lines.push(`Sport: ${bet.sportName}`)
   lines.push(`Game Time: ${formatTime(bet.commenceTime)}`)
   lines.push('')
@@ -1188,11 +1283,14 @@ export function formatBestBetForContext(result: BestBetResult): string {
     lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
   }
   
-  if (result.runnerUp) {
-    const ru = result.runnerUp
-    lines.push('')
-    lines.push('RUNNER-UP:')
-    lines.push(`Team: ${ru.team} (Moneyline)`)
+    if (result.runnerUp) {
+      const ru = result.runnerUp
+      const ruBetTypeDisplay = ru.betType === 'spread' && ru.line !== undefined 
+        ? `Spread ${ru.line > 0 ? '+' : ''}${ru.line}` 
+        : 'Moneyline'
+      lines.push('')
+      lines.push('RUNNER-UP:')
+      lines.push(`Team: ${ru.team} (${ruBetTypeDisplay})`)
     lines.push(`Game: ${ru.awayTeam} @ ${ru.homeTeam}`)
     lines.push(`Score: ${ru.score}/100 | Prob: ${ru.consensusProbability}% | ROI: ${ru.roi.toFixed(2)}%`)
   }
