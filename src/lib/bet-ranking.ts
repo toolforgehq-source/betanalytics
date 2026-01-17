@@ -1374,10 +1374,21 @@ export function formatBestBetForContext(result: BestBetResult): string {
   const bet = result.bestBet
   
     lines.push('BEST BET OF THE DAY:')
-    const betTypeDisplay = bet.betType === 'spread' && bet.line !== undefined 
-      ? `Spread ${bet.line > 0 ? '+' : ''}${bet.line}` 
-      : 'Moneyline'
-    lines.push(`Team: ${bet.team} (${betTypeDisplay})`)
+    // Format bet type display based on bet type
+    let betTypeDisplay: string
+    let teamDisplay: string
+    if (bet.betType === 'total' && bet.line !== undefined) {
+      // For totals, show "Over/Under LINE" with the game
+      betTypeDisplay = `${bet.team} ${bet.line}`
+      teamDisplay = `${bet.awayTeam} @ ${bet.homeTeam} — ${bet.team} ${bet.line}`
+    } else if (bet.betType === 'spread' && bet.line !== undefined) {
+      betTypeDisplay = `Spread ${bet.line > 0 ? '+' : ''}${bet.line}`
+      teamDisplay = `${bet.team} (${betTypeDisplay})`
+    } else {
+      betTypeDisplay = 'Moneyline'
+      teamDisplay = `${bet.team} (${betTypeDisplay})`
+    }
+    lines.push(`Pick: ${teamDisplay}`)
     lines.push(`Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
   lines.push(`Sport: ${bet.sportName}`)
   lines.push(`Game Time: ${formatTime(bet.commenceTime)}`)
@@ -1392,37 +1403,69 @@ export function formatBestBetForContext(result: BestBetResult): string {
   const modelProbPercent = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
   const modelSource = bet.eloProbability !== undefined ? 'Elo Model' : 'Market Consensus'
   
+  // Determine probability label based on bet type
+  const isTotal = bet.betType === 'total'
+  const isSpread = bet.betType === 'spread'
+  const probLabel = isTotal 
+    ? `probability the total goes ${bet.team}` 
+    : isSpread 
+      ? `probability ${bet.team} covers the spread`
+      : 'win probability'
+  
   // 1. LEAD WITH THE EDGE - This is why the bet is valuable (most important)
   lines.push('=== THE EDGE (Why This Bet Has Value) ===')
   if (bet.eloProbability !== undefined) {
-    lines.push(`Our Elo Model: ${bet.eloProbability}% win probability`)
+    lines.push(`Our Elo Model: ${bet.eloProbability}% ${probLabel}`)
     lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-    lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing this team)`)
-    lines.push('')
-    lines.push(`This is a significant market inefficiency - our model based on ${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data sees this team as stronger than the betting market thinks.`)
+    if (isTotal) {
+      lines.push(`EDGE FOUND: +${bet.edge}% (Market is underpricing the ${bet.team})`)
+      lines.push('')
+      lines.push(`This is a significant market inefficiency - our model based on ${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data sees the ${bet.team} as more likely than the betting market thinks.`)
+    } else if (isSpread) {
+      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing ${bet.team}'s ability to cover)`)
+      lines.push('')
+      lines.push(`This is a significant market inefficiency - our model based on ${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data sees ${bet.team} covering as more likely than the market thinks.`)
+    } else {
+      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing this team)`)
+      lines.push('')
+      lines.push(`This is a significant market inefficiency - our model based on ${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data sees this team as stronger than the betting market thinks.`)
+    }
   } else {
-    lines.push(`Market Consensus: ${bet.consensusProbability}% win probability`)
+    lines.push(`Market Consensus: ${bet.consensusProbability}% ${probLabel}`)
     lines.push(`Best Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
     lines.push(`EDGE: +${bet.edge}% vs market`)
   }
   lines.push('')
   
-  // 2. MATCHUP ANALYSIS - Elo ratings and context
+  // 2. MATCHUP ANALYSIS - Elo ratings and context (different for totals vs moneyline/spread)
   lines.push('=== MATCHUP ANALYSIS ===')
   if (bet.homeElo && bet.awayElo) {
-    lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo})`)
-    const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
-    lines.push(`Elo Difference: ${eloDiff} points`)
-    lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+    if (isTotal) {
+      // For totals, show combined scoring context instead of head-to-head
+      const avgElo = Math.round((bet.homeElo + bet.awayElo) / 2)
+      lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
+      lines.push(`Combined Elo Strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo})`)
+      lines.push(`Market Total Line: ${bet.line}`)
+      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+      lines.push('')
+      lines.push(`Our model uses combined team strength to estimate expected total scoring. Higher combined Elo suggests more total points.`)
+    } else {
+      // For moneyline/spread, show head-to-head comparison
+      lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo})`)
+      const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
+      const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
+      lines.push(`Elo Difference: ${eloDiff} points favoring ${favoredTeam}`)
+      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+    }
   } else {
     lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
     lines.push('Elo ratings not available - using market consensus')
   }
   lines.push('')
   
-  // 3. VALUE METRICS - EV, ROI, Win Probability
+  // 3. VALUE METRICS - EV, ROI, Probability
   lines.push('=== VALUE METRICS ===')
-  lines.push(`- Win Probability: ${modelProbPercent}% (${modelSource})`)
+  lines.push(`- ${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
   lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
   lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
   lines.push(`- Edge: ${bet.edge}%`)
@@ -1443,7 +1486,8 @@ export function formatBestBetForContext(result: BestBetResult): string {
   const edgePercent = bet.edge
   const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
   
-  lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${modelProbPercent}% win probability)`)
+  const probScoreLabel = isTotal ? `${bet.team} probability` : isSpread ? 'cover probability' : 'win probability'
+  lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${modelProbPercent}% ${probScoreLabel})`)
   lines.push(`- ROI Score: ${roiScore.toFixed(1)}/35 points (${roi.toFixed(2)}% expected return)`)
   lines.push(`- Edge Score: ${edgeScore.toFixed(1)}/20 points (${edgePercent}% edge vs market)`)
   lines.push('')
@@ -1455,12 +1499,22 @@ export function formatBestBetForContext(result: BestBetResult): string {
   
     if (result.runnerUp) {
       const ru = result.runnerUp
-      const ruBetTypeDisplay = ru.betType === 'spread' && ru.line !== undefined 
-        ? `Spread ${ru.line > 0 ? '+' : ''}${ru.line}` 
-        : 'Moneyline'
+      // Format runner-up bet type display
+      let ruBetTypeDisplay: string
+      let ruTeamDisplay: string
+      if (ru.betType === 'total' && ru.line !== undefined) {
+        ruBetTypeDisplay = `${ru.team} ${ru.line}`
+        ruTeamDisplay = `${ru.awayTeam} @ ${ru.homeTeam} — ${ru.team} ${ru.line}`
+      } else if (ru.betType === 'spread' && ru.line !== undefined) {
+        ruBetTypeDisplay = `Spread ${ru.line > 0 ? '+' : ''}${ru.line}`
+        ruTeamDisplay = `${ru.team} (${ruBetTypeDisplay})`
+      } else {
+        ruBetTypeDisplay = 'Moneyline'
+        ruTeamDisplay = `${ru.team} (${ruBetTypeDisplay})`
+      }
       lines.push('')
       lines.push('RUNNER-UP:')
-      lines.push(`Team: ${ru.team} (${ruBetTypeDisplay})`)
+      lines.push(`Pick: ${ruTeamDisplay}`)
     lines.push(`Game: ${ru.awayTeam} @ ${ru.homeTeam}`)
     lines.push(`Score: ${ru.score}/100 | Prob: ${ru.consensusProbability}% | ROI: ${ru.roi.toFixed(2)}%`)
   }
