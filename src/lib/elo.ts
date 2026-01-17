@@ -1331,8 +1331,9 @@ export function calculateExpectedMargin(
  * 
  * @param homeElo - Home team's Elo rating
  * @param awayElo - Away team's Elo rating
- * @param spread - The spread line (negative = home favored, positive = away favored)
- *                 e.g., -3.5 means home must win by > 3.5 to cover
+ * @param spread - The spread line FROM HOME TEAM'S PERSPECTIVE
+ *                 e.g., -3.5 means home is favored by 3.5 (must win by > 3.5 to cover)
+ *                 e.g., +3.5 means home is underdog by 3.5 (can lose by up to 3 and cover)
  * @param league - League name for sport-specific parameters
  * @param forHome - If true, calculate P(home covers), else P(away covers)
  * @returns Probability of covering (0-1)
@@ -1347,20 +1348,27 @@ export function calculateSpreadCoverProbability(
   const sigma = MARGIN_SIGMA[league] || 12
   const expectedMargin = calculateExpectedMargin(homeElo, awayElo, league)
   
-  // For home team covering: P(margin > spread)
-  // For away team covering: P(margin < -spread) = P(-margin > spread) = 1 - P(margin > -spread)
-  // Note: spread is from home team's perspective (home -3.5 means home must win by > 3.5)
+  // SPREAD SEMANTICS (from home team's perspective):
+  // - Home -3.5: Home must win by > 3.5 to cover → P(margin > 3.5)
+  // - Home +3.5: Home can lose by up to 3 and cover → P(margin > -3.5)
+  // 
+  // The threshold for home covering is: -spread
+  // (If spread is -3.5, threshold is 3.5; if spread is +3.5, threshold is -3.5)
+  //
+  // For away covering: it's the complement of home covering
+  
+  const threshold = -spread  // Convert spread to threshold
   
   let probability: number
   if (forHome) {
-    // Home covers if actual margin > spread
-    // P(margin > spread) = 1 - NormalCDF((spread - expectedMargin) / sigma)
-    const zScore = (spread - expectedMargin) / sigma
+    // Home covers if actual margin > threshold
+    // P(margin > threshold) = 1 - NormalCDF((threshold - expectedMargin) / sigma)
+    const zScore = (threshold - expectedMargin) / sigma
     probability = 1 - normalCDF(zScore)
   } else {
-    // Away covers if actual margin < spread (home doesn't cover)
-    // This is the complement of home covering
-    const zScore = (spread - expectedMargin) / sigma
+    // Away covers if home doesn't cover (margin <= threshold)
+    // P(margin <= threshold) = NormalCDF((threshold - expectedMargin) / sigma)
+    const zScore = (threshold - expectedMargin) / sigma
     probability = normalCDF(zScore)
   }
   
