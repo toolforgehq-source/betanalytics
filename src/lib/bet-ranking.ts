@@ -168,6 +168,10 @@ const MIN_SPREAD_PROBABILITY = 0.48  // 48% minimum for spreads (they're designe
 const MIN_SPREAD_EDGE = 0.01         // 1% minimum edge for spreads (edges are smaller from line shopping)
 const MIN_SPREAD_ROI = 0.5           // 0.5% minimum ROI for spreads
 
+// SANITY CHECK: Maximum edge threshold - edges > 25% are almost certainly calculation errors
+// Real market inefficiencies rarely exceed 5-10%, and even sharp bettors rarely find 15%+ edges
+const MAX_SANE_EDGE = 0.25           // 25% maximum edge - anything higher is flagged as suspicious
+
 // Reputable books for consensus calculation (exclude sharp-only books)
 const CONSENSUS_BOOKS = [
   'DraftKings', 'FanDuel', 'BetMGM', 'Caesars', 'PointsBet',
@@ -804,6 +808,12 @@ async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedB
       if (ev <= 0) return
       if (roi < MIN_SPREAD_ROI) return
       
+      // SANITY CHECK: Reject bets with impossibly large edges (likely calculation errors)
+      if (edge > MAX_SANE_EDGE) {
+        console.warn(`[analyzeGame] SANITY CHECK FAILED: ${teamName} spread ${point} has edge ${(edge * 100).toFixed(1)}% > 25% max. Skipping.`)
+        return
+      }
+      
       // Check juice constraint
       if (bestEntry.outcome.price < MAX_JUICE_ODDS) return
       
@@ -894,7 +904,10 @@ async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedB
         const roi = calculateROI(ev)
         
         // Apply total-specific thresholds (same as spread)
-        if (eloOverProb >= MIN_SPREAD_PROBABILITY && edge >= MIN_SPREAD_EDGE && ev > 0 && roi >= MIN_SPREAD_ROI) {
+        // SANITY CHECK: Reject bets with impossibly large edges (likely calculation errors)
+        if (edge > MAX_SANE_EDGE) {
+          console.warn(`[analyzeGame] SANITY CHECK FAILED: Over ${line} has edge ${(edge * 100).toFixed(1)}% > 25% max. Skipping.`)
+        } else if (eloOverProb >= MIN_SPREAD_PROBABILITY && edge >= MIN_SPREAD_EDGE && ev > 0 && roi >= MIN_SPREAD_ROI) {
           if (bestOverEntry.outcome.price >= MAX_JUICE_ODDS) {
             const score = calculateBetScore(eloOverProb, edge, roi)
             
@@ -954,7 +967,10 @@ async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedB
         const roi = calculateROI(ev)
         
         // Apply total-specific thresholds
-        if (eloUnderProb >= MIN_SPREAD_PROBABILITY && edge >= MIN_SPREAD_EDGE && ev > 0 && roi >= MIN_SPREAD_ROI) {
+        // SANITY CHECK: Reject bets with impossibly large edges (likely calculation errors)
+        if (edge > MAX_SANE_EDGE) {
+          console.warn(`[analyzeGame] SANITY CHECK FAILED: Under ${line} has edge ${(edge * 100).toFixed(1)}% > 25% max. Skipping.`)
+        } else if (eloUnderProb >= MIN_SPREAD_PROBABILITY && edge >= MIN_SPREAD_EDGE && ev > 0 && roi >= MIN_SPREAD_ROI) {
           if (bestUnderEntry.outcome.price >= MAX_JUICE_ODDS) {
             const score = calculateBetScore(eloUnderProb, edge, roi)
             
