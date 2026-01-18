@@ -169,12 +169,19 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
 }
 
 /**
- * Check if cached best bet result is valid (has required fields)
+ * Check if cached best bet result is valid (has required fields AND has games)
+ * A cached result with 0 games analyzed is NOT valid - we should recompute
  */
 function isValidBestBetResult(result: BestBetResult | null): result is BestBetResult {
   if (!result) return false
   if (typeof result.gamesAnalyzed !== 'number') return false
   if (typeof result.gamesQualified !== 'number') return false
+  // CRITICAL: Don't use cached results with 0 games - this indicates a transient fetch failure
+  // or a stale cache from when no games were available. Always recompute in this case.
+  if (result.gamesAnalyzed === 0) {
+    console.log('[isValidBestBetResult] Rejecting cached result with 0 games analyzed - will recompute')
+    return false
+  }
   return true
 }
 
