@@ -15,6 +15,8 @@
  */
 
 import type { Game } from './odds'
+import type { EnrichedGame } from './combined-data'
+import type { ESPNInjury } from './espn'
 import { getPlayerPropProbability, getPlayerStatsData, type PlayerStats } from './player-stats'
 import { trackBestBet, trackParlay, trackSportBet, trackPropBet } from './recommendation-tracking'
 import { 
@@ -193,6 +195,79 @@ const SPORT_TO_ELO_LEAGUE: Record<string, string> = {
   'soccer_france_ligue_one': 'soccer_france_ligue_one',
   'soccer_usa_mls': 'soccer_usa_mls',
   'soccer_uefa_champs_league': 'soccer_uefa_champs_league',
+}
+
+/**
+ * Convert ESPN injury data to InjuryInfo format for Elo calculations
+ */
+function convertESPNInjuriesToInjuryInfo(espnInjuries: ESPNInjury[]): InjuryInfo[] {
+  return espnInjuries.map(injury => ({
+    player: injury.player,
+    team: injury.team,
+    status: injury.status,
+    details: injury.details
+  }))
+}
+
+/**
+ * Normalize team name for matching (handles "Denver Nuggets" vs "Nuggets" vs "Denver")
+ */
+function normalizeTeamName(name: string): string {
+  return name.toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .trim()
+}
+
+/**
+ * Check if two team names match (fuzzy matching)
+ */
+function teamsMatch(team1: string, team2: string): boolean {
+  const n1 = normalizeTeamName(team1)
+  const n2 = normalizeTeamName(team2)
+  return n1.includes(n2) || n2.includes(n1) || n1 === n2
+}
+
+/**
+ * Check if a team has a star player OUT
+ * Returns the name of the OUT star player if found, null otherwise
+ * 
+ * A "star player" is defined as one of the top 3 scorers on the team
+ * This prevents recommending bets on teams missing key players like Jokic, LeBron, etc.
+ */
+async function getStarPlayerOut(
+  teamName: string, 
+  sport: string, 
+  injuries: InjuryInfo[]
+): Promise<string | null> {
+  try {
+    // Get top scorers for the team
+    const topScorers = await getTopScorersForTeam(teamName, sport)
+    if (topScorers.length === 0) {
+      return null
+    }
+    
+    // Check if any top scorer is OUT
+    for (const scorer of topScorers) {
+      const matchingInjury = injuries.find(inj => {
+        const nameMatch = normalizeTeamName(inj.player).includes(normalizeTeamName(scorer.playerName)) ||
+                          normalizeTeamName(scorer.playerName).includes(normalizeTeamName(inj.player))
+        const teamMatch = teamsMatch(inj.team, teamName)
+        const isOut = inj.status.toLowerCase() === 'out' || 
+                      inj.status.toLowerCase().includes('out for') ||
+                      inj.status.toLowerCase() === 'doubtful'
+        return nameMatch && teamMatch && isOut
+      })
+      
+      if (matchingInjury) {
+        return matchingInjury.player
+      }
+    }
+    
+    return null
+  } catch (error) {
+    console.error('[getStarPlayerOut] Error:', error)
+    return null
+  }
 }
 
 /**
@@ -1130,6 +1205,9 @@ function passesFilters(
  * Compute the Best Bet of the Day from all available games
  * Uses the NEW UNIFIED SCORING SYSTEM with progressive fallback
  * 
+ * IMPORTANT: Now filters out bets where the recommended team has a star player OUT
+ * This prevents recommending teams missing key players like Jokic, LeBron, etc.
+ * 
  * This is the main entry point - call this on each cron refresh
  */
 export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
@@ -1139,7 +1217,18 @@ export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
   
   // Analyze all games (now async to fetch Elo data)
   for (const game of games) {
-    const bets = await analyzeGame(game)
+    // Extract injury data from enriched game (if available)
+    const enrichedGame = game as EnrichedGame
+    const espnInjuries = enrichedGame.espnData?.injuries || []
+    const injuries = convertESPNInjuriesToInjuryInfo(espnInjuries)
+    
+    // Log injury data for debugging
+    if (injuries.length > 0) {
+      console.log(`[computeBestBets] ${game.homeTeam} vs ${game.awayTeam}: ${injuries.length} injuries found`)
+      injuries.forEach(inj => console.log(`  - ${inj.player} (${inj.team}): ${inj.status}`))
+    }
+    
+    const bets = await analyzeGame(game, injuries)
     allRankedBets.push(...bets)
     
     // Also collect unfiltered bets for fallback/scoring
@@ -1147,8 +1236,31 @@ export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
     allUnfilteredBets.push(...unfilteredBets)
   }
   
+  // ============================================
+  // STAR PLAYER OUT FILTER
+  // ============================================
+  // Filter out bets where the recommended team has a star player OUT
+  // This is a hard disqualifier - we don't want to recommend betting on
+  // teams missing their best players (e.g., Jokic, LeBron, etc.)
+  const filteredRankedBets: RankedBet[] = []
+  for (const bet of allRankedBets) {
+    // Only check moneyline bets for star player injuries (spread/total are less affected)
+    if (bet.betType === 'moneyline') {
+      const enrichedGame = games.find(g => g.id === bet.gameId) as EnrichedGame | undefined
+      const espnInjuries = enrichedGame?.espnData?.injuries || []
+      const injuries = convertESPNInjuriesToInjuryInfo(espnInjuries)
+      
+      const starOut = await getStarPlayerOut(bet.team, bet.sport, injuries)
+      if (starOut) {
+        console.log(`[computeBestBets] DISQUALIFIED: ${bet.team} ML - star player ${starOut} is OUT`)
+        continue // Skip this bet
+      }
+    }
+    filteredRankedBets.push(bet)
+  }
+  
   // Sort ranked bets by score (desc), then by game time (asc) for stable tiebreaker
-  allRankedBets.sort((a, b) => {
+  filteredRankedBets.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
@@ -1159,8 +1271,8 @@ export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   
-  const bestBet = allRankedBets[0] || null
-  const runnerUp = allRankedBets[1] || null
+  const bestBet = filteredRankedBets[0] || null
+  const runnerUp = filteredRankedBets[1] || null
   
   let reason: string | null = null
   if (!bestBet) {
@@ -1222,10 +1334,10 @@ export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
   return {
     bestBet,
     runnerUp,
-    allRankedBets: allRankedBets.slice(0, 10),
+    allRankedBets: filteredRankedBets.slice(0, 10),
     calculatedAt: now,
     gamesAnalyzed: games.length,
-    gamesQualified: allRankedBets.length,
+    gamesQualified: filteredRankedBets.length,
     reason,
     closestMisses,
     mostLikelyWinners
