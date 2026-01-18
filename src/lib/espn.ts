@@ -301,11 +301,21 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
 
 /**
  * Get date string in YYYYMMDD format for ESPN API
+ * IMPORTANT: Uses ET timezone to match how games are displayed and filtered
+ * This ensures consistency between ESPN fetch and isGameToday() filter
  */
 function getESPNDateString(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
+  // Use ET timezone for consistency with game filtering
+  const etFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  })
+  const parts = etFormatter.formatToParts(date)
+  const year = parts.find(p => p.type === 'year')?.value || ''
+  const month = parts.find(p => p.type === 'month')?.value || ''
+  const day = parts.find(p => p.type === 'day')?.value || ''
   return `${year}${month}${day}`
 }
 
