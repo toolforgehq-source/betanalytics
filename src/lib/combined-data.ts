@@ -124,13 +124,18 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
   // ESPN typically shows DraftKings odds, but we duplicate for FanDuel to enable consensus
   const bookmakers = ['DraftKings', 'FanDuel']
   
-  const spreadValue = espnOdds.spread ?? 0
+  // SPREAD SIGN CONVENTION:
+  // - Favorite team gets NEGATIVE spread (e.g., -6.5 means must win by > 6.5)
+  // - Underdog team gets POSITIVE spread (e.g., +6.5 means can lose by up to 6)
+  // ESPN's spread value is typically unsigned, so we apply sign based on homeFavorite flag
+  const spreadMagnitude = Math.abs(espnOdds.spread ?? 0)
   const spreads = espnOdds.spread !== null ? bookmakers.map(bookmaker => ({
     bookmaker,
     market: 'spreads',
     outcomes: [
-      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: espnOdds.homeFavorite ? spreadValue : -spreadValue },
-      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: espnOdds.homeFavorite ? -spreadValue : spreadValue }
+      // If home is favorite, home gets negative spread; if away is favorite, home gets positive spread
+      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: espnOdds.homeFavorite ? -spreadMagnitude : spreadMagnitude },
+      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: espnOdds.homeFavorite ? spreadMagnitude : -spreadMagnitude }
     ]
   })) : []
   
