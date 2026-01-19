@@ -669,6 +669,19 @@ function extractMessageContent(content: unknown): string {
   return ''
 }
 
+// Sport keywords to filter games by sport mentioned in the query
+const SPORT_KEYWORDS: Record<string, string[]> = {
+  'NBA': ['nba', 'basketball'],
+  'NFL': ['nfl', 'football'],
+  'NHL': ['nhl', 'hockey'],
+  'MLB': ['mlb', 'baseball'],
+  'NCAAB': ['ncaab', 'college basketball', 'march madness'],
+  'NCAAF': ['ncaaf', 'college football', 'cfp', 'playoff'],
+}
+
+// Common stopwords to exclude from matching
+const STOPWORDS = new Set(['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'has', 'have', 'been', 'will', 'more', 'when', 'who', 'what', 'want', 'bet', 'game', 'pick', 'play', 'take', 'like', 'think', 'should', 'would', 'could'])
+
 /**
  * Detect if the user is asking about a specific game and find the matching game
  * Returns the game if found, null otherwise
@@ -694,43 +707,62 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
     return null
   }
   
+  // Detect sport hint from the message (e.g., "football" -> NFL/NCAAF)
+  const sportHintLeagues: string[] = []
+  for (const [league, keywords] of Object.entries(SPORT_KEYWORDS)) {
+    if (keywords.some(kw => normalizedMessage.includes(kw))) {
+      sportHintLeagues.push(league)
+    }
+  }
+  
   // Get ESPN odds data to find matching games
   const espnOddsData = await getCachedESPNOdds()
   if (!espnOddsData?.games || espnOddsData.games.length === 0) {
     return null
   }
   
-  // Normalize team name for matching
-  const normalizeTeam = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '')
+  // Filter games by sport hint if provided
+  let candidateGames = espnOddsData.games
+  if (sportHintLeagues.length > 0) {
+    candidateGames = espnOddsData.games.filter(g => sportHintLeagues.includes(g.league))
+    console.log(`[detectGameQuestion] Sport hint detected: ${sportHintLeagues.join(', ')}. Filtered to ${candidateGames.length} games.`)
+  }
+  
+  // Normalize team name for matching - extract meaningful tokens
+  const normalizeTeam = (name: string) => name.toLowerCase().replace(/[^a-z0-9\s]/g, '')
+  const getTeamTokens = (name: string) => normalizeTeam(name).split(/\s+/).filter(t => t.length >= 4 && !STOPWORDS.has(t))
+  
+  // Get message tokens (words with 4+ chars, excluding stopwords)
+  const messageTokens = normalizedMessage.split(/\s+/).filter(w => w.length >= 4 && !STOPWORDS.has(w))
   
   // Track single-team matches for fallback
   const singleTeamMatches: typeof espnOddsData.games = []
   
   // Try to find a matching game
-  for (const espnGame of espnOddsData.games) {
-    const homeNorm = normalizeTeam(espnGame.homeTeam)
-    const awayNorm = normalizeTeam(espnGame.awayTeam)
-    const messageNorm = normalizeTeam(userMessage)
+  for (const espnGame of candidateGames) {
+    const homeTokens = getTeamTokens(espnGame.homeTeam)
+    const awayTokens = getTeamTokens(espnGame.awayTeam)
     
-    // Check if both teams are mentioned in the message
-    const homeMatch = messageNorm.includes(homeNorm) || homeNorm.includes(messageNorm.split(/\s+/).find(w => homeNorm.includes(w) && w.length > 3) || '')
-    const awayMatch = messageNorm.includes(awayNorm) || awayNorm.includes(messageNorm.split(/\s+/).find(w => awayNorm.includes(w) && w.length > 3) || '')
+    // Check for token matches (exact match or one contains the other, both must be 4+ chars)
+    const tokenMatches = (teamTokens: string[]) => {
+      return teamTokens.some(tt => 
+        messageTokens.some(mt => 
+          tt === mt || // exact match
+          (tt.length >= 4 && mt.length >= 4 && (tt.includes(mt) || mt.includes(tt))) // substring match only if both are 4+ chars
+        )
+      )
+    }
     
-    // Also check for partial matches (e.g., "Miami" matches "Miami Heat")
-    const homeWords = espnGame.homeTeam.toLowerCase().split(/\s+/)
-    const awayWords = espnGame.awayTeam.toLowerCase().split(/\s+/)
-    const messageWords = userMessage.toLowerCase().split(/\s+/)
-    
-    const homePartialMatch = homeWords.some(hw => hw.length > 3 && messageWords.some(mw => mw.includes(hw) || hw.includes(mw)))
-    const awayPartialMatch = awayWords.some(aw => aw.length > 3 && messageWords.some(mw => mw.includes(aw) || aw.includes(mw)))
+    const homeMatch = tokenMatches(homeTokens)
+    const awayMatch = tokenMatches(awayTokens)
     
     // Track single-team matches for fallback
-    if ((homeMatch || homePartialMatch) || (awayMatch || awayPartialMatch)) {
+    if (homeMatch || awayMatch) {
       singleTeamMatches.push(espnGame)
     }
     
     // Two-team match is preferred
-    if ((homeMatch || homePartialMatch) && (awayMatch || awayPartialMatch)) {
+    if (homeMatch && awayMatch) {
       // Convert ESPN game to Game format for analysis
       const sportKeyMap: Record<string, string> = {
         'NBA': 'basketball_nba',
