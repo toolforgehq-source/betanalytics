@@ -66,7 +66,7 @@ const RECENCY_DECAY: Record<string, number> = {
 const HOME_ADVANTAGE: Record<string, number> = {
   'NBA': 100,
   'NFL': 48,      // ~2.5 points spread equivalent
-  'NHL': 60,
+  'NHL': 30,      // ~54-55% home win rate, ~0.3 goals expected margin
   'MLB': 40,
   'NCAAB': 100,
   'NCAAF': 80,

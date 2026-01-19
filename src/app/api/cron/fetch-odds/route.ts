@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server"
 import { type Game } from "@/lib/odds"
-import { fetchAllESPNOdds, cacheESPNOdds, type ESPNOdds } from "@/lib/espn"
+import { fetchAllESPNOdds, cacheESPNOdds, fetchAllESPNData, type ESPNOdds, type ESPNInjury } from "@/lib/espn"
 import { 
   computeBestBets, 
   cacheBestBet, 
@@ -10,6 +10,13 @@ import {
   cacheSportBets
 } from "@/lib/bet-ranking"
 import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
+
+// Extended Game type with ESPN data for injury support
+interface EnrichedGame extends Game {
+  espnData?: {
+    injuries: ESPNInjury[]
+  }
+}
 
 /**
  * Get today's date string in ET timezone (America/New_York)
@@ -32,6 +39,16 @@ function isGameToday(commenceTime: string): boolean {
  */
 function filterGamesToday<T extends { commenceTime: string }>(games: T[]): T[] {
   return games.filter(game => isGameToday(game.commenceTime))
+}
+
+/**
+ * Normalize team name for matching between ESPN odds and ESPN data
+ */
+function normalizeTeamName(name: string): string {
+  return name.toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9 ]/g, '')
+    .trim()
 }
 
 /**
@@ -129,18 +146,60 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
     
-        console.log("[fetch-odds] Starting ESPN odds fetch (FREE)...")
+    console.log("[fetch-odds] Starting ESPN odds fetch (FREE)...")
     
-        const espnOddsData = await fetchAllESPNOdds()
+    // Fetch both ESPN odds and ESPN data (with injuries) in parallel
+    const [espnOddsData, espnData] = await Promise.all([
+      fetchAllESPNOdds(),
+      fetchAllESPNData()
+    ])
     
-        console.log(`Fetched ${espnOddsData.games.length} games with odds from ESPN at ${espnOddsData.lastUpdated}`)
+    console.log(`Fetched ${espnOddsData.games.length} games with odds from ESPN at ${espnOddsData.lastUpdated}`)
+    console.log(`Fetched ${espnData.games.length} games with injury data from ESPN`)
     
-        // Cache ESPN odds to Redis for persistence across serverless invocations
-        await cacheESPNOdds(espnOddsData)
-        console.log(`[fetch-odds] Cached ESPN odds to Redis`)
+    // Cache ESPN odds to Redis for persistence across serverless invocations
+    await cacheESPNOdds(espnOddsData)
+    console.log(`[fetch-odds] Cached ESPN odds to Redis`)
     
-    // Convert ESPN odds to Game format for best bet computation
-    const allGames = espnOddsData.games.map(espnOdds => convertESPNOddsToGame(espnOdds))
+    // Convert ESPN odds to Game format and enrich with injury data
+    const allGames: EnrichedGame[] = espnOddsData.games.map(espnOdds => {
+      const game = convertESPNOddsToGame(espnOdds)
+      
+      // Find matching ESPN game data (which has injuries)
+      const matchingEspnGame = espnData.games.find(eg => {
+        const oddsHome = normalizeTeamName(espnOdds.homeTeam)
+        const oddsAway = normalizeTeamName(espnOdds.awayTeam)
+        const espnHome = normalizeTeamName(eg.homeTeam.name)
+        const espnAway = normalizeTeamName(eg.awayTeam.name)
+        
+        // Check for exact or partial matches
+        const homeMatch = oddsHome === espnHome || 
+          oddsHome.includes(espnHome) || espnHome.includes(oddsHome) ||
+          oddsHome.split(' ').some(word => espnHome.includes(word) && word.length > 3)
+        const awayMatch = oddsAway === espnAway || 
+          oddsAway.includes(espnAway) || espnAway.includes(oddsAway) ||
+          oddsAway.split(' ').some(word => espnAway.includes(word) && word.length > 3)
+        
+        return homeMatch && awayMatch
+      })
+      
+      // Attach injury data if found
+      if (matchingEspnGame && matchingEspnGame.injuries.length > 0) {
+        console.log(`[fetch-odds] Found ${matchingEspnGame.injuries.length} injuries for ${espnOdds.homeTeam} vs ${espnOdds.awayTeam}`)
+        return {
+          ...game,
+          espnData: {
+            injuries: matchingEspnGame.injuries
+          }
+        }
+      }
+      
+      return game
+    })
+    
+    // Count games with injuries attached
+    const gamesWithInjuries = allGames.filter(g => g.espnData?.injuries?.length).length
+    console.log(`[fetch-odds] Attached injuries to ${gamesWithInjuries} games`)
     
     // Filter to TODAY's games only (ET timezone) for "best bet today"
     // This ensures when users ask "What's the best bet today?" they get a game happening TODAY
