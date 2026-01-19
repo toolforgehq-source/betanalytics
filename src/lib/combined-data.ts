@@ -39,6 +39,7 @@ import {
 } from './bet-ranking'
 import type { ESPNOdds } from './espn'
 import { getTrackRecord, formatTrackRecordForContext } from './pick-tracking'
+import { getEloRatings } from './elo'
 
 export interface EnrichedGame extends Game {
   espnData?: {
@@ -410,9 +411,9 @@ export async function formatCombinedDataForContext(): Promise<string> {
     .filter(g => ['NFL', 'NCAAF', 'MLB', 'MLS', 'English Premier League', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1'].includes(g.league))
     .map(g => ({ id: g.gameId, homeTeam: g.homeTeam, awayTeam: g.awayTeam, sport: g.league }))
   
-  // Fetch weather, soccer stats, best bet, parlay, sport bets, best prop, model-first props, and track record in parallel
+  // Fetch weather, soccer stats, best bet, parlay, sport bets, best prop, model-first props, track record, and Elo ratings in parallel
   // NOTE: Line movement is now computed from ESPN odds snapshots (handled by cron job)
-  const [weatherMap, soccerStats, cachedBestBet, cachedParlay, cachedSportBets, cachedBestProp, cachedModelFirstProps, trackRecord] = await Promise.all([
+  const [weatherMap, soccerStats, cachedBestBet, cachedParlay, cachedSportBets, cachedBestProp, cachedModelFirstProps, trackRecord, eloData] = await Promise.all([
     getWeatherForGames(outdoorGames).catch(() => new Map()),
     getCachedSoccerStats().catch(() => ({ leagues: [], lastUpdated: new Date().toISOString(), error: 'Failed to fetch' })),
     getCachedBestBet().catch(() => null),
@@ -420,8 +421,12 @@ export async function formatCombinedDataForContext(): Promise<string> {
     getCachedSportBets().catch(() => null),
     getCachedBestProp().catch(() => null),
     getCachedModelFirstProps().catch(() => null),
-    getTrackRecord().catch(() => null)
+    getTrackRecord().catch(() => null),
+    getEloRatings().catch(() => null)
   ])
+  
+  // Convert Elo data to the format expected by formatESPNOddsForContext
+  const eloRatingsMap = eloData?.ratings ?? null
   
   // Best bets: use cached data if valid, otherwise compute on-demand from ESPN odds
   let bestBetResult: BestBetResult | null = null
@@ -521,7 +526,8 @@ export async function formatCombinedDataForContext(): Promise<string> {
   lines.push('')
   
   // Add ESPN odds data (FREE - replaces The Odds API for game lines)
-  lines.push(formatESPNOddsForContext(espnOddsData))
+  // Pass Elo ratings so every game displays team Elo ratings
+  lines.push(formatESPNOddsForContext(espnOddsData, eloRatingsMap))
   lines.push('')
   
   // Add fallback odds from The Odds API (only for sports missing from ESPN)

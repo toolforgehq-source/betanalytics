@@ -505,10 +505,32 @@ function getStatusLabel(status: 'pre' | 'in' | 'post', detail: string): string {
   }
 }
 
+// Map ESPN league names to Elo league names
+const ESPN_TO_ELO_LEAGUE: Record<string, string> = {
+  'NBA': 'NBA',
+  'NFL': 'NFL',
+  'NHL': 'NHL',
+  'MLB': 'MLB',
+  'NCAAB': 'NCAAB',
+  'NCAAF': 'NCAAF',
+  'English Premier League': 'soccer_epl',
+  'La Liga': 'soccer_spain_la_liga',
+  'Bundesliga': 'soccer_germany_bundesliga',
+  'Serie A': 'soccer_italy_serie_a',
+  'Ligue 1': 'soccer_france_ligue_one',
+  'MLS': 'soccer_usa_mls',
+  'UEFA Champions League': 'soccer_uefa_champs_league',
+}
+
+// Type for Elo ratings map passed to formatter
+export type EloRatingsMap = Record<string, { rating: number; gamesPlayed: number }> | null
+
 /**
  * Format ESPN odds for Claude's context
+ * @param oddsData - ESPN odds data
+ * @param eloRatings - Optional pre-fetched Elo ratings map (key format: "league:teamName")
  */
-export function formatESPNOddsForContext(oddsData: ESPNOddsData): string {
+export function formatESPNOddsForContext(oddsData: ESPNOddsData, eloRatings?: EloRatingsMap): string {
   if (!oddsData?.games?.length) {
     return `\n=== ESPN BETTING ODDS ===\nNo betting odds currently available from ESPN.\n`
   }
@@ -561,6 +583,48 @@ export function formatESPNOddsForContext(oddsData: ESPNOddsData): string {
       
       lines.push(`${game.awayTeam} @ ${game.homeTeam}`)
       lines.push(`  Time: ${gameTimeET} ${todayLabel} | Status: ${statusLabel}`)
+      
+      // Add Elo ratings if available
+      if (eloRatings) {
+        const eloLeague = ESPN_TO_ELO_LEAGUE[league]
+        if (eloLeague) {
+          // Normalize team names for lookup (lowercase, alphanumeric only)
+          const normalizeForElo = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '')
+          const homeNorm = normalizeForElo(game.homeTeam)
+          const awayNorm = normalizeForElo(game.awayTeam)
+          
+          // Find matching Elo ratings (fuzzy match on team name)
+          let homeElo: number | null = null
+          let awayElo: number | null = null
+          
+          for (const [key, data] of Object.entries(eloRatings)) {
+            const [keyLeague, keyTeam] = key.split(':')
+            if (keyLeague !== eloLeague) continue
+            
+            const keyNorm = normalizeForElo(keyTeam)
+            if (keyNorm.includes(homeNorm) || homeNorm.includes(keyNorm)) {
+              homeElo = data.rating
+            }
+            if (keyNorm.includes(awayNorm) || awayNorm.includes(keyNorm)) {
+              awayElo = data.rating
+            }
+          }
+          
+          // Display Elo ratings
+          const homeEloStr = homeElo ? String(Math.round(homeElo)) : 'N/A'
+          const awayEloStr = awayElo ? String(Math.round(awayElo)) : 'N/A'
+          if (homeElo && awayElo) {
+            const eloDiff = Math.round(homeElo - awayElo)
+            const favoredTeam = eloDiff > 0 ? game.homeTeam : game.awayTeam
+            const diffStr = Math.abs(eloDiff)
+            lines.push(`  Elo: ${game.homeTeam} ${homeEloStr} vs ${game.awayTeam} ${awayEloStr} (${favoredTeam} +${diffStr})`)
+          } else {
+            lines.push(`  Elo: ${game.homeTeam} ${homeEloStr} vs ${game.awayTeam} ${awayEloStr}`)
+          }
+        } else {
+          lines.push(`  Elo: N/A (league not tracked)`)
+        }
+      }
       
       const oddsInfo: string[] = []
       
