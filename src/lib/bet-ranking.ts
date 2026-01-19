@@ -661,7 +661,7 @@ async function getTopScorersForTeam(
   }
 }
 
-async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedBet[]> {
+export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedBet[]> {
   const rankedBets: RankedBet[] = []
   const now = new Date().toISOString()
   
@@ -1666,6 +1666,185 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push('IMPORTANT: When user asks for "best bet", present the BEST BET above.')
   lines.push('This bet was selected because it has the HIGHEST SCORE using the unified 45/35/20 formula.')
   lines.push('Always show the score and breakdown in your response.')
+  
+  return lines.join('\n')
+}
+
+/**
+ * Result of analyzing a specific game
+ */
+export interface GameAnalysisResult {
+  game: {
+    homeTeam: string
+    awayTeam: string
+    sport: string
+    sportName: string
+    commenceTime: string
+  }
+  bets: RankedBet[]
+  bestBet: RankedBet | null
+  calculatedAt: string
+}
+
+/**
+ * Analyze a specific game and return all betting options with full analysis
+ * This is used for on-demand analysis when a user asks about a specific game
+ */
+export async function analyzeSpecificGame(game: Game): Promise<GameAnalysisResult> {
+  const now = new Date().toISOString()
+  
+  // Analyze the game to get all betting options
+  const bets = await analyzeGame(game)
+  
+  // Sort by score to find the best bet for this game
+  const sortedBets = [...bets].sort((a, b) => b.score - a.score)
+  
+  return {
+    game: {
+      homeTeam: game.homeTeam,
+      awayTeam: game.awayTeam,
+      sport: game.sport,
+      sportName: game.sportName || game.sport,
+      commenceTime: game.commenceTime
+    },
+    bets: sortedBets,
+    bestBet: sortedBets[0] || null,
+    calculatedAt: now
+  }
+}
+
+/**
+ * Format a specific game analysis for Claude's context
+ * Uses the same detailed format as the best bet of the day
+ */
+export function formatGameAnalysisForContext(result: GameAnalysisResult): string {
+  const lines: string[] = []
+  
+  lines.push(`=== GAME ANALYSIS: ${result.game.awayTeam} @ ${result.game.homeTeam} ===`)
+  lines.push(`Sport: ${result.game.sportName}`)
+  lines.push(`Game Time: ${formatTime(result.game.commenceTime)}`)
+  lines.push(`Analysis Time: ${formatTime(result.calculatedAt)}`)
+  lines.push(`Betting Options Analyzed: ${result.bets.length}`)
+  lines.push('')
+  
+  if (!result.bestBet) {
+    lines.push('NO BETTING OPTIONS AVAILABLE')
+    lines.push('This game may have already started or odds are not available.')
+    return lines.join('\n')
+  }
+  
+  // Show the best bet for this game
+  const bet = result.bestBet
+  const isSpread = bet.betType === 'spread'
+  const isTotal = bet.betType === 'total'
+  
+  // Format bet type display
+  let betTypeDisplay: string
+  let teamDisplay: string
+  if (isTotal) {
+    betTypeDisplay = `${bet.team} ${bet.line}`
+    teamDisplay = betTypeDisplay
+  } else if (isSpread && bet.line !== undefined) {
+    betTypeDisplay = `Spread ${bet.line > 0 ? '+' : ''}${bet.line}`
+    teamDisplay = `${bet.team} (${betTypeDisplay})`
+  } else {
+    betTypeDisplay = 'Moneyline'
+    teamDisplay = `${bet.team} (${betTypeDisplay})`
+  }
+  
+  lines.push('=== BEST BET FOR THIS GAME ===')
+  lines.push(`**Pick: ${teamDisplay} @ ${formatOdds(bet.bestPrice)}**`)
+  lines.push(`Book: ${bet.bestBook}`)
+  lines.push(`Score: ${bet.score}/100`)
+  lines.push('')
+  
+  // Model probability
+  const modelProbPercent = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+  const modelSource = bet.eloProbability !== undefined ? 'Elo Model' : 'Market Consensus'
+  const probLabel = isTotal ? `${bet.team} probability` : isSpread ? 'cover probability' : 'win probability'
+  
+  // 1. THE EDGE
+  lines.push('=== THE EDGE (Why This Bet Has Value) ===')
+  if (bet.eloProbability !== undefined) {
+    if (isSpread) {
+      lines.push(`Our Elo Model: ${bet.eloProbability}% cover probability`)
+      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
+      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing ${bet.team} covering)`)
+    } else if (isTotal) {
+      lines.push(`Our Elo Model: ${bet.eloProbability}% ${bet.team.toLowerCase()} probability`)
+      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
+      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing the ${bet.team.toLowerCase()})`)
+    } else {
+      lines.push(`Our Elo Model: ${bet.eloProbability}% win probability`)
+      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
+      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing this team)`)
+    }
+  } else {
+    lines.push(`Market Consensus: ${bet.consensusProbability}% ${probLabel}`)
+    lines.push(`Best Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
+    lines.push(`EDGE: +${bet.edge}% vs market`)
+  }
+  lines.push('')
+  
+  // 2. MATCHUP ANALYSIS - Elo ratings
+  lines.push('=== MATCHUP ANALYSIS ===')
+  if (bet.homeElo && bet.awayElo) {
+    if (isTotal) {
+      const avgElo = Math.round((bet.homeElo + bet.awayElo) / 2)
+      lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
+      lines.push(`Combined Elo Strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo})`)
+      lines.push(`Market Total Line: ${bet.line}`)
+      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+    } else {
+      lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo})`)
+      const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
+      const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
+      lines.push(`Elo Difference: ${eloDiff} points favoring ${favoredTeam}`)
+      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+    }
+  } else {
+    lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
+    lines.push('Elo ratings not available - using market consensus')
+  }
+  lines.push('')
+  
+  // 3. VALUE METRICS
+  lines.push('=== VALUE METRICS ===')
+  lines.push(`- ${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
+  lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
+  lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
+  lines.push(`- Edge: ${bet.edge}%`)
+  lines.push(`- Best Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
+  lines.push('')
+  
+  // 4. ALL BOOK PRICES
+  lines.push('=== ALL BOOK PRICES ===')
+  const bookPrices = bet.allBookPrices || []
+  for (const book of bookPrices) {
+    lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
+  }
+  lines.push('')
+  
+  // 5. OTHER BETTING OPTIONS FOR THIS GAME
+  if (result.bets.length > 1) {
+    lines.push('=== OTHER BETTING OPTIONS ===')
+    for (let i = 1; i < Math.min(result.bets.length, 5); i++) {
+      const otherBet = result.bets[i]
+      let otherDisplay: string
+      if (otherBet.betType === 'total') {
+        otherDisplay = `${otherBet.team} ${otherBet.line}`
+      } else if (otherBet.betType === 'spread' && otherBet.line !== undefined) {
+        otherDisplay = `${otherBet.team} ${otherBet.line > 0 ? '+' : ''}${otherBet.line}`
+      } else {
+        otherDisplay = `${otherBet.team} ML`
+      }
+      lines.push(`${i + 1}. ${otherDisplay} @ ${formatOdds(otherBet.bestPrice)} | Score: ${otherBet.score}/100 | Edge: ${otherBet.edge}% | ROI: ${otherBet.roi.toFixed(2)}%`)
+    }
+    lines.push('')
+  }
+  
+  lines.push('IMPORTANT: Use the analysis above to answer the user\'s question about this game.')
+  lines.push('Always include the Elo ratings, edge, and value metrics in your response.')
   
   return lines.join('\n')
 }

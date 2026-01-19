@@ -4,6 +4,9 @@ import Anthropic from "@anthropic-ai/sdk"
 import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
+import { getCachedESPNOdds } from "@/lib/espn"
+import { analyzeSpecificGame, formatGameAnalysisForContext } from "@/lib/bet-ranking"
+import type { Game } from "@/lib/odds"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
 
@@ -647,6 +650,124 @@ Before submitting your entry:
 
 === END DFS SECTION ===`
 
+/**
+ * Detect if the user is asking about a specific game and find the matching game
+ * Returns the game if found, null otherwise
+ */
+async function detectGameQuestion(userMessage: string): Promise<Game | null> {
+  // Normalize the message for matching
+  const normalizedMessage = userMessage.toLowerCase()
+  
+  // Check if this looks like a game-specific question
+  const gameQuestionPatterns = [
+    /\b(vs|versus|@|at)\b/i,
+    /\b(game|matchup|match)\b/i,
+    /\b(spread|moneyline|ml|over|under|total)\b/i,
+    /\b(bet|pick|play)\b.*\b(on|for)\b/i,
+    /\bwho\s+(wins?|should|will)\b/i,
+    /\bshould\s+i\s+(bet|take|play)\b/i,
+    /\bwhat.*\b(think|like|recommend)\b.*\bgame\b/i,
+  ]
+  
+  const looksLikeGameQuestion = gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage))
+  if (!looksLikeGameQuestion) {
+    return null
+  }
+  
+  // Get ESPN odds data to find matching games
+  const espnOddsData = await getCachedESPNOdds()
+  if (!espnOddsData?.games || espnOddsData.games.length === 0) {
+    return null
+  }
+  
+  // Normalize team name for matching
+  const normalizeTeam = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '')
+  
+  // Try to find a matching game
+  for (const espnGame of espnOddsData.games) {
+    const homeNorm = normalizeTeam(espnGame.homeTeam)
+    const awayNorm = normalizeTeam(espnGame.awayTeam)
+    const messageNorm = normalizeTeam(userMessage)
+    
+    // Check if both teams are mentioned in the message
+    const homeMatch = messageNorm.includes(homeNorm) || homeNorm.includes(messageNorm.split(/\s+/).find(w => homeNorm.includes(w) && w.length > 3) || '')
+    const awayMatch = messageNorm.includes(awayNorm) || awayNorm.includes(messageNorm.split(/\s+/).find(w => awayNorm.includes(w) && w.length > 3) || '')
+    
+    // Also check for partial matches (e.g., "Miami" matches "Miami Heat")
+    const homeWords = espnGame.homeTeam.toLowerCase().split(/\s+/)
+    const awayWords = espnGame.awayTeam.toLowerCase().split(/\s+/)
+    const messageWords = userMessage.toLowerCase().split(/\s+/)
+    
+    const homePartialMatch = homeWords.some(hw => hw.length > 3 && messageWords.some(mw => mw.includes(hw) || hw.includes(mw)))
+    const awayPartialMatch = awayWords.some(aw => aw.length > 3 && messageWords.some(mw => mw.includes(aw) || aw.includes(mw)))
+    
+    if ((homeMatch || homePartialMatch) && (awayMatch || awayPartialMatch)) {
+      // Convert ESPN game to Game format for analysis
+      const sportKeyMap: Record<string, string> = {
+        'NBA': 'basketball_nba',
+        'NFL': 'americanfootball_nfl',
+        'NHL': 'icehockey_nhl',
+        'MLB': 'baseball_mlb',
+        'NCAAB': 'basketball_ncaab',
+        'NCAAF': 'americanfootball_ncaaf',
+        'English Premier League': 'soccer_epl',
+        'La Liga': 'soccer_spain_la_liga',
+        'Bundesliga': 'soccer_germany_bundesliga',
+        'Serie A': 'soccer_italy_serie_a',
+        'Ligue 1': 'soccer_france_ligue_one',
+        'MLS': 'soccer_usa_mls',
+        'UEFA Champions League': 'soccer_uefa_champs_league',
+      }
+      
+      const game: Game = {
+        id: espnGame.gameId,
+        sport: sportKeyMap[espnGame.league] || espnGame.league.toLowerCase(),
+        sportName: espnGame.league,
+        homeTeam: espnGame.homeTeam,
+        awayTeam: espnGame.awayTeam,
+        commenceTime: espnGame.commenceTime,
+        moneylines: espnGame.moneyline ? [{
+          bookmaker: 'espn',
+          market: 'h2h',
+          outcomes: [
+            { name: espnGame.homeTeam, price: espnGame.moneyline.home },
+            { name: espnGame.awayTeam, price: espnGame.moneyline.away }
+          ]
+        }] : [],
+        spreads: espnGame.spread !== null ? [{
+          bookmaker: 'espn',
+          market: 'spreads',
+          outcomes: [
+            { 
+              name: espnGame.homeTeam, 
+              price: espnGame.spreadOdds?.home ?? -110, 
+              point: espnGame.homeFavorite ? -Math.abs(espnGame.spread) : Math.abs(espnGame.spread) 
+            },
+            { 
+              name: espnGame.awayTeam, 
+              price: espnGame.spreadOdds?.away ?? -110, 
+              point: espnGame.homeFavorite ? Math.abs(espnGame.spread) : -Math.abs(espnGame.spread) 
+            }
+          ]
+        }] : [],
+        totals: espnGame.overUnder !== null ? [{
+          bookmaker: 'espn',
+          market: 'totals',
+          outcomes: [
+            { name: 'Over', price: espnGame.overUnderOdds?.over ?? -110, point: espnGame.overUnder },
+            { name: 'Under', price: espnGame.overUnderOdds?.under ?? -110, point: espnGame.overUnder }
+          ]
+        }] : []
+      }
+      
+      console.log(`[detectGameQuestion] Found matching game: ${espnGame.awayTeam} @ ${espnGame.homeTeam}`)
+      return game
+    }
+  }
+  
+  return null
+}
+
 export async function POST(request: Request) {
   try {
     // Check if API key is configured
@@ -698,11 +819,29 @@ export async function POST(request: Request) {
 
     // Fetch combined data from Odds API + ESPN API
     const combinedContext = await formatCombinedDataForContext()
+    
+    // Check if user is asking about a specific game and run on-demand analysis
+    const userMessage = chatMessages[chatMessages.length - 1]
+    const userMessageContent = typeof userMessage.content === 'string' ? userMessage.content : ''
+    let gameAnalysisContext = ''
+    
+    const detectedGame = await detectGameQuestion(userMessageContent)
+    if (detectedGame) {
+      console.log(`[chat] Running on-demand analysis for: ${detectedGame.awayTeam} @ ${detectedGame.homeTeam}`)
+      try {
+        const gameAnalysis = await analyzeSpecificGame(detectedGame)
+        gameAnalysisContext = '\n\n' + formatGameAnalysisForContext(gameAnalysis)
+        console.log(`[chat] Game analysis complete: ${gameAnalysis.bets.length} betting options found`)
+      } catch (err) {
+        console.error('[chat] Error running game analysis:', err)
+      }
+    }
+    
     const systemPromptWithData = `${SYSTEM_PROMPT}
 
-${combinedContext}
+${combinedContext}${gameAnalysisContext}
 
-IMPORTANT: Use this REAL-TIME data to answer the user's question. 
+IMPORTANT: Use this REAL-TIME data to answer the user's question.
 - Reference actual games and odds from The Odds API
 - Check ESPN injury data before making recommendations
 - Verify starting lineups (especially NHL goalies) from ESPN data
@@ -747,8 +886,7 @@ When discussing player props, focus on:
       ? response.content[0].text 
       : ''
 
-    const userMessage = chatMessages[chatMessages.length - 1]
-    
+    // userMessage already declared above for game detection
     await db.messages.create({
       conversationId: conversation.id,
       role: 'user',
