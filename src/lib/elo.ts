@@ -1282,20 +1282,26 @@ export function calculateWinProbabilityWithInjuries(
 // ============================================
 
 /**
- * Standard Normal CDF approximation (Abramowitz and Stegun)
+ * Standard Normal CDF approximation (Abramowitz and Stegun formula 7.1.26)
  * Used for calculating probabilities from z-scores
+ * 
+ * This uses the error function (erf) approximation and converts to CDF:
+ * CDF(x) = 0.5 * (1 + erf(x / sqrt(2)))
  */
 function normalCDF(x: number): number {
-  const a1 = 0.254829592
+  const a1 =  0.254829592
   const a2 = -0.284496736
-  const a3 = 1.421413741
+  const a3 =  1.421413741
   const a4 = -1.453152027
-  const a5 = 1.061405429
-  const p = 0.3275911
+  const a5 =  1.061405429
+  const p  =  0.3275911
 
+  // Save the sign of x
   const sign = x < 0 ? -1 : 1
-  x = Math.abs(x)
+  // CRITICAL: Divide by sqrt(2) to convert from standard normal z-score to erf argument
+  x = Math.abs(x) / Math.sqrt(2)
 
+  // A&S formula 7.1.26 for erf approximation
   const t = 1.0 / (1.0 + p * x)
   const y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x)
 
