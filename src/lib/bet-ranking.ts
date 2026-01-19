@@ -857,15 +857,30 @@ async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedB
       // Note: spread is from the team's perspective (e.g., home -3.5 means home must win by > 3.5)
       // For home team: use spread as-is
       // For away team: the spread is already from away's perspective (e.g., away +3.5)
+      const spreadFromHomePerspective = isHomeTeam ? point : -point
       const spreadResult = calculateSpreadCoverProbability(
         homeElo,
         awayElo,
-        isHomeTeam ? point : -point, // Convert away spread to home perspective
+        spreadFromHomePerspective,
         eloLeague,
         isHomeTeam
       )
       
       const eloCoverProb = spreadResult.probability
+      
+      // DEBUG: Log spread calculation inputs for high-probability bets
+      if (eloCoverProb > 0.85) {
+        console.log(`[SPREAD DEBUG] ${teamName} ${point > 0 ? '+' : ''}${point}:`)
+        console.log(`  - homeTeam: ${game.homeTeam}, awayTeam: ${game.awayTeam}`)
+        console.log(`  - isHomeTeam: ${isHomeTeam}`)
+        console.log(`  - point (from odds): ${point}`)
+        console.log(`  - spreadFromHomePerspective: ${spreadFromHomePerspective}`)
+        console.log(`  - eloLeague: ${eloLeague}`)
+        console.log(`  - homeElo (effective): ${homeElo}, awayElo (effective): ${awayElo}`)
+        console.log(`  - homeElo (base): ${eloResult.homeRating}, awayElo (base): ${eloResult.awayRating}`)
+        console.log(`  - expectedMargin: ${spreadResult.expectedMargin}`)
+        console.log(`  - eloCoverProb: ${(eloCoverProb * 100).toFixed(1)}%`)
+      }
       
       // Calculate implied probability from best price
       const impliedProb = americanToImpliedProbability(bestEntry.outcome.price)
@@ -919,8 +934,8 @@ async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedB
         edge: Math.round(edge * 1000) / 10,
         eloProbability: Math.round(eloCoverProb * 1000) / 10,
         eloConfidence: spreadResult.confidence,
-        homeElo: eloResult.homeRating,
-        awayElo: eloResult.awayRating,
+        homeElo: homeElo, // Use effective (injury-adjusted) rating that was actually used in calculation
+        awayElo: awayElo, // Use effective (injury-adjusted) rating that was actually used in calculation
         expectedValue: Math.round(ev * 100) / 100,
         roi: Math.round(roi * 100) / 100,
         allBookPrices,
