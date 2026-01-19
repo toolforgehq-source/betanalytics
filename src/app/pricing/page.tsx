@@ -71,17 +71,14 @@ export default async function PricingPage() {
             </div>
 
             <div className="space-y-4 mb-8">
-              <Feature text="Unlimited AI questions" />
-              <Feature text="All sports covered (NFL, NBA, MLB, NHL, Soccer, etc.)" />
-              <Feature text="All platforms (DraftKings, FanDuel, PrizePicks, Underdog)" />
-              <Feature text="Multi-model consensus analysis" />
-              <Feature text="Educational insights with every pick" />
-              <Feature text="Hedge calculator" />
-              <Feature text="Player prop analysis" />
-              <Feature text="Parlay builder assistance" />
-              <Feature text="Arbitrage opportunity finder" />
-              <Feature text="Bet tracking dashboard (coming soon)" />
-              <Feature text="Real-time alerts (coming soon)" />
+              <Feature text="Elo-based edge detection across all sports" />
+              <Feature text="Real-time injury-adjusted probabilities" />
+              <Feature text="Full methodology transparency" />
+              <Feature text="Unlimited queries" />
+              <Feature text="All major sports covered (NBA, NFL, NHL, MLB, College, Soccer)" />
+              <Feature text="Hourly data updates" />
+              <Feature text="Recency-weighted analysis" />
+              <Feature text="Edge calculation vs Vegas odds" />
             </div>
 
             <PricingClient isLoggedIn={isLoggedIn} />
@@ -100,7 +97,7 @@ export default async function PricingPage() {
               />
               <FAQ 
                 question="How does the free trial work?"
-                answer="You get 3 free questions to try the service. No credit card required. After that, you'll need to subscribe to continue."
+                answer="You get a 3-day free trial with full access to all features. No credit card required. After that, you'll need to subscribe at $29/month to continue."
               />
               <FAQ 
                 question="Can I cancel anytime?"

@@ -9,7 +9,9 @@ export default function Footer() {
         <p>Warning: Betanalytics.ai provides entertainment and educational content only.</p>
         <p>Gambling involves risk. Never bet more than you can afford to lose.</p>
         <p>Must be 21+. If you or someone you know has a gambling problem, call 1-800-GAMBLER.</p>
-        <div className="mt-3 flex justify-center gap-4">
+        <div className="mt-3 flex justify-center gap-4 flex-wrap">
+          <Link href="/methodology" className="hover:text-slate-300 transition-colors">Methodology</Link>
+          <Link href="/pricing" className="hover:text-slate-300 transition-colors">Pricing</Link>
           <Link href="/terms" className="hover:text-slate-300 transition-colors">Terms of Service</Link>
           <Link href="/privacy" className="hover:text-slate-300 transition-colors">Privacy Policy</Link>
         </div>
