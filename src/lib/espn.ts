@@ -565,13 +565,19 @@ export function formatESPNOddsForContext(oddsData: ESPNOddsData): string {
       const oddsInfo: string[] = []
       
       if (game.spread !== null) {
-        const spreadTeam = game.homeFavorite ? game.homeTeam : game.awayTeam
-        const spreadValue = game.homeFavorite ? game.spread : -game.spread
-        oddsInfo.push(`Spread: ${spreadTeam} ${spreadValue > 0 ? '+' : ''}${spreadValue}`)
+        // Show spread with odds for BOTH teams to prevent LLM confusion
+        const homeSpread = game.homeFavorite ? -Math.abs(game.spread) : Math.abs(game.spread)
+        const awaySpread = game.homeFavorite ? Math.abs(game.spread) : -Math.abs(game.spread)
+        const homeSpreadOdds = game.spreadOdds?.home ?? -110
+        const awaySpreadOdds = game.spreadOdds?.away ?? -110
+        oddsInfo.push(`Spread: ${game.homeTeam} ${homeSpread > 0 ? '+' : ''}${homeSpread} (${homeSpreadOdds > 0 ? '+' : ''}${homeSpreadOdds}) / ${game.awayTeam} ${awaySpread > 0 ? '+' : ''}${awaySpread} (${awaySpreadOdds > 0 ? '+' : ''}${awaySpreadOdds})`)
       }
       
       if (game.overUnder !== null) {
-        oddsInfo.push(`O/U: ${game.overUnder}`)
+        // Show total with odds for both over and under
+        const overOdds = game.overUnderOdds?.over ?? -110
+        const underOdds = game.overUnderOdds?.under ?? -110
+        oddsInfo.push(`O/U: ${game.overUnder} (Over ${overOdds > 0 ? '+' : ''}${overOdds} / Under ${underOdds > 0 ? '+' : ''}${underOdds})`)
       }
       
       if (game.moneyline) {
