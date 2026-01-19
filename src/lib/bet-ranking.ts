@@ -1788,7 +1788,7 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
   
   // 2. MATCHUP ANALYSIS - Elo ratings
   lines.push('=== MATCHUP ANALYSIS ===')
-  if (bet.homeElo && bet.awayElo) {
+  if (bet.homeElo != null && bet.awayElo != null) {
     if (isTotal) {
       const avgElo = Math.round((bet.homeElo + bet.awayElo) / 2)
       lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
