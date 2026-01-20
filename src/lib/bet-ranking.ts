@@ -1360,99 +1360,80 @@ export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
 }
 
 /**
- * Format the best bet result for Claude's context
- * Uses the NEW UNIFIED SCORING SYSTEM (45/35/20 weights)
+ * Get sport emoji for professional formatting
+ */
+function getSportEmoji(sportName: string): string {
+  const sport = sportName.toLowerCase()
+  if (sport.includes('nba') || sport.includes('basketball') || sport.includes('ncaab')) return '🏀'
+  if (sport.includes('nfl') || sport.includes('football') || sport.includes('ncaaf')) return '🏈'
+  if (sport.includes('nhl') || sport.includes('hockey')) return '🏒'
+  if (sport.includes('mlb') || sport.includes('baseball')) return '⚾'
+  if (sport.includes('soccer') || sport.includes('mls') || sport.includes('epl') || sport.includes('premier')) return '⚽'
+  return '🎯'
+}
+
+/**
+ * Format the best bet result as a professional user-facing response
+ * Clean, conversational formatting - no internal directives
  */
 export function formatBestBetForContext(result: BestBetResult): string {
   const lines: string[] = []
-  
-  lines.push('=== PRE-COMPUTED BEST BET (as of ' + formatTime(result.calculatedAt) + ') ===')
-  lines.push(`Games analyzed: ${result.gamesAnalyzed} | Qualified bets: ${result.gamesQualified}`)
-  lines.push('')
   
   if (!result.bestBet) {
     // Get fallback data - already sorted by SCORE from computeBestBets
     const closestMisses = result.closestMisses ?? []
     const mostLikelyWinners = result.mostLikelyWinners ?? []
     
-    // NEW: Select best available by SCORE (not by ROI or probability)
-    // closestMisses are already sorted by score from progressive fallback
+    // Select best available by SCORE
     let bestAvailable: FallbackBet | null = null
     
     if (closestMisses.length > 0) {
-      // Take the highest scored bet from progressive fallback
       bestAvailable = closestMisses[0]
     } else if (mostLikelyWinners.length > 0) {
-      // Fallback to highest probability if nothing passed progressive filters
       bestAvailable = mostLikelyWinners[0]
     }
     
-    lines.push('NO STRICT VALUE BET AVAILABLE')
-    lines.push(`Reason: ${result.reason}`)
-    lines.push('')
-    
     if (bestAvailable) {
-      // Determine if this is a VALUE PLAY
       const isValuePlay = bestAvailable.isValuePlay
-      const label = isValuePlay ? 'VALUE PLAY' : 'BEST AVAILABLE LEAN'
-      
-      lines.push(`=== ${label} (USE THIS) ===`)
-      lines.push('IMPORTANT: When user asks for "best bet", IMMEDIATELY give them this pick.')
-      lines.push('DO NOT ask follow-up questions. DO NOT offer multiple options.')
-      lines.push('')
-      lines.push(`${label}:`)
-      lines.push(`Team: ${bestAvailable.team} (Moneyline)`)
-      lines.push(`Game: ${bestAvailable.awayTeam} @ ${bestAvailable.homeTeam}`)
-      lines.push(`Sport: ${bestAvailable.sportName}`)
-      lines.push(`Best Price: ${formatOdds(bestAvailable.bestPrice)} at ${bestAvailable.bestBook}`)
-      lines.push('')
-      
-      // NEW: Show SCORE prominently
-      lines.push('SCORE (NEW UNIFIED SYSTEM):')
-      lines.push(`Score: ${bestAvailable.score}/100`)
-      lines.push('')
-      
-      // Use MODEL probability (Elo when available, market consensus as fallback)
+      const emoji = getSportEmoji(bestAvailable.sportName)
       const fbModelProbPercent = bestAvailable.eloProbability !== undefined ? bestAvailable.eloProbability : bestAvailable.consensusProbability
       const fbModelSource = bestAvailable.eloProbability !== undefined ? 'Elo Model' : 'Market Consensus'
       
-      // 1. LEAD WITH THE EDGE - most important
-      lines.push('=== THE EDGE (Why This Bet Has Value) ===')
+      lines.push(`${emoji} ${isValuePlay ? 'BEST BET TODAY' : 'TOP PICK TODAY'}`)
+      lines.push('')
+      lines.push(`**${bestAvailable.team} ML @ ${formatOdds(bestAvailable.bestPrice)}**`)
+      lines.push(`${bestAvailable.awayTeam} @ ${bestAvailable.homeTeam} | ${bestAvailable.sportName}`)
+      lines.push(`Score: ${bestAvailable.score}/100`)
+      lines.push('')
+      
+      // WHY THIS BET section
+      lines.push('**WHY THIS BET:**')
+      lines.push('')
       if (bestAvailable.eloProbability !== undefined) {
-        lines.push(`Our Elo Model: ${bestAvailable.eloProbability}% win probability`)
-        lines.push(`Market Odds (${formatOdds(bestAvailable.bestPrice)}): ${bestAvailable.impliedProbability}% implied probability`)
-        lines.push(`EDGE FOUND: +${bestAvailable.edge}% (Market is undervaluing this team)`)
+        lines.push(`Our Elo model gives ${bestAvailable.team} a ${bestAvailable.eloProbability}% win probability, while the market odds (${formatOdds(bestAvailable.bestPrice)}) imply only ${bestAvailable.impliedProbability}%. That's a ${bestAvailable.edge}% edge.`)
       } else {
-        lines.push(`Market Consensus: ${bestAvailable.consensusProbability}% win probability`)
-        lines.push(`Best Odds (${formatOdds(bestAvailable.bestPrice)}): ${bestAvailable.impliedProbability}% implied probability`)
-        lines.push(`EDGE: +${bestAvailable.edge}% vs market`)
+        lines.push(`Market consensus shows ${bestAvailable.team} with a ${bestAvailable.consensusProbability}% win probability. The best available odds (${formatOdds(bestAvailable.bestPrice)}) offer a ${bestAvailable.edge}% edge.`)
       }
       lines.push('')
       
-      // 2. MATCHUP ANALYSIS
-      lines.push('=== MATCHUP ANALYSIS ===')
+      // Matchup context
       if (bestAvailable.homeElo && bestAvailable.awayElo) {
-        lines.push(`${bestAvailable.homeTeam} (Elo: ${bestAvailable.homeElo}) vs ${bestAvailable.awayTeam} (Elo: ${bestAvailable.awayElo})`)
         const eloDiff = Math.abs(bestAvailable.homeElo - bestAvailable.awayElo)
-        lines.push(`Elo Difference: ${eloDiff} points`)
-        lines.push(`Elo Confidence: ${bestAvailable.eloConfidence || 'unknown'}`)
-      } else {
-        lines.push(`${bestAvailable.awayTeam} @ ${bestAvailable.homeTeam}`)
-        lines.push('Elo ratings not available - using market consensus')
+        const favoredTeam = bestAvailable.homeElo > bestAvailable.awayElo ? bestAvailable.homeTeam : bestAvailable.awayTeam
+        lines.push(`${bestAvailable.homeTeam} (Elo: ${bestAvailable.homeElo}) vs ${bestAvailable.awayTeam} (Elo: ${bestAvailable.awayElo}). The ${eloDiff}-point Elo difference favors ${favoredTeam}.`)
+        lines.push('')
       }
+      
+      // Value breakdown
+      lines.push('**VALUE:**')
+      lines.push('')
+      lines.push(`Win Probability: ${fbModelProbPercent}% (${fbModelSource})`)
+      lines.push(`Expected Value: $${bestAvailable.expectedValue.toFixed(2)} per $100 bet`)
+      lines.push(`ROI: ${bestAvailable.roi.toFixed(2)}%`)
+      lines.push(`Edge: ${bestAvailable.edge}%`)
       lines.push('')
       
-      // 3. VALUE METRICS
-      lines.push('=== VALUE METRICS ===')
-      lines.push(`- Win Probability: ${fbModelProbPercent}% (${fbModelSource})`)
-      lines.push(`- Expected Value: $${bestAvailable.expectedValue.toFixed(2)} per $100`)
-      lines.push(`- ROI: ${bestAvailable.roi.toFixed(2)}%`)
-      lines.push(`- Edge: ${bestAvailable.edge}%`)
-      lines.push(`- Best Price: ${formatOdds(bestAvailable.bestPrice)} at ${bestAvailable.bestBook}`)
-      lines.push('')
-      
-      // 4. SCORE BREAKDOWN
-      lines.push('=== SCORE BREAKDOWN ===')
+      // Score breakdown
       const probScore = Math.max(0, Math.min(45, ((fbModelProbPercent - 50) / 40) * 45))
       const roi = bestAvailable.roi
       let roiScore: number
@@ -1465,80 +1446,62 @@ export function formatBestBetForContext(result: BestBetResult): string {
       const edgePercent = bestAvailable.edge
       const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
       
-      lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${fbModelProbPercent}% win probability)`)
-      lines.push(`- ROI Score: ${roiScore.toFixed(1)}/35 points (${roi.toFixed(2)}% expected return)`)
-      lines.push(`- Edge Score: ${edgeScore.toFixed(1)}/20 points (${edgePercent}% edge vs market)`)
+      lines.push('**SCORE BREAKDOWN:** ' + `${bestAvailable.score}/100`)
+      lines.push('')
+      lines.push(`Probability: ${probScore.toFixed(1)}/45 points`)
+      lines.push(`ROI: ${roiScore.toFixed(1)}/35 points`)
+      lines.push(`Edge: ${edgeScore.toFixed(1)}/20 points`)
       lines.push('')
       
-      if (bestAvailable.expectedValue > 0) {
-        lines.push('STATUS: Positive EV - This is a mathematically sound bet.')
-        if (bestAvailable.disqualifyReasons.length > 0) {
-          lines.push(`Note: ${bestAvailable.disqualifyReasons.join(', ')}`)
-        }
-      } else {
-        lines.push('STATUS: Negative EV - This is NOT a value bet. Only for users who want action.')
-        lines.push('DISCLAIMER: "This doesn\'t meet our value criteria. Consider passing or betting small."')
+      if (bestAvailable.expectedValue < 0) {
+        lines.push('*Note: This pick has negative expected value. Consider smaller bet size.*')
+        lines.push('')
       }
-      lines.push('')
       
-      // Show alternatives with scores
+      // Alternatives
       if (closestMisses.length > 1) {
-        lines.push('ALTERNATIVE OPTIONS (by score):')
+        lines.push('**ALTERNATIVES:**')
+        lines.push('')
         for (let i = 1; i < Math.min(4, closestMisses.length); i++) {
           const alt = closestMisses[i]
-          lines.push(`#${i + 1}: ${alt.team} @ ${formatOdds(alt.bestPrice)} (Score: ${alt.score}/100, Prob: ${alt.consensusProbability}%, ROI: ${alt.roi.toFixed(2)}%)`)
+          lines.push(`#${i + 1}: ${alt.team} @ ${formatOdds(alt.bestPrice)} (Score: ${alt.score}/100, ${alt.consensusProbability}% prob)`)
         }
         lines.push('')
       }
       
-      lines.push('RESPONSE FORMAT:')
-      lines.push(`## Today's ${isValuePlay ? 'Value Play' : 'Best Lean'}`)
-      lines.push('')
-      lines.push(`**${bestAvailable.team} ML @ ${formatOdds(bestAvailable.bestPrice)}** (${bestAvailable.bestBook})`)
-      lines.push('')
-      lines.push(`**Score: ${bestAvailable.score}/100**`)
-      lines.push(`Win Probability: ${bestAvailable.consensusProbability}% | ROI: ${bestAvailable.roi.toFixed(2)}% | Edge: ${bestAvailable.edge}%`)
-      lines.push('')
-      lines.push('[Add 2-3 sentences about why this scores highest and any relevant game factors from the data]')
-      lines.push('')
-      if (bestAvailable.expectedValue < 0) {
-        lines.push('**Note:** This has negative expected value. Consider smaller bet size or passing.')
-      }
+      lines.push(`Available at ${bestAvailable.bestBook}.`)
     } else {
-      lines.push('NO RECOMMENDED BET TODAY')
-      lines.push('No games pass our filters (odds -250, prob 52%, ROI -4.5%) even with relaxation.')
-      lines.push('Tell the user: "No recommended bets today. All options have poor value or low probability."')
+      lines.push('🎯 NO RECOMMENDED BETS TODAY')
+      lines.push('')
+      lines.push('No games currently meet our value criteria. All available options have poor value or low probability.')
+      lines.push('')
+      lines.push('Check back later when more games are scheduled.')
     }
-    lines.push('')
     
     return lines.join('\n')
   }
   
   const bet = result.bestBet
+  const emoji = getSportEmoji(bet.sportName)
   
-    lines.push('BEST BET OF THE DAY:')
-    // Format bet type display based on bet type
-    let betTypeDisplay: string
-    let teamDisplay: string
-    if (bet.betType === 'total' && bet.line !== undefined) {
-      // For totals, show "Over/Under LINE" with the game
-      betTypeDisplay = `${bet.team} ${bet.line}`
-      teamDisplay = `${bet.awayTeam} @ ${bet.homeTeam} — ${bet.team} ${bet.line}`
-    } else if (bet.betType === 'spread' && bet.line !== undefined) {
-      betTypeDisplay = `Spread ${bet.line > 0 ? '+' : ''}${bet.line}`
-      teamDisplay = `${bet.team} (${betTypeDisplay})`
-    } else {
-      betTypeDisplay = 'Moneyline'
-      teamDisplay = `${bet.team} (${betTypeDisplay})`
-    }
-    lines.push(`Pick: ${teamDisplay}`)
-    lines.push(`Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
-  lines.push(`Sport: ${bet.sportName}`)
-  lines.push(`Game Time: ${formatTime(bet.commenceTime)}`)
+  // Format bet type display based on bet type
+  let betTypeDisplay: string
+  let pickDisplay: string
+  if (bet.betType === 'total' && bet.line !== undefined) {
+    betTypeDisplay = `${bet.team} ${bet.line}`
+    pickDisplay = `${bet.team} ${bet.line} @ ${formatOdds(bet.bestPrice)}`
+  } else if (bet.betType === 'spread' && bet.line !== undefined) {
+    betTypeDisplay = `${bet.line > 0 ? '+' : ''}${bet.line}`
+    pickDisplay = `${bet.team} ${betTypeDisplay} @ ${formatOdds(bet.bestPrice)}`
+  } else {
+    betTypeDisplay = 'ML'
+    pickDisplay = `${bet.team} ML @ ${formatOdds(bet.bestPrice)}`
+  }
+  
+  lines.push(`${emoji} BEST BET TODAY`)
   lines.push('')
-  
-  // NEW: Show SCORE prominently with breakdown
-  lines.push('SCORE (NEW UNIFIED SYSTEM):')
+  lines.push(`**${pickDisplay}**`)
+  lines.push(`${bet.awayTeam} @ ${bet.homeTeam} | ${bet.sportName} | ${formatTime(bet.commenceTime)}`)
   lines.push(`Score: ${bet.score}/100`)
   lines.push('')
   
@@ -1550,73 +1513,50 @@ export function formatBestBetForContext(result: BestBetResult): string {
   const isTotal = bet.betType === 'total'
   const isSpread = bet.betType === 'spread'
   const probLabel = isTotal 
-    ? `probability the total goes ${bet.team}` 
+    ? `${bet.team.toLowerCase()} probability` 
     : isSpread 
-      ? `probability ${bet.team} covers the spread`
+      ? 'cover probability'
       : 'win probability'
   
-  // 1. LEAD WITH THE EDGE - This is why the bet is valuable (most important)
-  lines.push('=== THE EDGE (Why This Bet Has Value) ===')
+  // WHY THIS BET section - conversational explanation
+  lines.push('**WHY THIS BET:**')
+  lines.push('')
   if (bet.eloProbability !== undefined) {
-    lines.push(`Our Elo Model: ${bet.eloProbability}% ${probLabel}`)
-    lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
     if (isTotal) {
-      lines.push(`EDGE FOUND: +${bet.edge}% (Market is underpricing the ${bet.team})`)
-      lines.push('')
-      lines.push(`This is a significant market inefficiency - our model based on ${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data sees the ${bet.team} as more likely than the betting market thinks.`)
+      lines.push(`Our Elo model gives this game a ${bet.eloProbability}% probability of going ${bet.team.toLowerCase()}, while the market odds (${formatOdds(bet.bestPrice)}) imply only ${bet.impliedProbability}%. That's a ${bet.edge}% edge.`)
     } else if (isSpread) {
-      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing ${bet.team}'s ability to cover)`)
-      lines.push('')
-      lines.push(`This is a significant market inefficiency - our model based on ${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data sees ${bet.team} covering as more likely than the market thinks.`)
+      lines.push(`Our Elo model gives ${bet.team} an ${bet.eloProbability}% probability to cover the spread, while the market odds (${formatOdds(bet.bestPrice)}) imply only ${bet.impliedProbability}%. That's a ${bet.edge}% edge.`)
     } else {
-      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing this team)`)
-      lines.push('')
-      lines.push(`This is a significant market inefficiency - our model based on ${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data sees this team as stronger than the betting market thinks.`)
+      lines.push(`Our Elo model gives ${bet.team} a ${bet.eloProbability}% win probability, while the market odds (${formatOdds(bet.bestPrice)}) imply only ${bet.impliedProbability}%. That's a ${bet.edge}% edge.`)
     }
   } else {
-    lines.push(`Market Consensus: ${bet.consensusProbability}% ${probLabel}`)
-    lines.push(`Best Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-    lines.push(`EDGE: +${bet.edge}% vs market`)
+    lines.push(`Market consensus shows a ${bet.consensusProbability}% ${probLabel}. The best available odds (${formatOdds(bet.bestPrice)}) offer a ${bet.edge}% edge.`)
   }
   lines.push('')
   
-  // 2. MATCHUP ANALYSIS - Elo ratings and context (different for totals vs moneyline/spread)
-  lines.push('=== MATCHUP ANALYSIS ===')
+  // Matchup context with Elo
   if (bet.homeElo && bet.awayElo) {
+    const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
+    const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
     if (isTotal) {
-      // For totals, show combined scoring context instead of head-to-head
       const avgElo = Math.round((bet.homeElo + bet.awayElo) / 2)
-      lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
-      lines.push(`Combined Elo Strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo})`)
-      lines.push(`Market Total Line: ${bet.line}`)
-      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
-      lines.push('')
-      lines.push(`Our model uses combined team strength to estimate expected total scoring. Higher combined Elo suggests more total points.`)
+      lines.push(`Combined Elo strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo}). Market line: ${bet.line}.`)
     } else {
-      // For moneyline/spread, show head-to-head comparison
-      lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo})`)
-      const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
-      const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
-      lines.push(`Elo Difference: ${eloDiff} points favoring ${favoredTeam}`)
-      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+      lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo}). The ${eloDiff}-point Elo difference favors ${favoredTeam}.`)
     }
-  } else {
-    lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
-    lines.push('Elo ratings not available - using market consensus')
+    lines.push('')
   }
+  
+  // Value breakdown
+  lines.push('**VALUE:**')
+  lines.push('')
+  lines.push(`${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
+  lines.push(`Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
+  lines.push(`ROI: ${bet.roi.toFixed(2)}%`)
+  lines.push(`Edge: ${bet.edge}%`)
   lines.push('')
   
-  // 3. VALUE METRICS - EV, ROI, Probability
-  lines.push('=== VALUE METRICS ===')
-  lines.push(`- ${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
-  lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
-  lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
-  lines.push(`- Edge: ${bet.edge}%`)
-  lines.push(`- Best Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
-  lines.push('')
-  
-  // 4. SCORE BREAKDOWN - Technical details for users who want to dig deeper
-  lines.push('=== SCORE BREAKDOWN ===')
+  // Score breakdown
   const probScore = Math.max(0, Math.min(45, ((modelProbPercent - 50) / 40) * 45))
   const roi = bet.roi
   let roiScore: number
@@ -1629,43 +1569,31 @@ export function formatBestBetForContext(result: BestBetResult): string {
   const edgePercent = bet.edge
   const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
   
-  const probScoreLabel = isTotal ? `${bet.team} probability` : isSpread ? 'cover probability' : 'win probability'
-  lines.push(`- Probability Score: ${probScore.toFixed(1)}/45 points (${modelProbPercent}% ${probScoreLabel})`)
-  lines.push(`- ROI Score: ${roiScore.toFixed(1)}/35 points (${roi.toFixed(2)}% expected return)`)
-  lines.push(`- Edge Score: ${edgeScore.toFixed(1)}/20 points (${edgePercent}% edge vs market)`)
+  lines.push('**SCORE BREAKDOWN:** ' + `${bet.score}/100`)
   lines.push('')
-  lines.push('ALL BOOK PRICES:')
-  const bookPrices = bet.allBookPrices || []
-  for (const book of bookPrices) {
-    lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
+  lines.push(`Probability: ${probScore.toFixed(1)}/45 points`)
+  lines.push(`ROI: ${roiScore.toFixed(1)}/35 points`)
+  lines.push(`Edge: ${edgeScore.toFixed(1)}/20 points`)
+  lines.push('')
+  
+  // Runner-up
+  if (result.runnerUp) {
+    const ru = result.runnerUp
+    let ruPickDisplay: string
+    if (ru.betType === 'total' && ru.line !== undefined) {
+      ruPickDisplay = `${ru.team} ${ru.line} @ ${formatOdds(ru.bestPrice)}`
+    } else if (ru.betType === 'spread' && ru.line !== undefined) {
+      ruPickDisplay = `${ru.team} ${ru.line > 0 ? '+' : ''}${ru.line} @ ${formatOdds(ru.bestPrice)}`
+    } else {
+      ruPickDisplay = `${ru.team} ML @ ${formatOdds(ru.bestPrice)}`
+    }
+    lines.push('**ALTERNATIVE:**')
+    lines.push('')
+    lines.push(`#2: ${ruPickDisplay} (Score: ${ru.score}/100, ${ru.consensusProbability}% prob)`)
+    lines.push('')
   }
   
-    if (result.runnerUp) {
-      const ru = result.runnerUp
-      // Format runner-up bet type display
-      let ruBetTypeDisplay: string
-      let ruTeamDisplay: string
-      if (ru.betType === 'total' && ru.line !== undefined) {
-        ruBetTypeDisplay = `${ru.team} ${ru.line}`
-        ruTeamDisplay = `${ru.awayTeam} @ ${ru.homeTeam} — ${ru.team} ${ru.line}`
-      } else if (ru.betType === 'spread' && ru.line !== undefined) {
-        ruBetTypeDisplay = `Spread ${ru.line > 0 ? '+' : ''}${ru.line}`
-        ruTeamDisplay = `${ru.team} (${ruBetTypeDisplay})`
-      } else {
-        ruBetTypeDisplay = 'Moneyline'
-        ruTeamDisplay = `${ru.team} (${ruBetTypeDisplay})`
-      }
-      lines.push('')
-      lines.push('RUNNER-UP:')
-      lines.push(`Pick: ${ruTeamDisplay}`)
-    lines.push(`Game: ${ru.awayTeam} @ ${ru.homeTeam}`)
-    lines.push(`Score: ${ru.score}/100 | Prob: ${ru.consensusProbability}% | ROI: ${ru.roi.toFixed(2)}%`)
-  }
-  
-  lines.push('')
-  lines.push('IMPORTANT: When user asks for "best bet", present the BEST BET above.')
-  lines.push('This bet was selected because it has the HIGHEST SCORE using the unified 45/35/20 formula.')
-  lines.push('Always show the score and breakdown in your response.')
+  lines.push(`Available at ${bet.bestBook}.`)
   
   return lines.join('\n')
 }
@@ -1719,17 +1647,15 @@ export async function analyzeSpecificGame(game: Game): Promise<GameAnalysisResul
  */
 export function formatGameAnalysisForContext(result: GameAnalysisResult): string {
   const lines: string[] = []
+  const emoji = getSportEmoji(result.game.sportName)
   
-  lines.push(`=== GAME ANALYSIS: ${result.game.awayTeam} @ ${result.game.homeTeam} ===`)
-  lines.push(`Sport: ${result.game.sportName}`)
-  lines.push(`Game Time: ${formatTime(result.game.commenceTime)}`)
-  lines.push(`Analysis Time: ${formatTime(result.calculatedAt)}`)
-  lines.push(`Betting Options Analyzed: ${result.bets.length}`)
+  lines.push(`${emoji} GAME ANALYSIS: ${result.game.awayTeam} @ ${result.game.homeTeam}`)
+  lines.push('')
+  lines.push(`${result.game.sportName} | ${formatTime(result.game.commenceTime)}`)
   lines.push('')
   
   if (!result.bestBet) {
-    lines.push('NO BETTING OPTIONS AVAILABLE')
-    lines.push('This game may have already started or odds are not available.')
+    lines.push('No betting options available for this game. The game may have already started or odds are not available.')
     return lines.join('\n')
   }
   
@@ -1739,112 +1665,84 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
   const isTotal = bet.betType === 'total'
   
   // Format bet type display
-  let betTypeDisplay: string
-  let teamDisplay: string
+  let pickDisplay: string
   if (isTotal) {
-    betTypeDisplay = `${bet.team} ${bet.line}`
-    teamDisplay = betTypeDisplay
+    pickDisplay = `${bet.team} ${bet.line} @ ${formatOdds(bet.bestPrice)}`
   } else if (isSpread && bet.line !== undefined) {
-    betTypeDisplay = `Spread ${bet.line > 0 ? '+' : ''}${bet.line}`
-    teamDisplay = `${bet.team} (${betTypeDisplay})`
+    pickDisplay = `${bet.team} ${bet.line > 0 ? '+' : ''}${bet.line} @ ${formatOdds(bet.bestPrice)}`
   } else {
-    betTypeDisplay = 'Moneyline'
-    teamDisplay = `${bet.team} (${betTypeDisplay})`
+    pickDisplay = `${bet.team} ML @ ${formatOdds(bet.bestPrice)}`
   }
   
-  lines.push('=== BEST BET FOR THIS GAME ===')
-  lines.push(`**Pick: ${teamDisplay} @ ${formatOdds(bet.bestPrice)}**`)
-  lines.push(`Book: ${bet.bestBook}`)
+  lines.push('**TOP PICK FOR THIS GAME:**')
+  lines.push('')
+  lines.push(`**${pickDisplay}**`)
   lines.push(`Score: ${bet.score}/100`)
   lines.push('')
   
   // Model probability
   const modelProbPercent = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
   const modelSource = bet.eloProbability !== undefined ? 'Elo Model' : 'Market Consensus'
-  const probLabel = isTotal ? `${bet.team} probability` : isSpread ? 'cover probability' : 'win probability'
+  const probLabel = isTotal ? `${bet.team.toLowerCase()} probability` : isSpread ? 'cover probability' : 'win probability'
   
-  // 1. THE EDGE
-  lines.push('=== THE EDGE (Why This Bet Has Value) ===')
+  // WHY THIS BET
+  lines.push('**WHY THIS BET:**')
+  lines.push('')
   if (bet.eloProbability !== undefined) {
     if (isSpread) {
-      lines.push(`Our Elo Model: ${bet.eloProbability}% cover probability`)
-      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing ${bet.team} covering)`)
+      lines.push(`Our Elo model gives ${bet.team} an ${bet.eloProbability}% probability to cover the spread, while the market odds (${formatOdds(bet.bestPrice)}) imply only ${bet.impliedProbability}%. That's a ${bet.edge}% edge.`)
     } else if (isTotal) {
-      lines.push(`Our Elo Model: ${bet.eloProbability}% ${bet.team.toLowerCase()} probability`)
-      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing the ${bet.team.toLowerCase()})`)
+      lines.push(`Our Elo model gives this game a ${bet.eloProbability}% probability of going ${bet.team.toLowerCase()}, while the market odds (${formatOdds(bet.bestPrice)}) imply only ${bet.impliedProbability}%. That's a ${bet.edge}% edge.`)
     } else {
-      lines.push(`Our Elo Model: ${bet.eloProbability}% win probability`)
-      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing this team)`)
+      lines.push(`Our Elo model gives ${bet.team} a ${bet.eloProbability}% win probability, while the market odds (${formatOdds(bet.bestPrice)}) imply only ${bet.impliedProbability}%. That's a ${bet.edge}% edge.`)
     }
   } else {
-    lines.push(`Market Consensus: ${bet.consensusProbability}% ${probLabel}`)
-    lines.push(`Best Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-    lines.push(`EDGE: +${bet.edge}% vs market`)
+    lines.push(`Market consensus shows a ${bet.consensusProbability}% ${probLabel}. The best available odds (${formatOdds(bet.bestPrice)}) offer a ${bet.edge}% edge.`)
   }
   lines.push('')
   
-  // 2. MATCHUP ANALYSIS - Elo ratings
-  lines.push('=== MATCHUP ANALYSIS ===')
+  // Matchup context with Elo
   if (bet.homeElo != null && bet.awayElo != null) {
+    const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
+    const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
     if (isTotal) {
       const avgElo = Math.round((bet.homeElo + bet.awayElo) / 2)
-      lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
-      lines.push(`Combined Elo Strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo})`)
-      lines.push(`Market Total Line: ${bet.line}`)
-      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+      lines.push(`Combined Elo strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo}). Market line: ${bet.line}.`)
     } else {
-      lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo})`)
-      const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
-      const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
-      lines.push(`Elo Difference: ${eloDiff} points favoring ${favoredTeam}`)
-      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
-    }
-  } else {
-    lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
-    lines.push('Elo ratings not available - using market consensus')
-  }
-  lines.push('')
-  
-  // 3. VALUE METRICS
-  lines.push('=== VALUE METRICS ===')
-  lines.push(`- ${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
-  lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
-  lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
-  lines.push(`- Edge: ${bet.edge}%`)
-  lines.push(`- Best Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
-  lines.push('')
-  
-  // 4. ALL BOOK PRICES
-  lines.push('=== ALL BOOK PRICES ===')
-  const bookPrices = bet.allBookPrices || []
-  for (const book of bookPrices) {
-    lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
-  }
-  lines.push('')
-  
-  // 5. OTHER BETTING OPTIONS FOR THIS GAME
-  if (result.bets.length > 1) {
-    lines.push('=== OTHER BETTING OPTIONS ===')
-    for (let i = 1; i < Math.min(result.bets.length, 5); i++) {
-      const otherBet = result.bets[i]
-      let otherDisplay: string
-      if (otherBet.betType === 'total') {
-        otherDisplay = `${otherBet.team} ${otherBet.line}`
-      } else if (otherBet.betType === 'spread' && otherBet.line !== undefined) {
-        otherDisplay = `${otherBet.team} ${otherBet.line > 0 ? '+' : ''}${otherBet.line}`
-      } else {
-        otherDisplay = `${otherBet.team} ML`
-      }
-      lines.push(`${i + 1}. ${otherDisplay} @ ${formatOdds(otherBet.bestPrice)} | Score: ${otherBet.score}/100 | Edge: ${otherBet.edge}% | ROI: ${otherBet.roi.toFixed(2)}%`)
+      lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo}). The ${eloDiff}-point Elo difference favors ${favoredTeam}.`)
     }
     lines.push('')
   }
   
-  lines.push('IMPORTANT: Use the analysis above to answer the user\'s question about this game.')
-  lines.push('Always include the Elo ratings, edge, and value metrics in your response.')
+  // Value breakdown
+  lines.push('**VALUE:**')
+  lines.push('')
+  lines.push(`${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
+  lines.push(`Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
+  lines.push(`ROI: ${bet.roi.toFixed(2)}%`)
+  lines.push(`Edge: ${bet.edge}%`)
+  lines.push('')
+  
+  // Other betting options for this game
+  if (result.bets.length > 1) {
+    lines.push('**OTHER OPTIONS:**')
+    lines.push('')
+    for (let i = 1; i < Math.min(result.bets.length, 5); i++) {
+      const otherBet = result.bets[i]
+      let otherDisplay: string
+      if (otherBet.betType === 'total') {
+        otherDisplay = `${otherBet.team} ${otherBet.line} @ ${formatOdds(otherBet.bestPrice)}`
+      } else if (otherBet.betType === 'spread' && otherBet.line !== undefined) {
+        otherDisplay = `${otherBet.team} ${otherBet.line > 0 ? '+' : ''}${otherBet.line} @ ${formatOdds(otherBet.bestPrice)}`
+      } else {
+        otherDisplay = `${otherBet.team} ML @ ${formatOdds(otherBet.bestPrice)}`
+      }
+      lines.push(`#${i + 1}: ${otherDisplay} (Score: ${otherBet.score}/100, ${otherBet.edge}% edge)`)
+    }
+    lines.push('')
+  }
+  
+  lines.push(`Available at ${bet.bestBook}.`)
   
   return lines.join('\n')
 }
@@ -2031,55 +1929,45 @@ export function computeSportBestBets(allRankedBets: RankedBet[]): SportBestBets 
 export function formatParlayForContext(parlay: ParlayResult): string {
   const lines: string[] = []
   
-  lines.push('=== PRE-COMPUTED PARLAY OF THE DAY ===')
-  lines.push('')
-  
   if (!parlay.safeParlay) {
-    lines.push(`NO PARLAY AVAILABLE: ${parlay.reason}`)
+    lines.push('🎯 PARLAY OF THE DAY')
     lines.push('')
-    lines.push('When user asks for a parlay, respond with this two-tier message:')
+    lines.push('No parlay available today. Parlays require at least 2 games that meet our value criteria (55% probability, 3% edge, max -250 juice).')
     lines.push('')
-    lines.push('TIER 1 - EXPLAIN WHY NO PARLAY:')
-    lines.push('"No parlay available today. Parlays require at least 2 games that meet our value criteria (55% probability, 3% edge, max -250 juice)."')
-    lines.push('')
-    lines.push('"Today\'s market doesn\'t have enough qualifying games to build a responsible parlay."')
-    lines.push('')
-    lines.push('TIER 2 - OFFER ALTERNATIVES:')
-    lines.push('"If you still want a parlay, I can show you:"')
-    lines.push('- "Most likely winners parlay - High probability picks combined, but may have negative edge (informational only)"')
-    lines.push('')
-    lines.push('"Would you like to see that? Note: This is NOT a recommendation - just informational."')
-    lines.push('')
+    lines.push('Today\'s market doesn\'t have enough qualifying games to build a responsible parlay. Check back later when more games are scheduled.')
     return lines.join('\n')
   }
   
-  lines.push('SAFE PARLAY (2 Legs) - Recommended:')
-  lines.push(`Combined Win Probability: ${parlay.combinedProbability}%`)
+  lines.push('🎯 PARLAY OF THE DAY')
+  lines.push('')
+  lines.push(`**2-Leg Parlay** | Combined Win Probability: ${parlay.combinedProbability}%`)
   lines.push('')
   
   for (let i = 0; i < parlay.safeParlay.length; i++) {
     const leg = parlay.safeParlay[i]
-    lines.push(`Leg ${i + 1}: ${leg.team} ML (${leg.consensusProbability}%)`)
-    lines.push(`  Game: ${leg.awayTeam} @ ${leg.homeTeam}`)
-    lines.push(`  Best Price: ${formatOdds(leg.bestPrice)} at ${leg.bestBook}`)
+    const emoji = getSportEmoji(leg.sportName)
+    lines.push(`${emoji} **Leg ${i + 1}: ${leg.team} ML @ ${formatOdds(leg.bestPrice)}**`)
+    lines.push(`${leg.awayTeam} @ ${leg.homeTeam} | ${leg.consensusProbability}% win probability`)
+    lines.push(`Available at ${leg.bestBook}`)
+    lines.push('')
   }
   
   if (parlay.aggressiveParlay) {
-    lines.push('')
-    lines.push('AGGRESSIVE PARLAY (3 Legs) - Higher Risk/Reward:')
     const aggCombinedProb = parlay.aggressiveParlay.reduce((acc, leg) => acc * (leg.consensusProbability / 100), 1) * 100
-    lines.push(`Combined Win Probability: ${Math.round(aggCombinedProb * 10) / 10}%`)
+    lines.push('---')
+    lines.push('')
+    lines.push(`**3-Leg Aggressive Parlay** | Combined Win Probability: ${Math.round(aggCombinedProb * 10) / 10}%`)
     lines.push('')
     
     for (let i = 0; i < parlay.aggressiveParlay.length; i++) {
       const leg = parlay.aggressiveParlay[i]
-      lines.push(`Leg ${i + 1}: ${leg.team} ML (${leg.consensusProbability}%)`)
+      const emoji = getSportEmoji(leg.sportName)
+      lines.push(`${emoji} Leg ${i + 1}: ${leg.team} ML @ ${formatOdds(leg.bestPrice)} (${leg.consensusProbability}%)`)
     }
+    lines.push('')
   }
   
-  lines.push('')
-  lines.push('IMPORTANT: When user asks for a parlay, present the SAFE PARLAY above.')
-  lines.push('Explain that parlay odds vary by sportsbook - recommend placing at one book.')
+  lines.push('*Note: Parlay odds vary by sportsbook. Place all legs at one book for best pricing.*')
   
   return lines.join('\n')
 }
@@ -2090,26 +1978,27 @@ export function formatParlayForContext(parlay: ParlayResult): string {
 export function formatSportBestBetsForContext(sportBets: SportBestBets): string {
   const lines: string[] = []
   
-  lines.push('=== SPORT-SPECIFIC BEST BETS ===')
-  lines.push('')
-  lines.push('When user asks for "best NBA bet" or "best NFL bet", use these:')
-  lines.push('')
-  
   const sports = Object.keys(sportBets).sort()
   
   if (sports.length === 0) {
-    lines.push('No sport-specific bets available.')
+    lines.push('🎯 SPORT-SPECIFIC BEST BETS')
+    lines.push('')
+    lines.push('No sport-specific bets available at this time.')
     return lines.join('\n')
   }
+  
+  lines.push('🎯 BEST BETS BY SPORT')
+  lines.push('')
   
   for (const sport of sports) {
     const bet = sportBets[sport]
     if (!bet) continue
     
-    lines.push(`${sport.toUpperCase()}:`)
-    lines.push(`  ${bet.team} ML @ ${formatOdds(bet.bestPrice)}`)
-    lines.push(`  Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
-    lines.push(`  Probability: ${bet.consensusProbability}% | Edge: ${bet.edge}%`)
+    const emoji = getSportEmoji(bet.sportName)
+    const modelProb = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+    
+    lines.push(`${emoji} **${sport.toUpperCase()}:** ${bet.team} ML @ ${formatOdds(bet.bestPrice)}`)
+    lines.push(`${bet.awayTeam} @ ${bet.homeTeam} | ${modelProb}% prob | ${bet.edge}% edge | Score: ${bet.score}/100`)
     lines.push('')
   }
   
@@ -2186,103 +2075,72 @@ export function getFilteredBestBetWithElo(
  */
 export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription: string = ''): string {
   const lines: string[] = []
+  const emoji = getSportEmoji(bet.sportName)
   
   const isSpread = bet.betType === 'spread'
   const isTotal = bet.betType === 'total'
   
   // Format bet type display
-  let betTypeDisplay: string
-  let teamDisplay: string
+  let pickDisplay: string
   if (isTotal) {
-    betTypeDisplay = `${bet.team} ${bet.line}`
-    teamDisplay = betTypeDisplay
+    pickDisplay = `${bet.team} ${bet.line} @ ${formatOdds(bet.bestPrice)}`
   } else if (isSpread && bet.line !== undefined) {
-    betTypeDisplay = `Spread ${bet.line > 0 ? '+' : ''}${bet.line}`
-    teamDisplay = `${bet.team} (${betTypeDisplay})`
+    pickDisplay = `${bet.team} ${bet.line > 0 ? '+' : ''}${bet.line} @ ${formatOdds(bet.bestPrice)}`
   } else {
-    betTypeDisplay = 'Moneyline'
-    teamDisplay = `${bet.team} (${betTypeDisplay})`
+    pickDisplay = `${bet.team} ML @ ${formatOdds(bet.bestPrice)}`
   }
   
-  lines.push(`=== BEST BET${filterDescription ? ` (${filterDescription})` : ''} ===`)
-  lines.push(`Sport: ${bet.sportName}`)
-  lines.push(`Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
-  lines.push(`Game Time: ${formatTime(bet.commenceTime)}`)
+  lines.push(`${emoji} BEST BET${filterDescription ? ` (${filterDescription})` : ''}`)
   lines.push('')
-  lines.push(`**Pick: ${teamDisplay} @ ${formatOdds(bet.bestPrice)}**`)
-  lines.push(`Book: ${bet.bestBook}`)
+  lines.push(`**${pickDisplay}**`)
+  lines.push(`${bet.awayTeam} @ ${bet.homeTeam} | ${bet.sportName} | ${formatTime(bet.commenceTime)}`)
   lines.push(`Score: ${bet.score}/100`)
   lines.push('')
   
   // Model probability
   const modelProbPercent = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
   const modelSource = bet.eloProbability !== undefined ? 'Elo Model' : 'Market Consensus'
-  const probLabel = isTotal ? `${bet.team} probability` : isSpread ? 'cover probability' : 'win probability'
+  const probLabel = isTotal ? `${bet.team.toLowerCase()} probability` : isSpread ? 'cover probability' : 'win probability'
   
-  // 1. THE EDGE
-  lines.push('=== THE EDGE (Why This Bet Has Value) ===')
+  // WHY THIS BET
+  lines.push('**WHY THIS BET:**')
+  lines.push('')
   if (bet.eloProbability !== undefined) {
     if (isSpread) {
-      lines.push(`Our Elo Model: ${bet.eloProbability}% cover probability`)
-      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing ${bet.team} covering)`)
+      lines.push(`Our Elo model gives ${bet.team} an ${bet.eloProbability}% probability to cover the spread, while the market odds (${formatOdds(bet.bestPrice)}) imply only ${bet.impliedProbability}%. That's a ${bet.edge}% edge.`)
     } else if (isTotal) {
-      lines.push(`Our Elo Model: ${bet.eloProbability}% ${bet.team.toLowerCase()} probability`)
-      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing the ${bet.team.toLowerCase()})`)
+      lines.push(`Our Elo model gives this game a ${bet.eloProbability}% probability of going ${bet.team.toLowerCase()}, while the market odds (${formatOdds(bet.bestPrice)}) imply only ${bet.impliedProbability}%. That's a ${bet.edge}% edge.`)
     } else {
-      lines.push(`Our Elo Model: ${bet.eloProbability}% win probability`)
-      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing this team)`)
+      lines.push(`Our Elo model gives ${bet.team} a ${bet.eloProbability}% win probability, while the market odds (${formatOdds(bet.bestPrice)}) imply only ${bet.impliedProbability}%. That's a ${bet.edge}% edge.`)
     }
   } else {
-    lines.push(`Market Consensus: ${bet.consensusProbability}% ${probLabel}`)
-    lines.push(`Best Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
-    lines.push(`EDGE: +${bet.edge}% vs market`)
+    lines.push(`Market consensus shows a ${bet.consensusProbability}% ${probLabel}. The best available odds (${formatOdds(bet.bestPrice)}) offer a ${bet.edge}% edge.`)
   }
   lines.push('')
   
-  // 2. MATCHUP ANALYSIS - Elo ratings
-  lines.push('=== MATCHUP ANALYSIS ===')
+  // Matchup context with Elo
   if (bet.homeElo != null && bet.awayElo != null) {
+    const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
+    const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
     if (isTotal) {
       const avgElo = Math.round((bet.homeElo + bet.awayElo) / 2)
-      lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
-      lines.push(`Combined Elo Strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo})`)
-      lines.push(`Market Total Line: ${bet.line}`)
-      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+      lines.push(`Combined Elo strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo}). Market line: ${bet.line}.`)
     } else {
-      lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo})`)
-      const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
-      const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
-      lines.push(`Elo Difference: ${eloDiff} points favoring ${favoredTeam}`)
-      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
-    }
-  } else {
-    lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
-    lines.push('Elo ratings not available - using market consensus')
-  }
-  lines.push('')
-  
-  // 3. VALUE METRICS
-  lines.push('=== VALUE METRICS ===')
-  lines.push(`- ${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
-  lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
-  lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
-  lines.push(`- Edge: ${bet.edge}%`)
-  lines.push(`- Best Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
-  lines.push('')
-  
-  // 4. ALL BOOK PRICES
-  if (bet.allBookPrices && bet.allBookPrices.length > 0) {
-    lines.push('=== ALL BOOK PRICES ===')
-    for (const book of bet.allBookPrices) {
-      lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
+      lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo}). The ${eloDiff}-point Elo difference favors ${favoredTeam}.`)
     }
     lines.push('')
   }
   
-  lines.push('This recommendation is based on our Elo rating model analysis.')
+  // Value breakdown
+  lines.push('**VALUE:**')
+  lines.push('')
+  lines.push(`${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
+  lines.push(`Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
+  lines.push(`ROI: ${bet.roi.toFixed(2)}%`)
+  lines.push(`Edge: ${bet.edge}%`)
+  lines.push('')
+  
+  lines.push(`Available at ${bet.bestBook}.`)
   
   return lines.join('\n')
 }
@@ -2956,135 +2814,109 @@ export function formatBestPropForContext(result: BestPropResult, modelFirstProps
   const lines: string[] = []
   
   // Use MODEL-FIRST props as the PRIMARY source for ALL player prop questions
-  // This is like how we use Elo for team-based game recommendations
   const rankedProps = modelFirstProps?.allRankedProps && modelFirstProps.allRankedProps.length > 0 
     ? modelFirstProps.allRankedProps 
     : result.allRankedProps || []
   
-  // Find the best prop with positive edge (for "best prop" recommendations)
+  // Find the best prop with positive edge
   const propsWithPositiveEdge = rankedProps.filter(p => {
     const edge = p.modelEdge !== undefined ? p.modelEdge : p.edge
     return edge > 0
   })
   
-  // Best prop is the top-ranked prop with positive edge
   const bestProp = propsWithPositiveEdge.length > 0 ? propsWithPositiveEdge[0] : null
   const runnerUp = propsWithPositiveEdge.length > 1 ? propsWithPositiveEdge[1] : null
   
-  // FIRST: Compact list of TOP 10 props for parlay building AND general prop questions
-  lines.push('=== TOP 10 RANKED PLAYER PROPS ===')
-  lines.push('INSTRUCTION: For ALL player prop questions (single props, parlays, PrizePicks, Underdog), use this list.')
-  lines.push('Props are ranked by our player stats model (like Elo for teams).')
-  lines.push('Each prop includes model probability and edge - use these values in your response.')
-  lines.push('')
-  
-  if (rankedProps.length > 0) {
-    for (let i = 0; i < rankedProps.length; i++) {
-      const p = rankedProps[i]
-      const modelProb = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
-      const modelEdge = p.modelEdge !== undefined ? p.modelEdge : p.edge
-      const gamesPlayed = p.modelGamesPlayed !== undefined ? p.modelGamesPlayed : 0
-      const sportName = SPORT_NAME_MAP[p.sport] || p.sport
-      const edgeLabel = modelEdge > 0 ? `+${modelEdge}%` : `${modelEdge}%`
-      
-      lines.push(`#${i + 1}: ${p.playerName} ${p.pick} ${p.line} ${p.marketDisplay} (${sportName})`)
-      lines.push(`   Game: ${p.awayTeam} @ ${p.homeTeam}`)
-      lines.push(`   Model Prob: ${modelProb}% | Edge: ${edgeLabel} | Games: ${gamesPlayed} | Best: ${formatOdds(p.bestPrice)} @ ${p.bestBook}`)
-      lines.push('')
-    }
-  } else {
-    lines.push('No ranked props available.')
-    lines.push('')
-  }
-  
-  // BEST PROP OF THE DAY - Top prop with positive edge
-  lines.push('=== BEST PROP OF THE DAY ===')
-  lines.push('')
-  
   if (!bestProp) {
-    // No props with positive edge, but we still have ranked props to show
+    // No props with positive edge
     if (rankedProps.length > 0) {
-      lines.push('NO +EV PROP TODAY: None of the ranked props have positive edge.')
+      lines.push('🎯 BEST PLAYER PROP')
       lines.push('')
-      lines.push('However, here are the BEST AVAILABLE props ranked by our model:')
+      lines.push('No props with positive edge today. Here are the best available options ranked by our model:')
       lines.push('')
       
-      // Show top 3 as "best available" (not recommendations)
       for (let i = 0; i < Math.min(3, rankedProps.length); i++) {
         const p = rankedProps[i]
         const modelProb = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
         const modelEdge = p.modelEdge !== undefined ? p.modelEdge : p.edge
-        lines.push(`${i + 1}. ${p.playerName} ${p.pick} ${p.line} ${p.marketDisplay}`)
-        lines.push(`   Model Prob: ${modelProb}% | Edge: ${modelEdge}% | Best: ${formatOdds(p.bestPrice)} @ ${p.bestBook}`)
+        const sportName = SPORT_NAME_MAP[p.sport] || p.sport
+        const emoji = getSportEmoji(sportName)
+        
+        lines.push(`${emoji} #${i + 1}: **${p.playerName} ${p.pick} ${p.line} ${p.marketDisplay}**`)
+        lines.push(`${p.awayTeam} @ ${p.homeTeam} | ${modelProb}% prob | ${modelEdge}% edge`)
+        lines.push(`Available at ${p.bestBook} @ ${formatOdds(p.bestPrice)}`)
         lines.push('')
       }
       
-      lines.push('NOTE: These are the highest-ranked props by our model but do NOT have positive edge.')
-      lines.push('Present these as "best available" options, not as recommendations.')
+      lines.push('*Note: These props do not have positive edge. Consider smaller bet sizes.*')
     } else {
-      lines.push('NO PROPS AVAILABLE: No player props data available.')
+      lines.push('🎯 BEST PLAYER PROP')
       lines.push('')
+      lines.push('No player props data available at this time.')
     }
   } else {
     // We have a best prop with positive edge
     const modelProb = bestProp.modelProbability !== undefined ? bestProp.modelProbability : bestProp.consensusProbability
-    const modelSource = bestProp.modelProbability !== undefined ? `Historical Stats (${bestProp.modelGamesPlayed} games)` : `Market Consensus (${bestProp.booksWithLine} books)`
+    const modelSource = bestProp.modelProbability !== undefined ? `${bestProp.modelGamesPlayed} games` : `${bestProp.booksWithLine} books`
     const edgeToShow = bestProp.modelEdge !== undefined ? bestProp.modelEdge : bestProp.edge
+    const sportName = SPORT_NAME_MAP[bestProp.sport] || bestProp.sport
+    const emoji = getSportEmoji(sportName)
     
-    // LEAD WITH THE EDGE
-    lines.push('=== THE EDGE (Why This Prop Has Value) ===')
-    lines.push(`Our Model: ${modelProb}% probability (${modelSource})`)
-    lines.push(`Market Odds (${formatOdds(bestProp.bestPrice)}): ${bestProp.impliedProbability}% implied probability`)
-    lines.push(`EDGE FOUND: +${edgeToShow}% (Market is undervaluing this prop)`)
+    lines.push(`${emoji} BEST PLAYER PROP`)
+    lines.push('')
+    lines.push(`**${bestProp.playerName} ${bestProp.pick} ${bestProp.line} ${bestProp.marketDisplay} @ ${formatOdds(bestProp.bestPrice)}**`)
+    lines.push(`${bestProp.awayTeam} @ ${bestProp.homeTeam} | ${sportName}`)
     lines.push('')
     
-    // Show player stats context if model data available
+    // WHY THIS PROP
+    lines.push('**WHY THIS PROP:**')
+    lines.push('')
+    lines.push(`Our model gives this prop a ${modelProb}% probability (based on ${modelSource}), while the market odds (${formatOdds(bestProp.bestPrice)}) imply only ${bestProp.impliedProbability}%. That's a ${edgeToShow}% edge.`)
+    lines.push('')
+    
+    // Player stats context
     if (bestProp.modelProbability !== undefined && bestProp.modelGamesPlayed !== undefined) {
-      lines.push(`Player Average: ${bestProp.modelAverage} ${bestProp.marketDisplay} (line is ${bestProp.line})`)
-      lines.push(`Sample Size: ${bestProp.modelGamesPlayed} games`)
-      if (bestProp.modelEdge !== undefined && bestProp.modelEdge > 0 && bestProp.edge > 0) {
-        lines.push('CONFIDENCE: HIGH (both historical stats and market consensus show positive edge)')
-      }
+      lines.push(`${bestProp.playerName} averages ${bestProp.modelAverage} ${bestProp.marketDisplay} over the last ${bestProp.modelGamesPlayed} games. The line is set at ${bestProp.line}.`)
       lines.push('')
     }
     
-    lines.push('BEST PROP:')
-    lines.push(`Player: ${bestProp.playerName}`)
-    lines.push(`Prop: ${bestProp.pick} ${bestProp.line} ${bestProp.marketDisplay}`)
-    lines.push(`Game: ${bestProp.awayTeam} @ ${bestProp.homeTeam}`)
-    lines.push(`Best Price: ${formatOdds(bestProp.bestPrice)} at ${bestProp.bestBook}`)
+    // Value breakdown
+    lines.push('**VALUE:**')
+    lines.push('')
+    lines.push(`Model Probability: ${modelProb}%`)
+    lines.push(`Market Consensus: ${bestProp.consensusProbability}%`)
+    lines.push(`Edge: +${edgeToShow}%`)
     lines.push('')
     
-    lines.push('PROBABILITY BREAKDOWN:')
-    lines.push(`- Model Probability: ${modelProb}% (${modelSource})`)
-    lines.push(`- Market Consensus: ${bestProp.consensusProbability}% (no-vig from ${bestProp.booksWithLine} books)`)
-    lines.push(`- Implied from Best Price: ${bestProp.impliedProbability}%`)
-    lines.push(`- Edge vs Market: +${edgeToShow}%`)
-    lines.push('')
-    
-    if (bestProp.allBookPrices && bestProp.allBookPrices.length > 0) {
-      lines.push('ALL BOOK PRICES:')
-      for (const book of bestProp.allBookPrices) {
-        lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
-      }
-      lines.push('')
-    }
-    
+    // Runner-up
     if (runnerUp) {
       const ruProb = runnerUp.modelProbability !== undefined ? runnerUp.modelProbability : runnerUp.consensusProbability
       const ruEdge = runnerUp.modelEdge !== undefined ? runnerUp.modelEdge : runnerUp.edge
-      lines.push('RUNNER-UP PROP:')
-      lines.push(`${runnerUp.playerName} ${runnerUp.pick} ${runnerUp.line} ${runnerUp.marketDisplay}`)
-      lines.push(`Model Prob: ${ruProb}% | Edge: +${ruEdge}%`)
+      lines.push('**ALTERNATIVE:**')
+      lines.push('')
+      lines.push(`#2: ${runnerUp.playerName} ${runnerUp.pick} ${runnerUp.line} ${runnerUp.marketDisplay} @ ${formatOdds(runnerUp.bestPrice)} (${ruProb}% prob, +${ruEdge}% edge)`)
       lines.push('')
     }
+    
+    lines.push(`Available at ${bestProp.bestBook}.`)
   }
   
-  lines.push('INSTRUCTIONS FOR PLAYER PROP QUESTIONS:')
-  lines.push('- For "best prop" / "prop bet" questions: Present the BEST PROP above (if positive edge) or best available (if no positive edge)')
-  lines.push('- For parlays / PrizePicks / Underdog: Pick from the TOP 10 RANKED PLAYER PROPS list')
-  lines.push('- Always include the model probability and edge in your response')
-  lines.push('- Props are ranked by our player stats model (like Elo for teams)')
+  // Add top props list for parlay building
+  if (rankedProps.length > 3) {
+    lines.push('')
+    lines.push('---')
+    lines.push('')
+    lines.push('**TOP RANKED PROPS:**')
+    lines.push('')
+    for (let i = 0; i < Math.min(10, rankedProps.length); i++) {
+      const p = rankedProps[i]
+      const modelProb = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
+      const modelEdge = p.modelEdge !== undefined ? p.modelEdge : p.edge
+      const edgeLabel = modelEdge > 0 ? `+${modelEdge}%` : `${modelEdge}%`
+      
+      lines.push(`#${i + 1}: ${p.playerName} ${p.pick} ${p.line} ${p.marketDisplay} | ${modelProb}% prob | ${edgeLabel} edge`)
+    }
+  }
   
   return lines.join('\n')
 }
