@@ -2110,6 +2110,177 @@ export function formatSportBestBetsForContext(sportBets: SportBestBets): string 
   return lines.join('\n')
 }
 
+/**
+ * Filter sport bets by inclusion/exclusion and format for deterministic response
+ * Only returns bets that have Elo data
+ */
+export function getFilteredBestBetWithElo(
+  sportBets: SportBestBets,
+  excludeSports: string[] = [],
+  includeSports: string[] = []
+): { bet: RankedBet | null; availableSports: string[]; message: string } {
+  // Normalize sport names for comparison
+  const normalizeForFilter = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '')
+  const excludeNorm = excludeSports.map(normalizeForFilter)
+  const includeNorm = includeSports.map(normalizeForFilter)
+  
+  // Get all available sports with Elo data
+  const sportsWithElo = Object.entries(sportBets)
+    .filter(([, bet]) => bet && bet.eloProbability != null && bet.homeElo != null && bet.awayElo != null)
+    .map(([sport]) => sport)
+  
+  // Apply filters
+  let filteredSports = sportsWithElo
+  
+  if (excludeNorm.length > 0) {
+    filteredSports = filteredSports.filter(sport => {
+      const sportNorm = normalizeForFilter(sport)
+      return !excludeNorm.some(ex => sportNorm.includes(ex) || ex.includes(sportNorm))
+    })
+  }
+  
+  if (includeNorm.length > 0) {
+    filteredSports = filteredSports.filter(sport => {
+      const sportNorm = normalizeForFilter(sport)
+      return includeNorm.some(inc => sportNorm.includes(inc) || inc.includes(sportNorm))
+    })
+  }
+  
+  // Find the best bet among filtered sports
+  let bestBet: RankedBet | null = null
+  for (const sport of filteredSports) {
+    const bet = sportBets[sport]
+    if (bet && (!bestBet || bet.score > bestBet.score)) {
+      bestBet = bet
+    }
+  }
+  
+  if (!bestBet) {
+    const filterDesc = excludeSports.length > 0 
+      ? `excluding ${excludeSports.join(', ')}`
+      : includeSports.length > 0 
+        ? `for ${includeSports.join(', ')}`
+        : ''
+    return {
+      bet: null,
+      availableSports: sportsWithElo,
+      message: `No Elo-based bets available ${filterDesc}. Sports with Elo data today: ${sportsWithElo.length > 0 ? sportsWithElo.join(', ') : 'none'}.`
+    }
+  }
+  
+  return {
+    bet: bestBet,
+    availableSports: sportsWithElo,
+    message: ''
+  }
+}
+
+/**
+ * Format a filtered best bet for deterministic response (with full Elo details)
+ */
+export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription: string = ''): string {
+  const lines: string[] = []
+  
+  const isSpread = bet.betType === 'spread'
+  const isTotal = bet.betType === 'total'
+  
+  // Format bet type display
+  let betTypeDisplay: string
+  let teamDisplay: string
+  if (isTotal) {
+    betTypeDisplay = `${bet.team} ${bet.line}`
+    teamDisplay = betTypeDisplay
+  } else if (isSpread && bet.line !== undefined) {
+    betTypeDisplay = `Spread ${bet.line > 0 ? '+' : ''}${bet.line}`
+    teamDisplay = `${bet.team} (${betTypeDisplay})`
+  } else {
+    betTypeDisplay = 'Moneyline'
+    teamDisplay = `${bet.team} (${betTypeDisplay})`
+  }
+  
+  lines.push(`=== BEST BET${filterDescription ? ` (${filterDescription})` : ''} ===`)
+  lines.push(`Sport: ${bet.sportName}`)
+  lines.push(`Game: ${bet.awayTeam} @ ${bet.homeTeam}`)
+  lines.push(`Game Time: ${formatTime(bet.commenceTime)}`)
+  lines.push('')
+  lines.push(`**Pick: ${teamDisplay} @ ${formatOdds(bet.bestPrice)}**`)
+  lines.push(`Book: ${bet.bestBook}`)
+  lines.push(`Score: ${bet.score}/100`)
+  lines.push('')
+  
+  // Model probability
+  const modelProbPercent = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+  const modelSource = bet.eloProbability !== undefined ? 'Elo Model' : 'Market Consensus'
+  const probLabel = isTotal ? `${bet.team} probability` : isSpread ? 'cover probability' : 'win probability'
+  
+  // 1. THE EDGE
+  lines.push('=== THE EDGE (Why This Bet Has Value) ===')
+  if (bet.eloProbability !== undefined) {
+    if (isSpread) {
+      lines.push(`Our Elo Model: ${bet.eloProbability}% cover probability`)
+      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
+      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing ${bet.team} covering)`)
+    } else if (isTotal) {
+      lines.push(`Our Elo Model: ${bet.eloProbability}% ${bet.team.toLowerCase()} probability`)
+      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
+      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing the ${bet.team.toLowerCase()})`)
+    } else {
+      lines.push(`Our Elo Model: ${bet.eloProbability}% win probability`)
+      lines.push(`Market Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
+      lines.push(`EDGE FOUND: +${bet.edge}% (Market is undervaluing this team)`)
+    }
+  } else {
+    lines.push(`Market Consensus: ${bet.consensusProbability}% ${probLabel}`)
+    lines.push(`Best Odds (${formatOdds(bet.bestPrice)}): ${bet.impliedProbability}% implied probability`)
+    lines.push(`EDGE: +${bet.edge}% vs market`)
+  }
+  lines.push('')
+  
+  // 2. MATCHUP ANALYSIS - Elo ratings
+  lines.push('=== MATCHUP ANALYSIS ===')
+  if (bet.homeElo != null && bet.awayElo != null) {
+    if (isTotal) {
+      const avgElo = Math.round((bet.homeElo + bet.awayElo) / 2)
+      lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
+      lines.push(`Combined Elo Strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo})`)
+      lines.push(`Market Total Line: ${bet.line}`)
+      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+    } else {
+      lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo})`)
+      const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
+      const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
+      lines.push(`Elo Difference: ${eloDiff} points favoring ${favoredTeam}`)
+      lines.push(`Elo Confidence: ${bet.eloConfidence || 'unknown'} (${bet.eloConfidence === 'high' ? '20+' : bet.eloConfidence === 'medium' ? '10-19' : '5-9'} games of data)`)
+    }
+  } else {
+    lines.push(`${bet.awayTeam} @ ${bet.homeTeam}`)
+    lines.push('Elo ratings not available - using market consensus')
+  }
+  lines.push('')
+  
+  // 3. VALUE METRICS
+  lines.push('=== VALUE METRICS ===')
+  lines.push(`- ${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
+  lines.push(`- Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
+  lines.push(`- ROI: ${bet.roi.toFixed(2)}%`)
+  lines.push(`- Edge: ${bet.edge}%`)
+  lines.push(`- Best Price: ${formatOdds(bet.bestPrice)} at ${bet.bestBook}`)
+  lines.push('')
+  
+  // 4. ALL BOOK PRICES
+  if (bet.allBookPrices && bet.allBookPrices.length > 0) {
+    lines.push('=== ALL BOOK PRICES ===')
+    for (const book of bet.allBookPrices) {
+      lines.push(`  ${book.book}: ${formatOdds(book.price)} (${book.impliedProb}% implied)`)
+    }
+    lines.push('')
+  }
+  
+  lines.push('This recommendation is based on our Elo rating model analysis.')
+  
+  return lines.join('\n')
+}
+
 // Cache keys for parlay and sport bets
 const PARLAY_CACHE_KEY = 'betanalytics:parlay'
 const SPORT_BETS_CACHE_KEY = 'betanalytics:sport-bets'

@@ -5,7 +5,7 @@ import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
 import { getCachedESPNOdds } from "@/lib/espn"
-import { analyzeSpecificGame, formatGameAnalysisForContext } from "@/lib/bet-ranking"
+import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
@@ -893,6 +893,107 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
   return null
 }
 
+/**
+ * Detect if the user is asking for a "best bet" recommendation with optional sport filters
+ * Returns filter info if detected, null otherwise
+ */
+function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; includeSports: string[]; filterDescription: string } | null {
+  const normalizedMessage = userMessage.toLowerCase()
+  
+  // Check if this looks like a "best bet" question
+  const bestBetPatterns = [
+    /\b(best|top|recommended?)\s+(bet|pick|play)\b/i,
+    /\bwhat\s+(should|do)\s+(i|you)\s+(bet|pick|play)\b/i,
+    /\bgive\s+me\s+a?\s*(bet|pick|play)\b/i,
+    /\b(make|give|show)\s+(me\s+)?(the\s+)?(best|a)\s+(bet|pick)\b/i,
+  ]
+  
+  const looksLikeBestBetQuestion = bestBetPatterns.some(pattern => pattern.test(normalizedMessage))
+  if (!looksLikeBestBetQuestion) {
+    return null
+  }
+  
+  // Parse sport exclusions (e.g., "not hockey", "no NHL", "excluding basketball")
+  const excludeSports: string[] = []
+  const includeSports: string[] = []
+  
+  // Exclusion patterns
+  const exclusionPatterns = [
+    /\b(not|no|without|excluding?|except)\s+(hockey|nhl)/i,
+    /\b(not|no|without|excluding?|except)\s+(basketball|nba|ncaab)/i,
+    /\b(not|no|without|excluding?|except)\s+(football|nfl|ncaaf)/i,
+    /\b(not|no|without|excluding?|except)\s+(baseball|mlb)/i,
+    /\b(not|no|without|excluding?|except)\s+(soccer)/i,
+    /\bnon[- ]?(hockey|nhl)/i,
+    /\bnon[- ]?(basketball|nba)/i,
+    /\bnon[- ]?(football|nfl)/i,
+    /\bnon[- ]?(baseball|mlb)/i,
+    /\bnon[- ]?(soccer)/i,
+  ]
+  
+  for (const pattern of exclusionPatterns) {
+    const match = normalizedMessage.match(pattern)
+    if (match) {
+      const sport = match[2] || match[1]
+      if (sport.includes('hockey') || sport.includes('nhl')) excludeSports.push('NHL')
+      else if (sport.includes('basketball') || sport.includes('nba')) excludeSports.push('NBA')
+      else if (sport.includes('ncaab')) excludeSports.push('NCAAB')
+      else if (sport.includes('football') || sport.includes('nfl')) excludeSports.push('NFL')
+      else if (sport.includes('ncaaf')) excludeSports.push('NCAAF')
+      else if (sport.includes('baseball') || sport.includes('mlb')) excludeSports.push('MLB')
+      else if (sport.includes('soccer')) excludeSports.push('soccer')
+    }
+  }
+  
+  // Inclusion patterns (e.g., "NBA bet", "best hockey pick", "NFL only")
+  const inclusionPatterns = [
+    /\b(hockey|nhl)\s+(bet|pick|play|only)\b/i,
+    /\b(basketball|nba|ncaab)\s+(bet|pick|play|only)\b/i,
+    /\b(football|nfl|ncaaf)\s+(bet|pick|play|only)\b/i,
+    /\b(baseball|mlb)\s+(bet|pick|play|only)\b/i,
+    /\b(soccer)\s+(bet|pick|play|only)\b/i,
+    /\bbest\s+(hockey|nhl)\b/i,
+    /\bbest\s+(basketball|nba|ncaab)\b/i,
+    /\bbest\s+(football|nfl|ncaaf)\b/i,
+    /\bbest\s+(baseball|mlb)\b/i,
+    /\bbest\s+(soccer)\b/i,
+    /\b(only|just)\s+(hockey|nhl)\b/i,
+    /\b(only|just)\s+(basketball|nba)\b/i,
+    /\b(only|just)\s+(football|nfl)\b/i,
+  ]
+  
+  // Only check inclusions if no exclusions were found
+  if (excludeSports.length === 0) {
+    for (const pattern of inclusionPatterns) {
+      const match = normalizedMessage.match(pattern)
+      if (match) {
+        const sport = match[1] || match[2]
+        if (sport.includes('hockey') || sport.includes('nhl')) includeSports.push('NHL')
+        else if (sport.includes('nba')) includeSports.push('NBA')
+        else if (sport.includes('ncaab')) includeSports.push('NCAAB')
+        else if (sport.includes('basketball')) { includeSports.push('NBA'); includeSports.push('NCAAB') }
+        else if (sport.includes('nfl')) includeSports.push('NFL')
+        else if (sport.includes('ncaaf')) includeSports.push('NCAAF')
+        else if (sport.includes('football')) { includeSports.push('NFL'); includeSports.push('NCAAF') }
+        else if (sport.includes('baseball') || sport.includes('mlb')) includeSports.push('MLB')
+        else if (sport.includes('soccer')) includeSports.push('soccer')
+      }
+    }
+  }
+  
+  // Build filter description
+  let filterDescription = ''
+  if (excludeSports.length > 0) {
+    filterDescription = `excluding ${excludeSports.join(', ')}`
+  } else if (includeSports.length > 0) {
+    filterDescription = `${includeSports.join('/')}`
+  }
+  
+  console.log(`[detectBestBetQuestion] Detected best bet question. Exclude: ${excludeSports.join(', ') || 'none'}, Include: ${includeSports.join(', ') || 'all'}`)
+  
+  return { excludeSports, includeSports, filterDescription }
+}
+
 export async function POST(request: Request) {
   try {
     // Check if API key is configured
@@ -948,6 +1049,63 @@ export async function POST(request: Request) {
     // Check if user is asking about a specific game and run on-demand analysis
     const userMessage = chatMessages[chatMessages.length - 1]
     const userMessageContent = extractMessageContent(userMessage.content)
+    
+    // Check for filtered "best bet" questions first (e.g., "best bet not hockey")
+    const bestBetFilter = detectBestBetQuestion(userMessageContent)
+    if (bestBetFilter && (bestBetFilter.excludeSports.length > 0 || bestBetFilter.includeSports.length > 0)) {
+      console.log(`[chat] Detected filtered best bet question: ${bestBetFilter.filterDescription}`)
+      try {
+        const sportBets = await getCachedSportBets()
+        if (sportBets) {
+          const result = getFilteredBestBetWithElo(sportBets, bestBetFilter.excludeSports, bestBetFilter.includeSports)
+          
+          let deterministicResponse: string
+          if (result.bet) {
+            deterministicResponse = formatFilteredBestBetResponse(result.bet, bestBetFilter.filterDescription)
+            console.log(`[chat] Returning filtered best bet: ${result.bet.team} (${result.bet.sportName})`)
+          } else {
+            deterministicResponse = result.message
+            console.log(`[chat] No Elo-based bets available for filter: ${bestBetFilter.filterDescription}`)
+          }
+          
+          // Save messages to database
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'user',
+            content: userMessage.content,
+          })
+          
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: deterministicResponse,
+          })
+          
+          await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+          
+          // Update question count for non-subscribers
+          if (!subStatus.isSubscribed) {
+            const user = await db.users.findById(session.user.id)
+            if (user) {
+              await db.users.update(session.user.id, { 
+                questionCount: (user.questionCount || 0) + 1
+              })
+            }
+          }
+          
+          // Return deterministic response directly, bypassing LLM
+          return NextResponse.json({ 
+            message: deterministicResponse,
+            questionsRemaining: subStatus.isSubscribed 
+              ? -1 
+              : Math.max(0, subStatus.questionsRemaining - 1)
+          })
+        }
+      } catch (err) {
+        console.error('[chat] Error processing filtered best bet question:', err)
+        // Fall through to LLM if processing fails
+      }
+    }
     
     const detectedGame = await detectGameQuestion(userMessageContent)
     if (detectedGame) {
