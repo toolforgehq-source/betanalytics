@@ -1854,19 +1854,21 @@ export async function getCachedBestBet(): Promise<BestBetResult | null> {
 export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult {
   const now = new Date().toISOString()
   
-  if (allRankedBets.length < 2) {
+  // Filter to only moneyline bets for parlays (spreads/totals have different probability semantics)
+  const moneylineBets = allRankedBets.filter(bet => bet.betType === 'moneyline')
+  
+  if (moneylineBets.length < 2) {
     return {
       safeParlay: null,
       aggressiveParlay: null,
       combinedProbability: null,
       calculatedAt: now,
-      reason: 'Not enough qualified bets for a parlay (need at least 2)'
+      reason: 'Not enough moneyline bets available for a parlay (need at least 2 moneyline bets from different games)'
     }
   }
   
-  // Filter to only include bets from different games
   // Sort by MODEL probability (Elo when available, market consensus as fallback) - highest first
-  const sortedBets = [...allRankedBets].sort((a, b) => {
+  const sortedBets = [...moneylineBets].sort((a, b) => {
     const aProb = a.eloProbability !== undefined ? a.eloProbability : a.consensusProbability
     const bProb = b.eloProbability !== undefined ? b.eloProbability : b.consensusProbability
     return bProb - aProb
@@ -1943,17 +1945,37 @@ export function formatParlayForContext(parlay: ParlayResult): string {
   lines.push(`**2-Leg Parlay** | Combined Win Probability: ${parlay.combinedProbability}%`)
   lines.push('')
   
+  // Helper to format bet display based on bet type
+  const formatBetDisplay = (leg: RankedBet): string => {
+    if (leg.betType === 'spread' && leg.line !== undefined) {
+      return `${leg.team} ${leg.line > 0 ? '+' : ''}${leg.line}`
+    } else if (leg.betType === 'total' && leg.line !== undefined) {
+      return `${leg.team} ${leg.line}`
+    } else {
+      return `${leg.team} ML`
+    }
+  }
+  
+  // Helper to get probability label based on bet type
+  const getProbLabel = (leg: RankedBet): string => {
+    if (leg.betType === 'spread') return 'cover probability'
+    if (leg.betType === 'total') return `${leg.team.toLowerCase()} probability`
+    return 'win probability'
+  }
+  
   for (let i = 0; i < parlay.safeParlay.length; i++) {
     const leg = parlay.safeParlay[i]
     const emoji = getSportEmoji(leg.sportName)
-    lines.push(`${emoji} **Leg ${i + 1}: ${leg.team} ML @ ${formatOdds(leg.bestPrice)}**`)
-    lines.push(`${leg.awayTeam} @ ${leg.homeTeam} | ${leg.consensusProbability}% win probability`)
+    const modelProb = leg.eloProbability !== undefined ? leg.eloProbability : leg.consensusProbability
+    lines.push(`${emoji} **Leg ${i + 1}: ${formatBetDisplay(leg)} @ ${formatOdds(leg.bestPrice)}**`)
+    lines.push(`${leg.awayTeam} @ ${leg.homeTeam} | ${modelProb}% ${getProbLabel(leg)}`)
     lines.push(`Available at ${leg.bestBook}`)
     lines.push('')
   }
   
   if (parlay.aggressiveParlay) {
-    const aggCombinedProb = parlay.aggressiveParlay.reduce((acc, leg) => acc * (leg.consensusProbability / 100), 1) * 100
+    const getModelProb = (leg: RankedBet) => leg.eloProbability !== undefined ? leg.eloProbability : leg.consensusProbability
+    const aggCombinedProb = parlay.aggressiveParlay.reduce((acc, leg) => acc * (getModelProb(leg) / 100), 1) * 100
     lines.push('---')
     lines.push('')
     lines.push(`**3-Leg Aggressive Parlay** | Combined Win Probability: ${Math.round(aggCombinedProb * 10) / 10}%`)
@@ -1962,7 +1984,8 @@ export function formatParlayForContext(parlay: ParlayResult): string {
     for (let i = 0; i < parlay.aggressiveParlay.length; i++) {
       const leg = parlay.aggressiveParlay[i]
       const emoji = getSportEmoji(leg.sportName)
-      lines.push(`${emoji} Leg ${i + 1}: ${leg.team} ML @ ${formatOdds(leg.bestPrice)} (${leg.consensusProbability}%)`)
+      const modelProb = getModelProb(leg)
+      lines.push(`${emoji} Leg ${i + 1}: ${formatBetDisplay(leg)} @ ${formatOdds(leg.bestPrice)} (${modelProb}%)`)
     }
     lines.push('')
   }
