@@ -2124,9 +2124,9 @@ export function getFilteredBestBetWithElo(
   const excludeNorm = excludeSports.map(normalizeForFilter)
   const includeNorm = includeSports.map(normalizeForFilter)
   
-  // Get all available sports with Elo data
+  // Get all available sports with Elo data (only require eloProbability - homeElo/awayElo are nice-to-have for display)
   const sportsWithElo = Object.entries(sportBets)
-    .filter(([, bet]) => bet && bet.eloProbability != null && bet.homeElo != null && bet.awayElo != null)
+    .filter(([, bet]) => bet && bet.eloProbability != null)
     .map(([sport]) => sport)
   
   // Apply filters

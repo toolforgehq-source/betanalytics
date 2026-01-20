@@ -1148,21 +1148,37 @@ export async function POST(request: Request) {
           // Use cached best bet for general "best bet" questions without filters
           const bestBetResult = await getCachedBestBet()
           const bestBet = bestBetResult?.bestBet
-          if (bestBet && bestBet.eloProbability != null && bestBet.homeElo != null && bestBet.awayElo != null) {
+          // Only require eloProbability - homeElo/awayElo are nice-to-have for display
+          if (bestBet && bestBet.eloProbability != null) {
             deterministicResponse = formatBestBetForContext(bestBetResult)
-            console.log(`[chat] Returning cached best bet: ${bestBet.team} (${bestBet.sportName})`)
+            console.log(`[chat] Returning cached best bet: ${bestBet.team} (${bestBet.sportName}) with Elo probability ${bestBet.eloProbability}%`)
+          } else if (bestBetResult && bestBetResult.bestBet) {
+            // Best bet exists but no Elo probability - still return it with market consensus
+            deterministicResponse = formatBestBetForContext(bestBetResult)
+            console.log(`[chat] Returning cached best bet without Elo: ${bestBetResult.bestBet.team} (${bestBetResult.bestBet.sportName})`)
           } else if (bestBetResult) {
-            // Best bet exists but no Elo data - try to find one with Elo from sport bets
+            // No best bet but result exists - check fallbacks or sport bets
             const sportBets = await getCachedSportBets()
             if (sportBets) {
-              const result = getFilteredBestBetWithElo(sportBets, [], [])
-              if (result.bet) {
-                deterministicResponse = formatFilteredBestBetResponse(result.bet, '')
-                console.log(`[chat] Returning best Elo-based bet: ${result.bet.team} (${result.bet.sportName})`)
-              } else {
-                deterministicResponse = 'No Elo-based bets available right now. Our Elo model requires sufficient game data to make recommendations.'
-                console.log(`[chat] No Elo-based bets available`)
+              // Find any bet with Elo probability (relaxed check)
+              const sportsWithBets = Object.entries(sportBets).filter(([, bet]) => bet && bet.eloProbability != null)
+              if (sportsWithBets.length > 0) {
+                // Find the best one by score
+                let bestSportBet = sportsWithBets[0][1]
+                for (const [, bet] of sportsWithBets) {
+                  if (bet && bestSportBet && bet.score > bestSportBet.score) {
+                    bestSportBet = bet
+                  }
+                }
+                if (bestSportBet) {
+                  deterministicResponse = formatFilteredBestBetResponse(bestSportBet, '')
+                  console.log(`[chat] Returning best sport bet: ${bestSportBet.team} (${bestSportBet.sportName})`)
+                }
               }
+            }
+            if (!deterministicResponse) {
+              deterministicResponse = 'No bets with sufficient data available right now. Please check back later.'
+              console.log(`[chat] No bets available in cache`)
             }
           } else {
             deterministicResponse = 'No bets available right now. Please check back later when games are scheduled.'
