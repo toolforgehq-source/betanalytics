@@ -5,7 +5,7 @@ import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
 import { getCachedESPNOdds } from "@/lib/espn"
-import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse } from "@/lib/bet-ranking"
+import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
@@ -994,6 +994,22 @@ function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; 
   return { excludeSports, includeSports, filterDescription }
 }
 
+/**
+ * Detect if the user is asking for a parlay recommendation
+ */
+function detectParlayQuestion(userMessage: string): boolean {
+  const normalizedMessage = userMessage.toLowerCase()
+  
+  const parlayPatterns = [
+    /\bparlay\b/i,
+    /\bcombo\s+bet\b/i,
+    /\bmulti[- ]?bet\b/i,
+    /\baccumulator\b/i,
+  ]
+  
+  return parlayPatterns.some(pattern => pattern.test(normalizedMessage))
+}
+
 export async function POST(request: Request) {
   try {
     // Check if API key is configured
@@ -1050,24 +1066,111 @@ export async function POST(request: Request) {
     const userMessage = chatMessages[chatMessages.length - 1]
     const userMessageContent = extractMessageContent(userMessage.content)
     
-    // Check for filtered "best bet" questions first (e.g., "best bet not hockey")
-    const bestBetFilter = detectBestBetQuestion(userMessageContent)
-    if (bestBetFilter && (bestBetFilter.excludeSports.length > 0 || bestBetFilter.includeSports.length > 0)) {
-      console.log(`[chat] Detected filtered best bet question: ${bestBetFilter.filterDescription}`)
+    // Check for parlay questions first
+    const isParlayQuestion = detectParlayQuestion(userMessageContent)
+    if (isParlayQuestion) {
+      console.log(`[chat] Detected parlay question`)
       try {
-        const sportBets = await getCachedSportBets()
-        if (sportBets) {
-          const result = getFilteredBestBetWithElo(sportBets, bestBetFilter.excludeSports, bestBetFilter.includeSports)
-          
-          let deterministicResponse: string
-          if (result.bet) {
-            deterministicResponse = formatFilteredBestBetResponse(result.bet, bestBetFilter.filterDescription)
-            console.log(`[chat] Returning filtered best bet: ${result.bet.team} (${result.bet.sportName})`)
+        const parlay = await getCachedParlay()
+        if (parlay && parlay.safeParlay && parlay.safeParlay.length > 0) {
+          // Check if parlay has Elo data
+          const hasEloData = parlay.safeParlay.some(leg => leg.eloProbability != null && leg.homeElo != null && leg.awayElo != null)
+          if (hasEloData) {
+            const deterministicResponse = formatParlayForContext(parlay)
+            console.log(`[chat] Returning Elo-based parlay with ${parlay.safeParlay.length} legs`)
+            
+            // Save messages to database
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'user',
+              content: userMessage.content,
+            })
+            
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'assistant',
+              content: deterministicResponse,
+            })
+            
+            await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+            
+            // Update question count for non-subscribers
+            if (!subStatus.isSubscribed) {
+              const user = await db.users.findById(session.user.id)
+              if (user) {
+                await db.users.update(session.user.id, { 
+                  questionCount: (user.questionCount || 0) + 1
+                })
+              }
+            }
+            
+            // Return deterministic response directly, bypassing LLM
+            return NextResponse.json({ 
+              message: deterministicResponse,
+              questionsRemaining: subStatus.isSubscribed 
+                ? -1 
+                : Math.max(0, subStatus.questionsRemaining - 1)
+            })
           } else {
-            deterministicResponse = result.message
-            console.log(`[chat] No Elo-based bets available for filter: ${bestBetFilter.filterDescription}`)
+            console.log(`[chat] Parlay found but no Elo data available`)
           }
-          
+        }
+      } catch (err) {
+        console.error('[chat] Error processing parlay question:', err)
+        // Fall through to LLM if processing fails
+      }
+    }
+    
+    // Check for "best bet" questions (with or without filters)
+    const bestBetFilter = detectBestBetQuestion(userMessageContent)
+    if (bestBetFilter) {
+      const hasFilters = bestBetFilter.excludeSports.length > 0 || bestBetFilter.includeSports.length > 0
+      console.log(`[chat] Detected best bet question${hasFilters ? ` with filters: ${bestBetFilter.filterDescription}` : ' (no filters)'}`)
+      
+      try {
+        let deterministicResponse: string | null = null
+        
+        if (hasFilters) {
+          // Use filtered sport bets for questions with filters
+          const sportBets = await getCachedSportBets()
+          if (sportBets) {
+            const result = getFilteredBestBetWithElo(sportBets, bestBetFilter.excludeSports, bestBetFilter.includeSports)
+            
+            if (result.bet) {
+              deterministicResponse = formatFilteredBestBetResponse(result.bet, bestBetFilter.filterDescription)
+              console.log(`[chat] Returning filtered best bet: ${result.bet.team} (${result.bet.sportName})`)
+            } else {
+              deterministicResponse = result.message
+              console.log(`[chat] No Elo-based bets available for filter: ${bestBetFilter.filterDescription}`)
+            }
+          }
+        } else {
+          // Use cached best bet for general "best bet" questions without filters
+          const bestBetResult = await getCachedBestBet()
+          const bestBet = bestBetResult?.bestBet
+          if (bestBet && bestBet.eloProbability != null && bestBet.homeElo != null && bestBet.awayElo != null) {
+            deterministicResponse = formatBestBetForContext(bestBetResult)
+            console.log(`[chat] Returning cached best bet: ${bestBet.team} (${bestBet.sportName})`)
+          } else if (bestBetResult) {
+            // Best bet exists but no Elo data - try to find one with Elo from sport bets
+            const sportBets = await getCachedSportBets()
+            if (sportBets) {
+              const result = getFilteredBestBetWithElo(sportBets, [], [])
+              if (result.bet) {
+                deterministicResponse = formatFilteredBestBetResponse(result.bet, '')
+                console.log(`[chat] Returning best Elo-based bet: ${result.bet.team} (${result.bet.sportName})`)
+              } else {
+                deterministicResponse = 'No Elo-based bets available right now. Our Elo model requires sufficient game data to make recommendations.'
+                console.log(`[chat] No Elo-based bets available`)
+              }
+            }
+          } else {
+            deterministicResponse = 'No bets available right now. Please check back later when games are scheduled.'
+            console.log(`[chat] No cached best bet available`)
+          }
+        }
+        
+        if (deterministicResponse) {
           // Save messages to database
           await db.messages.create({
             conversationId: conversation.id,
@@ -1102,7 +1205,7 @@ export async function POST(request: Request) {
           })
         }
       } catch (err) {
-        console.error('[chat] Error processing filtered best bet question:', err)
+        console.error('[chat] Error processing best bet question:', err)
         // Fall through to LLM if processing fails
       }
     }
