@@ -1935,7 +1935,13 @@ export async function getCachedBestBet(): Promise<BestBetResult | null> {
     const data = await response.json()
     if (!data.result) return null
     
-    return JSON.parse(data.result) as BestBetResult
+    // Handle double-stringify: cacheBestBet uses JSON.stringify(JSON.stringify(result))
+    // So we need to parse twice if the result is still a string after first parse
+    let parsed = JSON.parse(data.result)
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed)
+    }
+    return parsed as BestBetResult
   } catch (error) {
     console.error('[getCachedBestBet] Error getting cached best bet:', error)
     return null
@@ -2335,7 +2341,12 @@ export async function getCachedParlay(): Promise<ParlayResult | null> {
     const data = await response.json()
     if (!data.result) return null
     
-    return JSON.parse(data.result) as ParlayResult
+    // Handle double-stringify: cacheParlay uses JSON.stringify(JSON.stringify(parlay))
+    let parsed = JSON.parse(data.result)
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed)
+    }
+    return parsed as ParlayResult
   } catch (error) {
     console.error('[getCachedParlay] Error:', error)
     return null
@@ -2391,7 +2402,12 @@ export async function getCachedSportBets(): Promise<SportBestBets | null> {
     const data = await response.json()
     if (!data.result) return null
     
-    return JSON.parse(data.result) as SportBestBets
+    // Handle double-stringify: cacheSportBets uses JSON.stringify(JSON.stringify(sportBets))
+    let parsed = JSON.parse(data.result)
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed)
+    }
+    return parsed as SportBestBets
   } catch (error) {
     console.error('[getCachedSportBets] Error:', error)
     return null
@@ -3123,7 +3139,12 @@ export async function getCachedBestProp(): Promise<BestPropResult | null> {
     const data = await response.json()
     if (!data.result) return null
     
-    return JSON.parse(data.result) as BestPropResult
+    // Handle double-stringify: cacheBestProp uses JSON.stringify(JSON.stringify(result))
+    let parsed = JSON.parse(data.result)
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed)
+    }
+    return parsed as BestPropResult
   } catch (error) {
     console.error('[getCachedBestProp] Error:', error)
     return null
@@ -3177,7 +3198,12 @@ export async function getCachedModelFirstProps(): Promise<BestPropResult | null>
     const data = await response.json()
     if (!data.result) return null
     
-    return JSON.parse(data.result) as BestPropResult
+    // Handle double-stringify: cacheModelFirstProps uses JSON.stringify(JSON.stringify(result))
+    let parsed = JSON.parse(data.result)
+    if (typeof parsed === 'string') {
+      parsed = JSON.parse(parsed)
+    }
+    return parsed as BestPropResult
   } catch (error) {
     console.error('[getCachedModelFirstProps] Error:', error)
     return null
