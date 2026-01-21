@@ -630,8 +630,10 @@ export function formatESPNOddsForContext(oddsData: ESPNOddsData, eloRatings?: El
       
       if (game.spread !== null) {
         // Show spread with odds for BOTH teams to prevent LLM confusion
-        const homeSpread = game.homeFavorite ? -Math.abs(game.spread) : Math.abs(game.spread)
-        const awaySpread = game.homeFavorite ? Math.abs(game.spread) : -Math.abs(game.spread)
+        // ESPN's spread is already signed from home team's perspective:
+        // - Negative = home is favorite, Positive = home is underdog
+        const homeSpread = game.spread  // Already signed correctly by ESPN
+        const awaySpread = -game.spread  // Away team gets opposite spread
         const homeSpreadOdds = game.spreadOdds?.home ?? -110
         const awaySpreadOdds = game.spreadOdds?.away ?? -110
         oddsInfo.push(`Spread: ${game.homeTeam} ${homeSpread > 0 ? '+' : ''}${homeSpread} (${homeSpreadOdds > 0 ? '+' : ''}${homeSpreadOdds}) / ${game.awayTeam} ${awaySpread > 0 ? '+' : ''}${awaySpread} (${awaySpreadOdds > 0 ? '+' : ''}${awaySpreadOdds})`)

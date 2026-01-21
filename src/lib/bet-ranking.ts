@@ -853,6 +853,21 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
       const homeElo = eloResult.homeEffectiveRating ?? eloResult.homeRating
       const awayElo = eloResult.awayEffectiveRating ?? eloResult.awayRating
       
+      // SPREAD DIRECTION VALIDATION: Ensure spread sign matches Elo favorite
+      // Higher Elo team should have negative spread (favorite), lower Elo should have positive spread (underdog)
+      const teamElo = isHomeTeam ? homeElo : awayElo
+      const opponentElo = isHomeTeam ? awayElo : homeElo
+      
+      if (teamElo > opponentElo && point > 0) {
+        console.error(`[SPREAD VALIDATION ERROR] ${teamName} has higher Elo (${Math.round(teamElo)}) than opponent (${Math.round(opponentElo)}) but has POSITIVE spread (+${point}). This indicates a spread direction bug.`)
+        return // Skip this bet - spread direction is wrong
+      }
+      
+      if (teamElo < opponentElo && point < 0) {
+        console.error(`[SPREAD VALIDATION ERROR] ${teamName} has lower Elo (${Math.round(teamElo)}) than opponent (${Math.round(opponentElo)}) but has NEGATIVE spread (${point}). This indicates a spread direction bug.`)
+        return // Skip this bet - spread direction is wrong
+      }
+      
       // Calculate Elo-based spread cover probability
       // Note: spread is from the team's perspective (e.g., home -3.5 means home must win by > 3.5)
       // For home team: use spread as-is
