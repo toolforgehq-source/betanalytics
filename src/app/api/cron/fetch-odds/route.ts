@@ -79,12 +79,18 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
   const provider = espnOdds.provider || 'DraftKings'
   
   // Build spreads array
+  // SPREAD SIGN CONVENTION:
+  // ESPN's pickcenter.spread is ALREADY SIGNED from the home team's perspective:
+  // - Negative value (e.g., -6.5) means home team is favorite
+  // - Positive value (e.g., +6.5) means home team is underdog
+  // We use the spread value directly without re-signing based on homeFavorite.
+  const homeSpread = espnOdds.spread ?? 0
   const spreads = espnOdds.spread !== null ? [{
     bookmaker: provider,
     market: 'spreads',
     outcomes: [
-      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: espnOdds.homeFavorite ? espnOdds.spread : -espnOdds.spread },
-      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: espnOdds.homeFavorite ? -espnOdds.spread : espnOdds.spread }
+      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: homeSpread },
+      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: -homeSpread }
     ]
   }] : []
   
