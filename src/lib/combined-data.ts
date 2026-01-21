@@ -128,15 +128,22 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
   // SPREAD SIGN CONVENTION:
   // - Favorite team gets NEGATIVE spread (e.g., -6.5 means must win by > 6.5)
   // - Underdog team gets POSITIVE spread (e.g., +6.5 means can lose by up to 6)
-  // ESPN's spread value is typically unsigned, so we apply sign based on homeFavorite flag
-  const spreadMagnitude = Math.abs(espnOdds.spread ?? 0)
+  // 
+  // ESPN's pickcenter.spread is ALREADY SIGNED from the home team's perspective:
+  // - Negative value (e.g., -6.5) means home team is favorite
+  // - Positive value (e.g., +6.5) means home team is underdog
+  // 
+  // We use the spread value directly without re-signing based on homeFavorite,
+  // as the spread value itself already encodes who is favorite.
+  const homeSpread = espnOdds.spread ?? 0  // Already signed from home team's perspective
   const spreads = espnOdds.spread !== null ? bookmakers.map(bookmaker => ({
     bookmaker,
     market: 'spreads',
     outcomes: [
-      // If home is favorite, home gets negative spread; if away is favorite, home gets positive spread
-      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: espnOdds.homeFavorite ? -spreadMagnitude : spreadMagnitude },
-      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: espnOdds.homeFavorite ? spreadMagnitude : -spreadMagnitude }
+      // Home team gets the spread as-is (already signed correctly by ESPN)
+      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: homeSpread },
+      // Away team gets the opposite spread
+      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: -homeSpread }
     ]
   })) : []
   
