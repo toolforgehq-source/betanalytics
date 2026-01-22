@@ -1866,6 +1866,48 @@ export async function getCachedBestBet(): Promise<BestBetResult | null> {
  * Safe Parlay: 2 legs from different games with highest combined probability
  * Aggressive Parlay: 3 legs with good value
  */
+/**
+ * Calculate parlay value score for a bet
+ * Balances probability with payout value - avoids heavy favorites with poor payouts
+ * 
+ * Formula: valueScore = edge * (1 + probabilityBonus)
+ * - edge: model probability - implied probability (positive = value)
+ * - probabilityBonus: small bonus for higher probability bets (0-0.3)
+ * 
+ * This prioritizes VALUE over raw probability, avoiding -1800 favorites
+ */
+function calculateParlayValueScore(bet: RankedBet): number {
+  const modelProb = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+  
+  // Edge is the key metric - how much better is our model vs the market?
+  const edge = bet.edge
+  
+  // Small probability bonus (0-0.3) to slightly prefer higher probability when edges are similar
+  const probabilityBonus = Math.min(0.3, (modelProb - 50) / 100)
+  
+  // Value score: prioritize edge, with small probability bonus
+  // A bet with 5% edge and 60% prob scores higher than 0% edge and 95% prob
+  return edge * (1 + probabilityBonus)
+}
+
+/**
+ * Minimum odds threshold for parlay legs
+ * Bets worse than -400 (80% implied) are excluded - they add risk without meaningful payout
+ */
+const PARLAY_MIN_ODDS = -400
+
+/**
+ * Minimum probability for parlay legs
+ * We still want reasonably likely outcomes, just not extreme favorites
+ */
+const PARLAY_MIN_PROBABILITY = 50
+
+/**
+ * Maximum probability for parlay legs
+ * Exclude extreme favorites that destroy parlay value
+ */
+const PARLAY_MAX_PROBABILITY = 85
+
 export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult {
   const now = new Date().toISOString()
   
@@ -1882,14 +1924,42 @@ export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult 
     }
   }
   
-  // Sort by MODEL probability (Elo when available, market consensus as fallback) - highest first
-  const sortedBets = [...moneylineBets].sort((a, b) => {
-    const aProb = a.eloProbability !== undefined ? a.eloProbability : a.consensusProbability
-    const bProb = b.eloProbability !== undefined ? b.eloProbability : b.consensusProbability
-    return bProb - aProb
+  // Get model probability for a bet
+  const getModelProb = (bet: RankedBet) => bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+  
+  // STEP 1: Filter out extreme favorites (poor parlay value)
+  // Bets worse than -400 odds or >85% probability are excluded
+  const valueBets = moneylineBets.filter(bet => {
+    const prob = getModelProb(bet)
+    const hasReasonableOdds = bet.bestPrice >= PARLAY_MIN_ODDS  // -400 or better (e.g., -300, -150, +100)
+    const hasReasonableProb = prob >= PARLAY_MIN_PROBABILITY && prob <= PARLAY_MAX_PROBABILITY
+    const hasPositiveEdge = bet.edge > 0  // Our model sees value
+    
+    return hasReasonableOdds && hasReasonableProb && hasPositiveEdge
   })
   
-  // Build safe parlay (2 legs) - pick top 2 from different games
+  // STEP 2: If not enough value bets, fall back to moderate favorites (but still exclude extreme)
+  let betsToUse = valueBets
+  if (valueBets.length < 3) {
+    // Relax the edge requirement but keep the odds/probability filters
+    const moderateBets = moneylineBets.filter(bet => {
+      const prob = getModelProb(bet)
+      const hasReasonableOdds = bet.bestPrice >= PARLAY_MIN_ODDS
+      const hasReasonableProb = prob >= PARLAY_MIN_PROBABILITY && prob <= PARLAY_MAX_PROBABILITY
+      return hasReasonableOdds && hasReasonableProb
+    })
+    betsToUse = moderateBets.length >= 2 ? moderateBets : moneylineBets
+  }
+  
+  // STEP 3: Sort by VALUE SCORE (not raw probability)
+  // This prioritizes bets where our model has edge over the market
+  const sortedBets = [...betsToUse].sort((a, b) => {
+    const aValue = calculateParlayValueScore(a)
+    const bValue = calculateParlayValueScore(b)
+    return bValue - aValue
+  })
+  
+  // Build safe parlay (2 legs) - pick top 2 VALUE bets from different games
   const safeParlay: RankedBet[] = []
   const usedGameIds = new Set<string>()
   
@@ -1910,7 +1980,6 @@ export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult 
   }
   
   // Calculate combined probability using MODEL probability (Elo when available)
-  const getModelProb = (bet: RankedBet) => bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
   const safeCombinedProb = safeParlay.length === 2
     ? (getModelProb(safeParlay[0]) / 100) * (getModelProb(safeParlay[1]) / 100) * 100
     : null
@@ -2884,11 +2953,16 @@ export async function computeBestPropModelFirst(propsData: GamePlayerProps[]): P
   // Sort by score (model-first ranking with reliability boost)
   allRankedProps.sort((a, b) => b.score - a.score)
   
-  // Filter to only include props with reasonable probability (at least 40%)
-  // Also prefer props with high reliability for parlays
+  // Filter to only include props with reasonable probability and VALUE for parlays
+  // - Minimum 40% probability (reasonable chance to hit)
+  // - Maximum 85% probability (avoid extreme favorites with poor payout)
+  // - Prefer positive edge (our model sees value)
   const viableProps = allRankedProps.filter(p => {
     const prob = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
-    return prob >= 40
+    const edge = p.modelEdge !== undefined ? p.modelEdge : p.edge
+    const hasReasonableProb = prob >= 40 && prob <= 85
+    const hasValue = edge > -5  // Allow slightly negative edge but not terrible value
+    return hasReasonableProb && hasValue
   })
   
   return {
