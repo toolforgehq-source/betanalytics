@@ -53,6 +53,13 @@ export interface PlayerGameLog {
   inningsPitched?: number  // For pitchers
 }
 
+export interface HitRateData {
+  overHits: number
+  underHits: number
+  totalGames: number
+  hitRate: number  // Percentage of times player hits OVER their average
+}
+
 export interface PlayerStats {
   playerId: string
   playerName: string
@@ -98,6 +105,29 @@ export interface PlayerStats {
     rbis?: number
     strikeouts?: number
   }
+  // Historical hit rates - how often player hits OVER their average for each stat
+  hitRates?: {
+    points?: HitRateData
+    rebounds?: HitRateData
+    assists?: HitRateData
+    threePointersMade?: HitRateData
+    passingYards?: HitRateData
+    rushingYards?: HitRateData
+    receivingYards?: HitRateData
+    goals?: HitRateData
+    hockeyAssists?: HitRateData
+    shots?: HitRateData
+    saves?: HitRateData
+    hits?: HitRateData
+    homeRuns?: HitRateData
+    rbis?: HitRateData
+    strikeouts?: HitRateData
+  }
+  // Reliability score (0-100) - higher = more consistent/predictable
+  // Based on coefficient of variation (lower variance = higher reliability)
+  reliabilityScore?: number
+  // Home/Away performance splits
+  homeAwgMultiplier?: number  // e.g., 1.05 means player scores 5% more at home
   gamesPlayed: number
   lastUpdated: string
 }
@@ -584,13 +614,21 @@ function calculateStdDev(values: number[], mean: number): number {
 }
 
 /**
- * Update player's rolling averages and standard deviations
+ * Update player's rolling averages, standard deviations, hit rates, and reliability score
  */
 function updatePlayerAverages(player: PlayerStats): void {
   const logs = player.gameLogs.slice(0, ROLLING_WINDOW)
   
   // Calculate averages for each stat type based on sport
   const statTypes = SPORT_STATS[player.sport] || []
+  
+  // Initialize hit rates if not exists
+  if (!player.hitRates) {
+    player.hitRates = {}
+  }
+  
+  // Track coefficient of variation for reliability score
+  const coefficientsOfVariation: number[] = []
   
   for (const stat of statTypes) {
     const values = logs
@@ -606,6 +644,54 @@ function updatePlayerAverages(player: PlayerStats): void {
       
       ;(player.averages as Record<string, number>)[stat] = avg
       ;(player.stdDevs as Record<string, number>)[stat] = stdDev
+      
+      // Calculate coefficient of variation (lower = more consistent)
+      if (avg > 0) {
+        const cv = stdDev / avg
+        coefficientsOfVariation.push(cv)
+      }
+      
+      // Calculate hit rates - how often player goes OVER their average
+      // This is more useful than normal distribution for betting
+      const hitRateData = calculateHitRate(values, avg)
+      ;(player.hitRates as Record<string, HitRateData>)[stat] = hitRateData
+    }
+  }
+  
+  // Calculate reliability score (0-100)
+  // Based on average coefficient of variation across all stats
+  // Lower CV = more consistent = higher reliability
+  if (coefficientsOfVariation.length > 0) {
+    const avgCV = coefficientsOfVariation.reduce((a, b) => a + b, 0) / coefficientsOfVariation.length
+    // Convert CV to reliability score: CV of 0 = 100, CV of 1 = 0
+    // Most players have CV between 0.2 and 0.6
+    player.reliabilityScore = Math.max(0, Math.min(100, Math.round((1 - avgCV) * 100)))
+  }
+  
+  // Calculate home/away performance multiplier
+  const homeLogs = logs.filter(log => log.isHome)
+  const awayLogs = logs.filter(log => !log.isHome)
+  
+  if (homeLogs.length >= 2 && awayLogs.length >= 2) {
+    // Calculate average performance at home vs away for the primary stat
+    const primaryStat = statTypes[0]
+    if (primaryStat) {
+      const homeValues = homeLogs
+        .map(log => (log as unknown as Record<string, number | undefined>)[primaryStat])
+        .filter((v): v is number => v !== undefined && v !== null)
+      const awayValues = awayLogs
+        .map(log => (log as unknown as Record<string, number | undefined>)[primaryStat])
+        .filter((v): v is number => v !== undefined && v !== null)
+      
+      if (homeValues.length > 0 && awayValues.length > 0) {
+        const homeAvg = homeValues.reduce((a, b) => a + b, 0) / homeValues.length
+        const awayAvg = awayValues.reduce((a, b) => a + b, 0) / awayValues.length
+        
+        if (awayAvg > 0) {
+          // Multiplier > 1 means player performs better at home
+          player.homeAwgMultiplier = Math.round((homeAvg / awayAvg) * 100) / 100
+        }
+      }
     }
   }
   
@@ -613,6 +699,33 @@ function updatePlayerAverages(player: PlayerStats): void {
   const minuteValues = logs.map(log => log.minutes).filter(m => m > 0)
   if (minuteValues.length > 0) {
     player.averages.minutes = calculateWeightedAverage(minuteValues)
+  }
+}
+
+/**
+ * Calculate hit rate - how often a player goes OVER a given threshold
+ * Uses the player's average as the threshold (simulating typical betting lines)
+ */
+function calculateHitRate(values: number[], threshold: number): HitRateData {
+  let overHits = 0
+  let underHits = 0
+  
+  for (const value of values) {
+    if (value > threshold) {
+      overHits++
+    } else {
+      underHits++
+    }
+  }
+  
+  const totalGames = values.length
+  const hitRate = totalGames > 0 ? Math.round((overHits / totalGames) * 100) : 50
+  
+  return {
+    overHits,
+    underHits,
+    totalGames,
+    hitRate
   }
 }
 
@@ -665,15 +778,40 @@ function normalCDF(z: number): number {
 }
 
 /**
+ * Enhanced probability result with all model data
+ */
+export interface EnhancedPropProbability {
+  probability: number           // Combined probability (best estimate)
+  statisticalProb: number       // From normal distribution model
+  historicalHitRate: number     // From actual hit rate data
+  average: number               // Player's weighted average
+  stdDev: number                // Standard deviation
+  gamesPlayed: number           // Number of games in sample
+  reliabilityScore: number      // 0-100, higher = more consistent
+  homeAwayAdjustment: number    // Multiplier for home/away
+  opponentAdjustment: number    // Multiplier for opponent defense
+  adjustedAverage: number       // Average after all adjustments
+  confidence: 'high' | 'medium' | 'low'  // Based on sample size and reliability
+}
+
+/**
  * Get probability for a specific player prop
+ * 
+ * ENHANCED MODEL that combines:
+ * 1. Statistical probability (normal distribution)
+ * 2. Historical hit rates (actual over/under performance)
+ * 3. Opponent defensive adjustments
+ * 4. Home/away adjustments
+ * 5. Reliability weighting
  */
 export async function getPlayerPropProbability(
   playerName: string,
   sport: string,
   statType: string,
   line: number,
-  opponentTeamId?: string
-): Promise<{ probability: number; average: number; stdDev: number; gamesPlayed: number } | null> {
+  opponentTeamId?: string,
+  isHomeGame?: boolean
+): Promise<EnhancedPropProbability | null> {
   const statsData = await getPlayerStatsData()
   if (!statsData) return null
   
@@ -693,23 +831,108 @@ export async function getPlayerPropProbability(
   if (avg === undefined) return null
   
   // Get opponent defensive factor if available
-  let opponentFactor = 1.0
+  let opponentAdjustment = 1.0
   if (opponentTeamId) {
     const defenseKey = `${sport}_${opponentTeamId}`
     const defense = statsData.teamDefense[defenseKey]
     if (defense) {
       const factorKey = `${statType}AllowedFactor` as keyof TeamDefenseRating
-      opponentFactor = (defense[factorKey] as number) || 1.0
+      opponentAdjustment = (defense[factorKey] as number) || 1.0
     }
   }
   
-  const probability = calculateOverProbability(avg, stdDev, line, opponentFactor)
+  // Get home/away adjustment
+  let homeAwayAdjustment = 1.0
+  if (isHomeGame !== undefined && player.homeAwgMultiplier) {
+    // If home game, apply home multiplier; if away, apply inverse
+    homeAwayAdjustment = isHomeGame ? player.homeAwgMultiplier : (1 / player.homeAwgMultiplier)
+  }
+  
+  // Calculate adjusted average
+  const adjustedAverage = avg * opponentAdjustment * homeAwayAdjustment
+  
+  // Calculate statistical probability using normal distribution
+  const statisticalProb = calculateOverProbability(adjustedAverage, stdDev, line, 1.0)
+  
+  // Get historical hit rate for this stat
+  let historicalHitRate = 0.5  // Default to 50%
+  const hitRateData = player.hitRates?.[statType as keyof typeof player.hitRates]
+  if (hitRateData && hitRateData.totalGames >= 3) {
+    // Adjust hit rate based on how the line compares to average
+    // If line is below average, hit rate should be higher
+    // If line is above average, hit rate should be lower
+    const lineVsAvg = line / adjustedAverage
+    
+    if (lineVsAvg < 0.9) {
+      // Line is significantly below average - higher chance of over
+      historicalHitRate = Math.min(0.95, (hitRateData.hitRate / 100) * 1.2)
+    } else if (lineVsAvg > 1.1) {
+      // Line is significantly above average - lower chance of over
+      historicalHitRate = Math.max(0.05, (hitRateData.hitRate / 100) * 0.8)
+    } else {
+      // Line is close to average - use historical hit rate
+      historicalHitRate = hitRateData.hitRate / 100
+    }
+  }
+  
+  // Get reliability score
+  const reliabilityScore = player.reliabilityScore ?? 50
+  
+  // Combine statistical and historical probabilities
+  // Weight historical more heavily for reliable players with good sample size
+  const gamesPlayed = player.gamesPlayed
+  let historicalWeight = 0.3  // Default: 30% historical, 70% statistical
+  
+  if (gamesPlayed >= 10 && reliabilityScore >= 60) {
+    historicalWeight = 0.5  // 50/50 for reliable players with good sample
+  } else if (gamesPlayed >= 20 && reliabilityScore >= 70) {
+    historicalWeight = 0.6  // 60% historical for very reliable players
+  }
+  
+  const combinedProbability = (statisticalProb * (1 - historicalWeight)) + (historicalHitRate * historicalWeight)
+  
+  // Determine confidence level
+  let confidence: 'high' | 'medium' | 'low' = 'low'
+  if (gamesPlayed >= 15 && reliabilityScore >= 65) {
+    confidence = 'high'
+  } else if (gamesPlayed >= 8 && reliabilityScore >= 50) {
+    confidence = 'medium'
+  }
   
   return {
-    probability,
+    probability: Math.max(0.05, Math.min(0.95, combinedProbability)),
+    statisticalProb,
+    historicalHitRate,
     average: avg,
     stdDev: stdDev || avg * 0.3,
-    gamesPlayed: player.gamesPlayed
+    gamesPlayed,
+    reliabilityScore,
+    homeAwayAdjustment,
+    opponentAdjustment,
+    adjustedAverage,
+    confidence
+  }
+}
+
+/**
+ * Legacy function for backwards compatibility
+ * Returns simplified result matching old interface
+ */
+export async function getPlayerPropProbabilitySimple(
+  playerName: string,
+  sport: string,
+  statType: string,
+  line: number,
+  opponentTeamId?: string
+): Promise<{ probability: number; average: number; stdDev: number; gamesPlayed: number } | null> {
+  const result = await getPlayerPropProbability(playerName, sport, statType, line, opponentTeamId)
+  if (!result) return null
+  
+  return {
+    probability: result.probability,
+    average: result.average,
+    stdDev: result.stdDev,
+    gamesPlayed: result.gamesPlayed
   }
 }
 

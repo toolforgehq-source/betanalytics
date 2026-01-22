@@ -17,7 +17,7 @@
 import type { Game } from './odds'
 import type { EnrichedGame } from './combined-data'
 import type { ESPNInjury } from './espn'
-import { getPlayerPropProbability, getPlayerStatsData, type PlayerStats } from './player-stats'
+import { getPlayerPropProbability, getPlayerStatsData, type PlayerStats, type EnhancedPropProbability } from './player-stats'
 import { trackBestBet, trackParlay, trackSportBet, trackPropBet } from './recommendation-tracking'
 import { 
   getEloWinProbabilityByName, 
@@ -2341,11 +2341,17 @@ export interface RankedProp {
   score: number
   calculatedAt: string
   
-  // NEW: Model-based probability from player stats (when available)
+  // Model-based probability from player stats (when available)
   modelProbability?: number      // Our independent probability estimate
   modelAverage?: number          // Player's rolling average for this stat
   modelGamesPlayed?: number      // How many games our model has for this player
   modelEdge?: number             // Edge based on model probability vs implied
+  
+  // ENHANCED: New fields from improved player stats model
+  reliabilityScore?: number      // 0-100, higher = more consistent player
+  confidence?: 'high' | 'medium' | 'low'  // Based on sample size and reliability
+  historicalHitRate?: number     // Actual hit rate from historical data
+  adjustedAverage?: number       // Average after opponent/home-away adjustments
 }
 
 export interface BestPropResult {
@@ -2592,7 +2598,8 @@ export async function computeBestPropWithModel(propsData: GamePlayerProps[]): Pr
       continue
     }
     
-    // Try to get model probability for this player/stat/line
+    // Try to get ENHANCED model probability for this player/stat/line
+    // The enhanced model includes: historical hit rates, reliability scores, home/away adjustments
     const modelResult = await getPlayerPropProbability(
       prop.playerName,
       sportName,
@@ -2606,27 +2613,49 @@ export async function computeBestPropWithModel(propsData: GamePlayerProps[]): Pr
       continue
     }
     
-    // Calculate model-based edge
+    // Calculate model-based edge using the enhanced probability
     const modelProbPercent = modelResult.probability * 100
     const modelEdge = modelProbPercent - prop.impliedProbability
     
-    // Enhance the prop with model data
+    // Enhance the prop with ALL model data including new fields
     const enhancedProp: RankedProp = {
       ...prop,
       modelProbability: Math.round(modelProbPercent * 10) / 10,
       modelAverage: Math.round(modelResult.average * 10) / 10,
       modelGamesPlayed: modelResult.gamesPlayed,
       modelEdge: Math.round(modelEdge * 10) / 10,
+      // NEW: Enhanced model fields
+      reliabilityScore: modelResult.reliabilityScore,
+      confidence: modelResult.confidence,
+      historicalHitRate: Math.round(modelResult.historicalHitRate * 1000) / 10,
+      adjustedAverage: Math.round(modelResult.adjustedAverage * 10) / 10,
     }
+    
+    // ENHANCED SCORING: Use reliability and confidence to boost/penalize
+    let scoreMultiplier = 1.0
     
     // Boost score if model agrees with consensus (both show positive edge)
     if (modelEdge > 0 && prop.edge > 0) {
-      // Model and consensus agree - boost score by 10%
-      enhancedProp.score = prop.score * 1.1
+      scoreMultiplier *= 1.1  // 10% boost for agreement
     } else if (modelEdge > 5) {
-      // Model shows strong edge even if consensus doesn't - slight boost
-      enhancedProp.score = prop.score * 1.05
+      scoreMultiplier *= 1.05  // 5% boost for strong model edge
     }
+    
+    // Boost for high reliability players (more consistent = more predictable)
+    if (modelResult.reliabilityScore >= 70) {
+      scoreMultiplier *= 1.15  // 15% boost for very reliable players
+    } else if (modelResult.reliabilityScore >= 60) {
+      scoreMultiplier *= 1.08  // 8% boost for reliable players
+    }
+    
+    // Boost for high confidence predictions
+    if (modelResult.confidence === 'high') {
+      scoreMultiplier *= 1.1  // 10% boost for high confidence
+    } else if (modelResult.confidence === 'medium') {
+      scoreMultiplier *= 1.05  // 5% boost for medium confidence
+    }
+    
+    enhancedProp.score = prop.score * scoreMultiplier
     
     enhancedProps.push(enhancedProp)
   }
@@ -2727,8 +2756,9 @@ export async function computeBestPropModelFirst(propsData: GamePlayerProps[]): P
       const overBestImplied = americanToImpliedProbability(bestOverPrice) * 100
       const underBestImplied = americanToImpliedProbability(bestUnderPrice) * 100
       
-      // Try to get model probability for this player
-      let modelResult: { probability: number; average: number; gamesPlayed: number } | null = null
+      // Try to get ENHANCED model probability for this player
+      // The enhanced model includes: historical hit rates, reliability scores, home/away adjustments
+      let modelResult: EnhancedPropProbability | null = null
       
       if (hasModelData) {
         const sportName = SPORT_NAME_MAP[game.sport] || game.sport
@@ -2767,15 +2797,19 @@ export async function computeBestPropModelFirst(propsData: GamePlayerProps[]): P
           impliedProb: Math.round(americanToImpliedProbability(side.pick === 'Over' ? p.overOdds : p.underOdds) * 1000) / 10
         }))
         
-        // Calculate model-based values
+        // Calculate model-based values using ENHANCED model
         let modelProbability: number | undefined
         let modelAverage: number | undefined
         let modelGamesPlayed: number | undefined
         let modelEdge: number | undefined
+        let reliabilityScore: number | undefined
+        let confidence: 'high' | 'medium' | 'low' | undefined
+        let historicalHitRate: number | undefined
+        let adjustedAverage: number | undefined
         let score: number
         
         if (modelResult && modelResult.gamesPlayed >= 5) {
-          // We have model data - use it as primary ranking
+          // We have ENHANCED model data - use it as primary ranking
           // For Over: model probability is P(actual > line)
           // For Under: model probability is 1 - P(actual > line)
           const rawModelProb = side.pick === 'Over' ? modelResult.probability : (1 - modelResult.probability)
@@ -2784,8 +2818,30 @@ export async function computeBestPropModelFirst(propsData: GamePlayerProps[]): P
           modelGamesPlayed = modelResult.gamesPlayed
           modelEdge = Math.round((modelProbability - side.bestImplied) * 10) / 10
           
-          // Score based on MODEL probability and edge (model-first!)
-          score = modelProbability * 0.6 + Math.max(0, modelEdge) * 0.4
+          // NEW: Enhanced model fields
+          reliabilityScore = modelResult.reliabilityScore
+          confidence = modelResult.confidence
+          historicalHitRate = Math.round(modelResult.historicalHitRate * 1000) / 10
+          adjustedAverage = Math.round(modelResult.adjustedAverage * 10) / 10
+          
+          // ENHANCED SCORING: Use reliability and confidence
+          let baseScore = modelProbability * 0.6 + Math.max(0, modelEdge) * 0.4
+          
+          // Boost for high reliability players (more consistent = more predictable)
+          if (reliabilityScore >= 70) {
+            baseScore *= 1.15  // 15% boost for very reliable players
+          } else if (reliabilityScore >= 60) {
+            baseScore *= 1.08  // 8% boost for reliable players
+          }
+          
+          // Boost for high confidence predictions
+          if (confidence === 'high') {
+            baseScore *= 1.1  // 10% boost for high confidence
+          } else if (confidence === 'medium') {
+            baseScore *= 1.05  // 5% boost for medium confidence
+          }
+          
+          score = baseScore
         } else {
           // No model data - fall back to market consensus
           score = side.consensusProb * 0.6 + Math.max(0, side.marketEdge) * 0.4
@@ -2814,16 +2870,22 @@ export async function computeBestPropModelFirst(propsData: GamePlayerProps[]): P
           modelProbability,
           modelAverage,
           modelGamesPlayed,
-          modelEdge
+          modelEdge,
+          // NEW: Enhanced model fields
+          reliabilityScore,
+          confidence,
+          historicalHitRate,
+          adjustedAverage
         })
       }
     }
   }
   
-  // Sort by score (model-first ranking)
+  // Sort by score (model-first ranking with reliability boost)
   allRankedProps.sort((a, b) => b.score - a.score)
   
   // Filter to only include props with reasonable probability (at least 40%)
+  // Also prefer props with high reliability for parlays
   const viableProps = allRankedProps.filter(p => {
     const prob = p.modelProbability !== undefined ? p.modelProbability : p.consensusProbability
     return prob >= 40
