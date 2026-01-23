@@ -32,8 +32,10 @@ import {
   calculateSituationalAdjustment,
   applyAdjustment,
   getSituationalSummary,
-  type SituationalAdjustment
+  type SituationalAdjustment,
+  type WeatherData
 } from './situational-factors'
+import { type LineMovement } from './line-movement'
 
 export interface RankedBet {
   gameId: string
@@ -673,7 +675,12 @@ async function getTopScorersForTeam(
   }
 }
 
-export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<RankedBet[]> {
+export async function analyzeGame(
+  game: Game, 
+  injuries?: InjuryInfo[],
+  weather?: WeatherData | null,
+  lineMovement?: LineMovement | null
+): Promise<RankedBet[]> {
   const rankedBets: RankedBet[] = []
   const now = new Date().toISOString()
   
@@ -794,8 +801,8 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
       undefined, // teamRecord - would need to be passed from enriched game data
       undefined, // lastGameDate - would need schedule data
       undefined, // opponentLastGameDate
-      undefined, // weather - would need to be passed
-      undefined  // lineMovement - would need to be passed
+      weather,   // Weather data for outdoor sports
+      lineMovement  // Line movement data for sharp money detection
     )
     
     const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational)
@@ -935,8 +942,8 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
         undefined, // teamRecord
         undefined, // lastGameDate
         undefined, // opponentLastGameDate
-        undefined, // weather
-        undefined  // lineMovement
+        weather,   // Weather data for outdoor sports
+        lineMovement  // Line movement data for sharp money detection
       )
       const spreadSituationalAdj = calculateSituationalAdjustment(spreadSituationalFactors, eloLeague)
       const eloCoverProb = applyAdjustment(baseEloCoverProb, spreadSituationalAdj.totalAdjustment)
@@ -1057,8 +1064,8 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
         undefined, // teamRecord
         undefined, // lastGameDate
         undefined, // opponentLastGameDate
-        undefined, // weather - would be passed for outdoor sports
-        undefined  // lineMovement
+        weather,   // Weather data - critical for outdoor sports totals
+        lineMovement  // Line movement data for sharp money detection
       )
       const totalSituationalAdj = calculateSituationalAdjustment(totalSituationalFactors, eloLeague)
       
@@ -1440,7 +1447,11 @@ function passesFilters(
  * 
  * This is the main entry point - call this on each cron refresh
  */
-export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
+export async function computeBestBets(
+  games: Game[],
+  weatherMap?: Map<string, WeatherData>,
+  lineMovements?: LineMovement[]
+): Promise<BestBetResult> {
   const now = new Date().toISOString()
   const allRankedBets: RankedBet[] = []
   const allUnfilteredBets: FallbackBet[] = []
@@ -1453,13 +1464,25 @@ export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
     const espnInjuries = enrichedGame.espnData?.injuries || []
     const injuries = convertESPNInjuriesToInjuryInfo(espnInjuries)
     
+    // Get weather and line movement for this specific game
+    const gameWeather = weatherMap?.get(game.id) || null
+    const gameLineMovement = lineMovements?.find(lm => lm.gameId === game.id) || null
+    
     // Log injury data for debugging
     if (injuries.length > 0) {
       console.log(`[computeBestBets] ${game.homeTeam} vs ${game.awayTeam}: ${injuries.length} injuries found`)
       injuries.forEach(inj => console.log(`  - ${inj.player} (${inj.team}): ${inj.status}`))
     }
     
-    const bets = await analyzeGame(game, injuries)
+    // Log situational data for debugging
+    if (gameWeather) {
+      console.log(`[computeBestBets] ${game.homeTeam} vs ${game.awayTeam}: Weather data available`)
+    }
+    if (gameLineMovement && gameLineMovement.movement.sharpIndicator) {
+      console.log(`[computeBestBets] ${game.homeTeam} vs ${game.awayTeam}: Sharp money indicator detected!`)
+    }
+    
+    const bets = await analyzeGame(game, injuries, gameWeather, gameLineMovement)
     allRankedBets.push(...bets)
     
     // Also collect unfiltered bets for fallback/scoring

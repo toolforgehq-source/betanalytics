@@ -10,6 +10,8 @@ import {
   cacheSportBets
 } from "@/lib/bet-ranking"
 import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
+import { getWeatherForGames } from "@/lib/weather"
+import { getLineMovement } from "@/lib/line-movement"
 
 // Extended Game type with ESPN data for injury support
 interface EnrichedGame extends Game {
@@ -212,9 +214,30 @@ export async function GET(request: Request) {
     const todaysGames = filterGamesToday(allGames)
     console.log(`[fetch-odds] Filtered to ${todaysGames.length} games today (ET) out of ${allGames.length} total`)
     
+    // Fetch weather data for outdoor games (NFL, MLB, MLS)
+    console.log("[fetch-odds] Fetching weather data for outdoor games...")
+    const outdoorGames = todaysGames.filter(g => 
+      g.sport.includes('football') || g.sport.includes('baseball') || g.sport.includes('soccer')
+    ).map(g => ({ id: g.id, homeTeam: g.homeTeam, sport: g.sport }))
+    const weatherMap = await getWeatherForGames(outdoorGames).catch(err => {
+      console.error("[fetch-odds] Weather fetch failed:", err)
+      return new Map()
+    })
+    console.log(`[fetch-odds] Weather data fetched for ${weatherMap.size} games`)
+    
+    // Fetch line movement data (compares current odds to opening lines)
+    console.log("[fetch-odds] Fetching line movement data...")
+    const lineMovements = await getLineMovement(todaysGames).catch(err => {
+      console.error("[fetch-odds] Line movement fetch failed:", err)
+      return []
+    })
+    const sharpGames = lineMovements.filter(lm => lm.movement.sharpIndicator).length
+    console.log(`[fetch-odds] Line movement data fetched: ${lineMovements.length} games tracked, ${sharpGames} with sharp money indicators`)
+    
     // Compute and cache the best bet using only TODAY's games
+    // Now passing weather and line movement data for situational adjustments
     console.log("Computing best bet from today's games...")
-    const bestBetResult = await computeBestBets(todaysGames)
+    const bestBetResult = await computeBestBets(todaysGames, weatherMap, lineMovements)
     await cacheBestBet(bestBetResult)
     
     console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)
