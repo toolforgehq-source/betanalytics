@@ -12,15 +12,77 @@
  * point projections than their season average suggests.
  */
 
-import { Redis } from '@upstash/redis'
+// Redis client (using REST API like other modules)
+interface RedisClient {
+  url: string
+  token: string
+}
 
-// Redis client
-function getRedisClient(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN
+function getRedisClient(): RedisClient | null {
+  const url = process.env.KV_REST_API_URL
+  const token = process.env.KV_REST_API_TOKEN
   
   if (!url || !token) return null
-  return new Redis({ url, token })
+  return { url, token }
+}
+
+// Helper functions for Redis operations
+async function redisHSet(redis: RedisClient, key: string, field: string, value: string): Promise<boolean> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['HSET', key, field, value])
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+async function redisHGet(redis: RedisClient, key: string, field: string): Promise<string | null> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['HGET', key, field])
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    return data.result || null
+  } catch {
+    return null
+  }
+}
+
+async function redisHGetAll(redis: RedisClient, key: string): Promise<Record<string, string> | null> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['HGETALL', key])
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    // HGETALL returns array like [field1, value1, field2, value2, ...]
+    if (!data.result || !Array.isArray(data.result)) return null
+    const result: Record<string, string> = {}
+    for (let i = 0; i < data.result.length; i += 2) {
+      result[data.result[i]] = data.result[i + 1]
+    }
+    return result
+  } catch {
+    return null
+  }
 }
 
 // ============================================
@@ -168,7 +230,7 @@ export async function storePlayerMatchupGame(game: PlayerMatchupGame): Promise<v
   
   try {
     const key = `${game.playerId}_${game.opponent}_${game.date}`
-    await redis.hset(PLAYER_MATCHUP_GAMES_KEY, { [key]: JSON.stringify(game) })
+    await redisHSet(redis, PLAYER_MATCHUP_GAMES_KEY, key, JSON.stringify(game))
   } catch (error) {
     console.error('[PlayerMatchup] Error storing game:', error)
   }
@@ -185,7 +247,7 @@ export async function getPlayerGamesVsOpponent(
   if (!redis) return []
   
   try {
-    const allGames = await redis.hgetall(PLAYER_MATCHUP_GAMES_KEY) as Record<string, string> | null
+    const allGames = await redisHGetAll(redis, PLAYER_MATCHUP_GAMES_KEY)
     if (!allGames) return []
     
     const normOpp = normalizeTeamName(opponent)
@@ -300,7 +362,7 @@ export async function storePlayerVsTeamStats(stats: PlayerVsTeamStats): Promise<
   
   try {
     const key = `${stats.playerId}_${normalizeTeamName(stats.opponent)}`
-    await redis.hset(PLAYER_VS_TEAM_STATS_KEY, { [key]: JSON.stringify(stats) })
+    await redisHSet(redis, PLAYER_VS_TEAM_STATS_KEY, key, JSON.stringify(stats))
     console.log(`[PlayerMatchup] Stored ${stats.playerName} vs ${stats.opponent} stats`)
   } catch (error) {
     console.error('[PlayerMatchup] Error storing stats:', error)
@@ -319,7 +381,7 @@ export async function getPlayerVsTeamStats(
   
   try {
     const key = `${playerId}_${normalizeTeamName(opponent)}`
-    const data = await redis.hget(PLAYER_VS_TEAM_STATS_KEY, key) as string | null
+    const data = await redisHGet(redis, PLAYER_VS_TEAM_STATS_KEY, key)
     if (!data) return null
     return JSON.parse(data) as PlayerVsTeamStats
   } catch (error) {
@@ -337,7 +399,7 @@ export async function storeTeamDefensiveRating(rating: TeamDefensiveRating): Pro
   
   try {
     const key = `${rating.league}_${normalizeTeamName(rating.teamName)}_${rating.season}`
-    await redis.hset(TEAM_DEFENSIVE_RATINGS_KEY, { [key]: JSON.stringify(rating) })
+    await redisHSet(redis, TEAM_DEFENSIVE_RATINGS_KEY, key, JSON.stringify(rating))
   } catch (error) {
     console.error('[PlayerMatchup] Error storing defensive rating:', error)
   }
@@ -358,7 +420,7 @@ export async function getTeamDefensiveRating(
   
   try {
     const key = `${league}_${normalizeTeamName(teamName)}_${currentSeason}`
-    const data = await redis.hget(TEAM_DEFENSIVE_RATINGS_KEY, key) as string | null
+    const data = await redisHGet(redis, TEAM_DEFENSIVE_RATINGS_KEY, key)
     if (!data) return null
     return JSON.parse(data) as TeamDefensiveRating
   } catch (error) {
@@ -589,7 +651,7 @@ export async function updatePlayerMatchupStats(
   }
   
   // Calculate and store stats for each pair
-  for (const [, pairGames] of playerOpponentGames) {
+  for (const [, pairGames] of Array.from(playerOpponentGames.entries())) {
     const firstGame = pairGames[0]
     const seasonStats = playerSeasonStats.get(firstGame.playerId)
     

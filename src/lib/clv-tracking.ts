@@ -10,19 +10,82 @@
  * This module stores picks with their lines and calculates CLV metrics.
  */
 
-import { Redis } from '@upstash/redis'
+// Redis client for CLV data storage (using REST API like other modules)
+interface RedisClient {
+  url: string
+  token: string
+}
 
-// Redis client for CLV data storage
-function getRedisClient(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN
+function getRedisClient(): RedisClient | null {
+  const url = process.env.KV_REST_API_URL
+  const token = process.env.KV_REST_API_TOKEN
   
   if (!url || !token) {
     console.warn('[CLV] Redis not configured - CLV tracking disabled')
     return null
   }
   
-  return new Redis({ url, token })
+  return { url, token }
+}
+
+// Helper functions for Redis operations
+async function redisHSet(redis: RedisClient, key: string, field: string, value: string): Promise<boolean> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['HSET', key, field, value])
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+async function redisHGet(redis: RedisClient, key: string, field: string): Promise<string | null> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['HGET', key, field])
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    return data.result || null
+  } catch {
+    return null
+  }
+}
+
+async function redisHGetAll(redis: RedisClient, key: string): Promise<Record<string, string> | null> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['HGETALL', key])
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    if (!data.result || !Array.isArray(data.result)) return null
+    
+    // HGETALL returns [field1, value1, field2, value2, ...]
+    const result: Record<string, string> = {}
+    for (let i = 0; i < data.result.length; i += 2) {
+      result[data.result[i]] = data.result[i + 1]
+    }
+    return result
+  } catch {
+    return null
+  }
 }
 
 // ============================================
@@ -112,7 +175,11 @@ export async function storeCLVPick(pick: Omit<CLVPick, 'id' | 'closingLine' | 'c
   
   try {
     // Store in Redis hash
-    await redis.hset(CLV_PICKS_KEY, { [id]: JSON.stringify(fullPick) })
+    const success = await redisHSet(redis, CLV_PICKS_KEY, id, JSON.stringify(fullPick))
+    if (!success) {
+      console.error('[CLV] Failed to store pick')
+      return null
+    }
     console.log(`[CLV] Stored pick: ${pick.team} ${pick.betType} at ${pick.pickLine}`)
     return fullPick
   } catch (error) {
@@ -133,7 +200,7 @@ export async function updateClosingLine(
   if (!redis) return null
   
   try {
-    const pickData = await redis.hget(CLV_PICKS_KEY, pickId) as string | null
+    const pickData = await redisHGet(redis, CLV_PICKS_KEY, pickId)
     if (!pickData) {
       console.warn(`[CLV] Pick not found: ${pickId}`)
       return null
@@ -163,7 +230,7 @@ export async function updateClosingLine(
       closingTimestamp: new Date().toISOString()
     }
     
-    await redis.hset(CLV_PICKS_KEY, { [pickId]: JSON.stringify(updatedPick) })
+    await redisHSet(redis, CLV_PICKS_KEY, pickId, JSON.stringify(updatedPick))
     console.log(`[CLV] Updated closing line for ${pickId}: ${pick.pickLine} → ${closingLine} (CLV: ${clvPoints > 0 ? '+' : ''}${clvPoints})`)
     
     return updatedPick
@@ -185,7 +252,7 @@ export async function updatePickOutcome(
   if (!redis) return null
   
   try {
-    const pickData = await redis.hget(CLV_PICKS_KEY, pickId) as string | null
+    const pickData = await redisHGet(redis, CLV_PICKS_KEY, pickId)
     if (!pickData) return null
     
     const pick: CLVPick = JSON.parse(pickData)
@@ -195,7 +262,7 @@ export async function updatePickOutcome(
       actualResult
     }
     
-    await redis.hset(CLV_PICKS_KEY, { [pickId]: JSON.stringify(updatedPick) })
+    await redisHSet(redis, CLV_PICKS_KEY, pickId, JSON.stringify(updatedPick))
     return updatedPick
   } catch (error) {
     console.error('[CLV] Error updating outcome:', error)
@@ -211,7 +278,7 @@ export async function getAllCLVPicks(): Promise<CLVPick[]> {
   if (!redis) return []
   
   try {
-    const allPicks = await redis.hgetall(CLV_PICKS_KEY) as Record<string, string> | null
+    const allPicks = await redisHGetAll(redis, CLV_PICKS_KEY)
     if (!allPicks) return []
     
     return Object.values(allPicks).map(p => JSON.parse(p) as CLVPick)
@@ -306,7 +373,7 @@ export async function calculateCLVStats(): Promise<CLVStats> {
       sportGroups.set(pick.sport, existing)
     }
     
-    for (const [sport, sportPicks] of sportGroups) {
+    for (const [sport, sportPicks] of Array.from(sportGroups.entries())) {
       const sportTotal = sportPicks.reduce((sum, p) => sum + (p.clvPoints || 0), 0)
       const sportPositive = sportPicks.filter(p => (p.clvPoints || 0) > 0).length
       stats.bySport[sport] = {

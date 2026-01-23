@@ -9,19 +9,98 @@
  * A well-calibrated model is essential for profitable betting.
  */
 
-import { Redis } from '@upstash/redis'
+// Redis client (using REST API like other modules)
+interface RedisClient {
+  url: string
+  token: string
+}
 
-// Redis client
-function getRedisClient(): Redis | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN
+function getRedisClient(): RedisClient | null {
+  const url = process.env.KV_REST_API_URL
+  const token = process.env.KV_REST_API_TOKEN
   
   if (!url || !token) {
     console.warn('[Calibration] Redis not configured - calibration disabled')
     return null
   }
   
-  return new Redis({ url, token })
+  return { url, token }
+}
+
+// Helper functions for Redis operations
+async function redisHSet(redis: RedisClient, key: string, field: string, value: string): Promise<boolean> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['HSET', key, field, value])
+    })
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+async function redisHGet(redis: RedisClient, key: string, field: string): Promise<string | null> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['HGET', key, field])
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    return data.result || null
+  } catch {
+    return null
+  }
+}
+
+async function redisHGetAll(redis: RedisClient, key: string): Promise<Record<string, string> | null> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['HGETALL', key])
+    })
+    if (!response.ok) return null
+    const data = await response.json()
+    if (!data.result || !Array.isArray(data.result)) return null
+    
+    // HGETALL returns [field1, value1, field2, value2, ...]
+    const result: Record<string, string> = {}
+    for (let i = 0; i < data.result.length; i += 2) {
+      result[data.result[i]] = data.result[i + 1]
+    }
+    return result
+  } catch {
+    return null
+  }
+}
+
+async function redisSet(redis: RedisClient, key: string, value: string): Promise<boolean> {
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: { 
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['SET', key, value])
+    })
+    return response.ok
+  } catch {
+    return false
+  }
 }
 
 // ============================================
@@ -155,7 +234,7 @@ export async function storeCalibrationRecord(
   }
   
   try {
-    await redis.hset(CALIBRATION_RECORDS_KEY, { [id]: JSON.stringify(fullRecord) })
+    await redisHSet(redis, CALIBRATION_RECORDS_KEY, id, JSON.stringify(fullRecord))
     console.log(`[Calibration] Stored record: ${record.team} ${record.betType} at ${(record.predictedProbability * 100).toFixed(1)}%`)
     return fullRecord
   } catch (error) {
@@ -175,13 +254,13 @@ export async function updateCalibrationOutcome(
   if (!redis) return null
   
   try {
-    const recordData = await redis.hget(CALIBRATION_RECORDS_KEY, recordId) as string | null
+    const recordData = await redisHGet(redis, CALIBRATION_RECORDS_KEY, recordId)
     if (!recordData) return null
     
     const record: CalibrationRecord = JSON.parse(recordData)
     const updatedRecord: CalibrationRecord = { ...record, outcome }
     
-    await redis.hset(CALIBRATION_RECORDS_KEY, { [recordId]: JSON.stringify(updatedRecord) })
+    await redisHSet(redis, CALIBRATION_RECORDS_KEY, recordId, JSON.stringify(updatedRecord))
     return updatedRecord
   } catch (error) {
     console.error('[Calibration] Error updating outcome:', error)
@@ -197,7 +276,7 @@ export async function getAllCalibrationRecords(): Promise<CalibrationRecord[]> {
   if (!redis) return []
   
   try {
-    const allRecords = await redis.hgetall(CALIBRATION_RECORDS_KEY) as Record<string, string> | null
+    const allRecords = await redisHGetAll(redis, CALIBRATION_RECORDS_KEY)
     if (!allRecords) return []
     
     return Object.values(allRecords).map(r => JSON.parse(r) as CalibrationRecord)
@@ -300,7 +379,7 @@ export async function calculateCalibrationStats(): Promise<CalibrationStats> {
     sportGroups.set(record.sport, existing)
   }
   
-  for (const [sport, sportRecords] of sportGroups) {
+  for (const [sport, sportRecords] of Array.from(sportGroups.entries())) {
     const wins = sportRecords.filter(r => r.outcome === 'win').length
     const actualRate = wins / sportRecords.length
     const expectedRate = sportRecords.reduce((sum, r) => sum + r.predictedProbability, 0) / sportRecords.length
@@ -326,7 +405,7 @@ export async function calculateCalibrationStats(): Promise<CalibrationStats> {
     betTypeGroups.set(record.betType, existing)
   }
   
-  for (const [betType, typeRecords] of betTypeGroups) {
+  for (const [betType, typeRecords] of Array.from(betTypeGroups.entries())) {
     const wins = typeRecords.filter(r => r.outcome === 'win').length
     const actualRate = wins / typeRecords.length
     const expectedRate = typeRecords.reduce((sum, r) => sum + r.predictedProbability, 0) / typeRecords.length
@@ -395,7 +474,7 @@ export async function storeCalibrationFactors(): Promise<void> {
   }
   
   try {
-    await redis.set(CALIBRATION_FACTORS_KEY, JSON.stringify(factors))
+    await redisSet(redis, CALIBRATION_FACTORS_KEY, JSON.stringify(factors))
     console.log('[Calibration] Stored calibration factors')
   } catch (error) {
     console.error('[Calibration] Error storing factors:', error)
