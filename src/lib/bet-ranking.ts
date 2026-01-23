@@ -31,11 +31,10 @@ import {
   calculateSituationalFactors,
   calculateSituationalAdjustment,
   applyAdjustment,
-  getSituationalSummary,
-  type SituationalAdjustment,
   type WeatherData
 } from './situational-factors'
 import { type LineMovement } from './line-movement'
+import { normalizeTeamName as normalizeScheduleTeamName } from './team-schedule'
 
 export interface RankedBet {
   gameId: string
@@ -679,7 +678,9 @@ export async function analyzeGame(
   game: Game, 
   injuries?: InjuryInfo[],
   weather?: WeatherData | null,
-  lineMovement?: LineMovement | null
+  lineMovement?: LineMovement | null,
+  homeLastGameDate?: string | null,
+  awayLastGameDate?: string | null
 ): Promise<RankedBet[]> {
   const rankedBets: RankedBet[] = []
   const now = new Date().toISOString()
@@ -793,14 +794,18 @@ export async function analyzeGame(
     const eloLeagueForSituational = SPORT_TO_ELO_LEAGUE[game.sport] || game.sport
     const opponentName = isHomeTeam ? game.awayTeam : game.homeTeam
     
+    // Get the correct lastGameDate based on which team we're analyzing
+    const teamLastGameDate = isHomeTeam ? homeLastGameDate : awayLastGameDate
+    const opponentLastGameDate = isHomeTeam ? awayLastGameDate : homeLastGameDate
+    
     const situationalFactors = calculateSituationalFactors(
       team,
       opponentName,
       eloLeagueForSituational,
       isHomeTeam,
       undefined, // teamRecord - would need to be passed from enriched game data
-      undefined, // lastGameDate - would need schedule data
-      undefined, // opponentLastGameDate
+      teamLastGameDate || undefined,  // lastGameDate from schedule data
+      opponentLastGameDate || undefined,  // opponentLastGameDate from schedule data
       weather,   // Weather data for outdoor sports
       lineMovement  // Line movement data for sharp money detection
     )
@@ -934,14 +939,18 @@ export async function analyzeGame(
       
       // Apply situational factors to spread cover probability
       const opponentName = isHomeTeam ? game.awayTeam : game.homeTeam
+      // Get the correct lastGameDate based on which team we're analyzing
+      const spreadTeamLastGameDate = isHomeTeam ? homeLastGameDate : awayLastGameDate
+      const spreadOpponentLastGameDate = isHomeTeam ? awayLastGameDate : homeLastGameDate
+      
       const spreadSituationalFactors = calculateSituationalFactors(
         teamName,
         opponentName,
         eloLeague,
         isHomeTeam,
         undefined, // teamRecord
-        undefined, // lastGameDate
-        undefined, // opponentLastGameDate
+        spreadTeamLastGameDate || undefined,  // lastGameDate from schedule data
+        spreadOpponentLastGameDate || undefined,  // opponentLastGameDate from schedule data
         weather,   // Weather data for outdoor sports
         lineMovement  // Line movement data for sharp money detection
       )
@@ -1056,14 +1065,15 @@ export async function analyzeGame(
       const awayElo = eloResult.awayEffectiveRating ?? eloResult.awayRating
       
       // Calculate situational factors for totals (weather is especially important for outdoor sports)
+      // For totals, use home team's lastGameDate and away team's as opponent
       const totalSituationalFactors = calculateSituationalFactors(
         game.homeTeam,
         game.awayTeam,
         eloLeague,
         true, // Use home team perspective for totals
         undefined, // teamRecord
-        undefined, // lastGameDate
-        undefined, // opponentLastGameDate
+        homeLastGameDate || undefined,  // lastGameDate from schedule data (home team)
+        awayLastGameDate || undefined,  // opponentLastGameDate from schedule data (away team)
         weather,   // Weather data - critical for outdoor sports totals
         lineMovement  // Line movement data for sharp money detection
       )
@@ -1450,7 +1460,8 @@ function passesFilters(
 export async function computeBestBets(
   games: Game[],
   weatherMap?: Map<string, WeatherData>,
-  lineMovements?: LineMovement[]
+  lineMovements?: LineMovement[],
+  teamScheduleData?: TeamScheduleData | null
 ): Promise<BestBetResult> {
   const now = new Date().toISOString()
   const allRankedBets: RankedBet[] = []
@@ -1468,6 +1479,16 @@ export async function computeBestBets(
     const gameWeather = weatherMap?.get(game.id) || null
     const gameLineMovement = lineMovements?.find(lm => lm.gameId === game.id) || null
     
+    // Get last game dates for rest day calculations
+    let homeLastGameDate: string | null = null
+    let awayLastGameDate: string | null = null
+    if (teamScheduleData) {
+      const homeKey = normalizeScheduleTeamName(game.homeTeam)
+      const awayKey = normalizeScheduleTeamName(game.awayTeam)
+      homeLastGameDate = teamScheduleData.teams[homeKey]?.lastGameDate || null
+      awayLastGameDate = teamScheduleData.teams[awayKey]?.lastGameDate || null
+    }
+    
     // Log injury data for debugging
     if (injuries.length > 0) {
       console.log(`[computeBestBets] ${game.homeTeam} vs ${game.awayTeam}: ${injuries.length} injuries found`)
@@ -1481,8 +1502,11 @@ export async function computeBestBets(
     if (gameLineMovement && gameLineMovement.movement.sharpIndicator) {
       console.log(`[computeBestBets] ${game.homeTeam} vs ${game.awayTeam}: Sharp money indicator detected!`)
     }
+    if (homeLastGameDate || awayLastGameDate) {
+      console.log(`[computeBestBets] ${game.homeTeam} vs ${game.awayTeam}: Rest day data available`)
+    }
     
-    const bets = await analyzeGame(game, injuries, gameWeather, gameLineMovement)
+    const bets = await analyzeGame(game, injuries, gameWeather, gameLineMovement, homeLastGameDate, awayLastGameDate)
     allRankedBets.push(...bets)
     
     // Also collect unfiltered bets for fallback/scoring

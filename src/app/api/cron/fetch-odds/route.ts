@@ -12,6 +12,7 @@ import {
 import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
 import { getWeatherForGames } from "@/lib/weather"
 import { getLineMovement } from "@/lib/line-movement"
+import { getCachedTeamScheduleData } from "@/lib/team-schedule"
 
 // Extended Game type with ESPN data for injury support
 interface EnrichedGame extends Game {
@@ -234,10 +235,22 @@ export async function GET(request: Request) {
     const sharpGames = lineMovements.filter(lm => lm.movement.sharpIndicator).length
     console.log(`[fetch-odds] Line movement data fetched: ${lineMovements.length} games tracked, ${sharpGames} with sharp money indicators`)
     
+    // Fetch team schedule data for rest day calculations
+    console.log("[fetch-odds] Fetching team schedule data for rest days...")
+    const teamScheduleData = await getCachedTeamScheduleData().catch(err => {
+      console.error("[fetch-odds] Team schedule fetch failed:", err)
+      return null
+    })
+    if (teamScheduleData) {
+      console.log(`[fetch-odds] Team schedule data available: ${Object.keys(teamScheduleData.teams).length} teams tracked`)
+    } else {
+      console.log("[fetch-odds] No team schedule data available - rest day adjustments will use defaults")
+    }
+    
     // Compute and cache the best bet using only TODAY's games
-    // Now passing weather and line movement data for situational adjustments
+    // Now passing weather, line movement, and team schedule data for situational adjustments
     console.log("Computing best bet from today's games...")
-    const bestBetResult = await computeBestBets(todaysGames, weatherMap, lineMovements)
+    const bestBetResult = await computeBestBets(todaysGames, weatherMap, lineMovements, teamScheduleData)
     await cacheBestBet(bestBetResult)
     
     console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)
