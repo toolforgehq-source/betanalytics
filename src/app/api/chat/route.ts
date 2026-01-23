@@ -1073,47 +1073,47 @@ export async function POST(request: Request) {
       try {
         const parlay = await getCachedParlay()
         if (parlay && parlay.safeParlay && parlay.safeParlay.length > 0) {
-          // Check if parlay has Elo data
-          const hasEloData = parlay.safeParlay.some(leg => leg.eloProbability != null && leg.homeElo != null && leg.awayElo != null)
-          if (hasEloData) {
-            const deterministicResponse = formatParlayForContext(parlay)
-            console.log(`[chat] Returning Elo-based parlay with ${parlay.safeParlay.length} legs`)
-            
-            // Save messages to database
-            await db.messages.create({
-              conversationId: conversation.id,
-              role: 'user',
-              content: userMessage.content,
-            })
-            
-            await db.messages.create({
-              conversationId: conversation.id,
-              role: 'assistant',
-              content: deterministicResponse,
-            })
-            
-            await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
-            
-            // Update question count for non-subscribers
-            if (!subStatus.isSubscribed) {
-              const user = await db.users.findById(session.user.id)
-              if (user) {
-                await db.users.update(session.user.id, { 
-                  questionCount: (user.questionCount || 0) + 1
-                })
-              }
+          // ALWAYS use cached parlay - it's computed with proper moneyline-only filtering
+          // and value-based selection. Falling through to LLM causes:
+          // 1. Mixed bet types (totals in parlays)
+          // 2. Unrealistic probabilities (LLM hallucination)
+          // 3. OVER/UNDER contradictions
+          const hasEloData = parlay.safeParlay.some(leg => leg.eloProbability != null)
+          const deterministicResponse = formatParlayForContext(parlay)
+          console.log(`[chat] Returning cached parlay with ${parlay.safeParlay.length} legs (Elo data: ${hasEloData})`)
+          
+          // Save messages to database
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'user',
+            content: userMessage.content,
+          })
+          
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: deterministicResponse,
+          })
+          
+          await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+          
+          // Update question count for non-subscribers
+          if (!subStatus.isSubscribed) {
+            const user = await db.users.findById(session.user.id)
+            if (user) {
+              await db.users.update(session.user.id, { 
+                questionCount: (user.questionCount || 0) + 1
+              })
             }
-            
-            // Return deterministic response directly, bypassing LLM
-            return NextResponse.json({ 
-              message: deterministicResponse,
-              questionsRemaining: subStatus.isSubscribed 
-                ? -1 
-                : Math.max(0, subStatus.questionsRemaining - 1)
-            })
-          } else {
-            console.log(`[chat] Parlay found but no Elo data available`)
           }
+          
+          // Return deterministic response directly, bypassing LLM
+          return NextResponse.json({ 
+            message: deterministicResponse,
+            questionsRemaining: subStatus.isSubscribed 
+              ? -1 
+              : Math.max(0, subStatus.questionsRemaining - 1)
+          })
         }
       } catch (err) {
         console.error('[chat] Error processing parlay question:', err)

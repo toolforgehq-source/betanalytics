@@ -1388,6 +1388,20 @@ function getSportEmoji(sportName: string): string {
 }
 
 /**
+ * Get sport-specific unit for totals (Goals, Points, Runs, etc.)
+ * This ensures users know what they're betting over/under on
+ */
+function getTotalUnit(sportName: string): string {
+  const sport = sportName.toLowerCase()
+  if (sport.includes('nba') || sport.includes('basketball') || sport.includes('ncaab')) return 'Points'
+  if (sport.includes('nfl') || sport.includes('football') || sport.includes('ncaaf')) return 'Points'
+  if (sport.includes('nhl') || sport.includes('hockey')) return 'Goals'
+  if (sport.includes('mlb') || sport.includes('baseball')) return 'Runs'
+  if (sport.includes('soccer') || sport.includes('mls') || sport.includes('epl') || sport.includes('premier') || sport.includes('bundesliga') || sport.includes('la liga') || sport.includes('serie a') || sport.includes('ligue 1') || sport.includes('champions') || sport.includes('europa')) return 'Goals'
+  return 'Total'  // Generic fallback
+}
+
+/**
  * Format the best bet result as a professional user-facing response
  * Clean, conversational formatting - no internal directives
  */
@@ -1503,8 +1517,9 @@ export function formatBestBetForContext(result: BestBetResult): string {
   let betTypeDisplay: string
   let pickDisplay: string
   if (bet.betType === 'total' && bet.line !== undefined) {
-    betTypeDisplay = `${bet.team} ${bet.line}`
-    pickDisplay = `${bet.team} ${bet.line} @ ${formatOdds(bet.bestPrice)}`
+    const unit = getTotalUnit(bet.sportName)
+    betTypeDisplay = `${bet.team} ${bet.line} ${unit}`
+    pickDisplay = `${bet.team} ${bet.line} ${unit} @ ${formatOdds(bet.bestPrice)}`
   } else if (bet.betType === 'spread' && bet.line !== undefined) {
     betTypeDisplay = `${bet.line > 0 ? '+' : ''}${bet.line}`
     pickDisplay = `${bet.team} ${betTypeDisplay} @ ${formatOdds(bet.bestPrice)}`
@@ -1596,7 +1611,8 @@ export function formatBestBetForContext(result: BestBetResult): string {
     const ru = result.runnerUp
     let ruPickDisplay: string
     if (ru.betType === 'total' && ru.line !== undefined) {
-      ruPickDisplay = `${ru.team} ${ru.line} @ ${formatOdds(ru.bestPrice)}`
+      const ruUnit = getTotalUnit(ru.sportName)
+      ruPickDisplay = `${ru.team} ${ru.line} ${ruUnit} @ ${formatOdds(ru.bestPrice)}`
     } else if (ru.betType === 'spread' && ru.line !== undefined) {
       ruPickDisplay = `${ru.team} ${ru.line > 0 ? '+' : ''}${ru.line} @ ${formatOdds(ru.bestPrice)}`
     } else {
@@ -2034,7 +2050,8 @@ export function formatParlayForContext(parlay: ParlayResult): string {
     if (leg.betType === 'spread' && leg.line !== undefined) {
       return `${leg.team} ${leg.line > 0 ? '+' : ''}${leg.line}`
     } else if (leg.betType === 'total' && leg.line !== undefined) {
-      return `${leg.team} ${leg.line}`
+      const unit = getTotalUnit(leg.sportName)
+      return `${leg.team} ${leg.line} ${unit}`
     } else {
       return `${leg.team} ML`
     }
