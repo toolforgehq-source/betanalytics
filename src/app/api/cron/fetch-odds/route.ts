@@ -226,10 +226,13 @@ export async function GET(request: Request) {
     console.log(`Parlay computed: ${parlayResult.safeParlay ? '2-leg safe parlay ready' : 'no parlay available'}`)
     
     // Compute and cache sport-specific best bets
+    // Use allEloBets (not allRankedBets) so sport-specific queries work even when
+    // no bets pass strict filters. This ensures "best NHL bet" returns Elo-based
+    // recommendations even if no NHL bets qualify for "best bet of the day"
     console.log("[fetch-odds] Computing sport-specific best bets...")
-    const sportBets = computeSportBestBets(bestBetResult.allRankedBets)
+    const sportBets = computeSportBestBets(bestBetResult.allEloBets)
     await cacheSportBets(sportBets)
-    console.log(`[fetch-odds] Sport bets computed: ${Object.keys(sportBets).length} sports`)
+    console.log(`[fetch-odds] Sport bets computed: ${Object.keys(sportBets).length} sports (from ${bestBetResult.allEloBets.length} Elo bets)`)
     
     // Store the best bet pick for track record (if we have one and it's a new game)
     let pickStored = false

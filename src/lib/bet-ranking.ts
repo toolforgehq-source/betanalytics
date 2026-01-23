@@ -100,6 +100,7 @@ export interface BestBetResult {
   bestBet: RankedBet | null
   runnerUp: RankedBet | null
   allRankedBets: RankedBet[]
+  allEloBets: RankedBet[]  // ALL bets with Elo data (for sport-specific queries, not filtered)
   calculatedAt: string
   gamesAnalyzed: number
   gamesQualified: number
@@ -1120,6 +1121,126 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
 }
 
 /**
+ * Analyze a single game with Elo but WITHOUT strict filters
+ * Returns ALL moneyline bets with Elo data for sport-specific queries
+ * This ensures users can ask "best NHL bet" and get Elo-based recommendations
+ * even if no NHL bets pass the strict filters for "best bet of the day"
+ */
+async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Promise<RankedBet[]> {
+  const rankedBets: RankedBet[] = []
+  const now = new Date().toISOString()
+  
+  // Skip games that have already started
+  if (new Date(game.commenceTime) < new Date()) {
+    return []
+  }
+  
+  // Must have moneyline odds
+  if (!game.moneylines || game.moneylines.length === 0) {
+    return []
+  }
+  
+  // Get Elo prediction for this game (if available)
+  const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
+  let eloResult: { 
+    probability: number
+    homeRating: number
+    awayRating: number
+    confidence: string
+  } | null = null
+  
+  if (eloLeague) {
+    try {
+      if (injuries && injuries.length > 0) {
+        const [homeTopScorers, awayTopScorers] = await Promise.all([
+          getTopScorersForTeam(game.homeTeam, game.sport),
+          getTopScorersForTeam(game.awayTeam, game.sport)
+        ])
+        
+        const injuryResult = await getEloWinProbabilityWithInjuries(
+          eloLeague,
+          game.homeTeam,
+          game.awayTeam,
+          injuries,
+          homeTopScorers,
+          awayTopScorers
+        )
+        
+        if (injuryResult) {
+          eloResult = {
+            probability: injuryResult.probability,
+            homeRating: injuryResult.homeRating,
+            awayRating: injuryResult.awayRating,
+            confidence: injuryResult.confidence
+          }
+        }
+      } else {
+        eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam)
+      }
+    } catch (error) {
+      console.error('[analyzeGameForSportQuery] Error fetching Elo:', error)
+    }
+  }
+  
+  // Only return bets if we have Elo data
+  if (!eloResult || eloResult.confidence === 'very_low') {
+    return []
+  }
+  
+  // Analyze both teams - NO strict filters, just basic requirements
+  for (const team of [game.homeTeam, game.awayTeam]) {
+    const consensus = calculateConsensusProbability(game, team)
+    if (!consensus) continue
+    
+    const bestPrice = findBestPrice(game, team)
+    if (!bestPrice) continue
+    
+    // Only filter out extremely bad odds (worse than -500)
+    if (bestPrice.price < -500) continue
+    
+    const isHomeTeam = team === game.homeTeam
+    const eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
+    const modelProbability = eloProbability
+    
+    const edge = modelProbability - bestPrice.impliedProb
+    const ev = calculateExpectedValue(bestPrice.price, modelProbability)
+    const roi = calculateROI(ev)
+    const score = calculateBetScore(modelProbability, edge, roi)
+    
+    rankedBets.push({
+      gameId: game.id,
+      sport: game.sport,
+      sportName: game.sportName,
+      homeTeam: game.homeTeam,
+      awayTeam: game.awayTeam,
+      commenceTime: game.commenceTime,
+      team,
+      betType: 'moneyline',
+      consensusProbability: Math.round(consensus.consensusProb * 1000) / 10,
+      bestPrice: bestPrice.price,
+      bestBook: bestPrice.book,
+      impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
+      edge: Math.round(edge * 1000) / 10,
+      eloProbability: Math.round(eloProbability * 1000) / 10,
+      eloConfidence: eloResult.confidence,
+      homeElo: eloResult.homeRating,
+      awayElo: eloResult.awayRating,
+      expectedValue: Math.round(ev * 100) / 100,
+      roi: Math.round(roi * 100) / 100,
+      allBookPrices: consensus.bookPrices.map(b => ({
+        book: b.book,
+        price: b.price,
+        impliedProb: Math.round(b.impliedProb * 1000) / 10
+      })),
+      score,
+      calculatedAt: now
+    })
+  }
+  
+  return rankedBets
+}
+
+/**
  * Analyze a single game WITHOUT strict filters - returns all bets with scores and filter status
  * Used for:
  * 1. Computing fallback data when no bets pass strict filters
@@ -1244,6 +1365,7 @@ export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
   const now = new Date().toISOString()
   const allRankedBets: RankedBet[] = []
   const allUnfilteredBets: FallbackBet[] = []
+  const allEloBets: RankedBet[] = []  // ALL bets with Elo data (for sport-specific queries)
   
   // Analyze all games (now async to fetch Elo data)
   for (const game of games) {
@@ -1264,6 +1386,11 @@ export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
     // Also collect unfiltered bets for fallback/scoring
     const unfilteredBets = analyzeGameUnfiltered(game)
     allUnfilteredBets.push(...unfilteredBets)
+    
+    // Collect ALL Elo bets (without strict filters) for sport-specific queries
+    // This ensures "best NHL bet" works even if no NHL bets pass strict filters
+    const eloBets = await analyzeGameForSportQuery(game, injuries)
+    allEloBets.push(...eloBets)
   }
   
   // ============================================
@@ -1361,10 +1488,17 @@ export async function computeBestBets(games: Game[]): Promise<BestBetResult> {
       .slice(0, 5)
   }
   
+  // Sort allEloBets by score for sport-specific queries
+  allEloBets.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
+  })
+  
   return {
     bestBet,
     runnerUp,
     allRankedBets: filteredRankedBets.slice(0, 10),
+    allEloBets,  // ALL bets with Elo data for sport-specific queries
     calculatedAt: now,
     gamesAnalyzed: games.length,
     gamesQualified: filteredRankedBets.length,
