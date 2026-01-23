@@ -30,11 +30,11 @@ import {
 import {
   calculateSituationalFactors,
   calculateSituationalAdjustment,
-  applyAdjustment,
-  type WeatherData
+  applyAdjustment
 } from './situational-factors'
+import type { WeatherData } from './weather'
 import { type LineMovement } from './line-movement'
-import { normalizeTeamName as normalizeScheduleTeamName } from './team-schedule'
+import { normalizeTeamName as normalizeScheduleTeamName, type TeamScheduleData } from './team-schedule'
 
 export interface RankedBet {
   gameId: string

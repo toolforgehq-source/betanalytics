@@ -403,6 +403,3 @@ export async function updateTeamScheduleData(): Promise<TeamScheduleData> {
   
   return scheduleData
 }
-
-// Re-export the type for use in other modules
-export type { TeamScheduleData }
