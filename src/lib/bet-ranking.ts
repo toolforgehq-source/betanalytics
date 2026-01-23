@@ -27,6 +27,13 @@ import {
   type InjuryInfo,
   type PlayerImportance
 } from './elo'
+import {
+  calculateSituationalFactors,
+  calculateSituationalAdjustment,
+  applyAdjustment,
+  getSituationalSummary,
+  type SituationalAdjustment
+} from './situational-factors'
 
 export interface RankedBet {
   gameId: string
@@ -63,6 +70,10 @@ export interface RankedBet {
   
   // Ranking score (for sorting) - NOW BASED ON EV/ROI
   score: number
+  
+  // Situational factors (when available)
+  situationalAdjustment?: number     // Total probability adjustment from situational factors
+  situationalNotes?: string[]        // Human-readable notes about situational factors
   
   // Timestamp
   calculatedAt: string
@@ -770,16 +781,44 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
       modelProbability = eloProbability
     }
     
-    // Calculate edge: model probability - implied probability from best price
-    // This is the key change: edge is now based on our Elo model vs market
-    const edge = modelProbability - bestPrice.impliedProb
+    // Calculate situational factors and apply adjustment to model probability
+    // This accounts for back-to-back games, rest advantage, travel fatigue, etc.
+    const eloLeagueForSituational = SPORT_TO_ELO_LEAGUE[game.sport] || game.sport
+    const opponentName = isHomeTeam ? game.awayTeam : game.homeTeam
     
-    // Calculate Expected Value and ROI using MODEL probability (Elo when available)
-    const ev = calculateExpectedValue(bestPrice.price, modelProbability)
+    const situationalFactors = calculateSituationalFactors(
+      team,
+      opponentName,
+      eloLeagueForSituational,
+      isHomeTeam,
+      undefined, // teamRecord - would need to be passed from enriched game data
+      undefined, // lastGameDate - would need schedule data
+      undefined, // opponentLastGameDate
+      undefined, // weather - would need to be passed
+      undefined  // lineMovement - would need to be passed
+    )
+    
+    const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational)
+    
+    // Apply situational adjustment to model probability
+    const adjustedModelProbability = applyAdjustment(modelProbability, situationalAdj.totalAdjustment)
+    
+    // Log significant situational adjustments
+    if (Math.abs(situationalAdj.totalAdjustment) >= 0.02) {
+      console.log(`[analyzeGame] Situational adjustment for ${team}: ${(situationalAdj.totalAdjustment * 100).toFixed(1)}%`)
+      situationalAdj.notes.forEach(note => console.log(`  - ${note}`))
+    }
+    
+    // Calculate edge: adjusted model probability - implied probability from best price
+    // This is the key change: edge is now based on our Elo model + situational factors vs market
+    const edge = adjustedModelProbability - bestPrice.impliedProb
+    
+    // Calculate Expected Value and ROI using ADJUSTED probability (Elo + situational factors)
+    const ev = calculateExpectedValue(bestPrice.price, adjustedModelProbability)
     const roi = calculateROI(ev)
     
-    // Check minimum thresholds using MODEL probability
-    if (modelProbability < MIN_PROBABILITY) continue
+    // Check minimum thresholds using ADJUSTED probability
+    if (adjustedModelProbability < MIN_PROBABILITY) continue
     if (edge < MIN_EDGE) continue
     
     // Also require positive EV
@@ -788,8 +827,8 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
     // Require minimum ROI of 1% to avoid tiny-edge heavy favorites
     if (roi < 1) continue
     
-    // Calculate score using EV-based scoring system
-    const score = calculateBetScore(modelProbability, edge, roi)
+    // Calculate score using EV-based scoring system with adjusted probability
+    const score = calculateBetScore(adjustedModelProbability, edge, roi)
     
     rankedBets.push({
       gameId: game.id,
@@ -804,7 +843,7 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
       bestPrice: bestPrice.price,
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
-      edge: Math.round(edge * 1000) / 10, // Now based on Elo vs market
+      edge: Math.round(edge * 1000) / 10, // Now based on Elo + situational vs market
       eloProbability: eloProbability ? Math.round(eloProbability * 1000) / 10 : undefined,
       eloConfidence,
       homeElo,
@@ -817,6 +856,8 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
         impliedProb: Math.round(b.impliedProb * 1000) / 10
       })),
       score,
+      situationalAdjustment: situationalAdj.totalAdjustment !== 0 ? Math.round(situationalAdj.totalAdjustment * 1000) / 10 : undefined,
+      situationalNotes: situationalAdj.notes.length > 0 ? situationalAdj.notes : undefined,
       calculatedAt: now
     })
   }
@@ -882,7 +923,23 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
         isHomeTeam
       )
       
-      const eloCoverProb = spreadResult.probability
+      const baseEloCoverProb = spreadResult.probability
+      
+      // Apply situational factors to spread cover probability
+      const opponentName = isHomeTeam ? game.awayTeam : game.homeTeam
+      const spreadSituationalFactors = calculateSituationalFactors(
+        teamName,
+        opponentName,
+        eloLeague,
+        isHomeTeam,
+        undefined, // teamRecord
+        undefined, // lastGameDate
+        undefined, // opponentLastGameDate
+        undefined, // weather
+        undefined  // lineMovement
+      )
+      const spreadSituationalAdj = calculateSituationalAdjustment(spreadSituationalFactors, eloLeague)
+      const eloCoverProb = applyAdjustment(baseEloCoverProb, spreadSituationalAdj.totalAdjustment)
       
       // DEBUG: Log spread calculation inputs for high-probability bets
       if (eloCoverProb > 0.85) {
@@ -943,7 +1000,7 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
         team: teamName,
         betType: 'spread',
         line: point,
-        consensusProbability: Math.round(eloCoverProb * 1000) / 10, // Now Elo-based
+        consensusProbability: Math.round(eloCoverProb * 1000) / 10, // Now Elo-based + situational
         bestPrice: bestEntry.outcome.price,
         bestBook: bestEntry.book,
         impliedProbability: Math.round(impliedProb * 1000) / 10,
@@ -956,6 +1013,8 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
         roi: Math.round(roi * 100) / 100,
         allBookPrices,
         score,
+        situationalAdjustment: spreadSituationalAdj.totalAdjustment !== 0 ? Math.round(spreadSituationalAdj.totalAdjustment * 1000) / 10 : undefined,
+        situationalNotes: spreadSituationalAdj.notes.length > 0 ? spreadSituationalAdj.notes : undefined,
         calculatedAt: now
       })
     })
@@ -989,15 +1048,30 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
       const homeElo = eloResult.homeEffectiveRating ?? eloResult.homeRating
       const awayElo = eloResult.awayEffectiveRating ?? eloResult.awayRating
       
+      // Calculate situational factors for totals (weather is especially important for outdoor sports)
+      const totalSituationalFactors = calculateSituationalFactors(
+        game.homeTeam,
+        game.awayTeam,
+        eloLeague,
+        true, // Use home team perspective for totals
+        undefined, // teamRecord
+        undefined, // lastGameDate
+        undefined, // opponentLastGameDate
+        undefined, // weather - would be passed for outdoor sports
+        undefined  // lineMovement
+      )
+      const totalSituationalAdj = calculateSituationalAdjustment(totalSituationalFactors, eloLeague)
+      
       // Analyze OVER bets
       if (overEntries.length > 0) {
         const bestOverEntry = overEntries.reduce((best, curr) => 
           curr.outcome.price > best.outcome.price ? curr : best
         )
         
-        // Calculate Elo-based over probability
+        // Calculate Elo-based over probability and apply situational adjustment
         const overResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, true)
-        const eloOverProb = overResult.probability
+        const baseEloOverProb = overResult.probability
+        const eloOverProb = applyAdjustment(baseEloOverProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
         const impliedProb = americanToImpliedProbability(bestOverEntry.outcome.price)
@@ -1046,6 +1120,8 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
               roi: Math.round(roi * 100) / 100,
               allBookPrices,
               score,
+              situationalAdjustment: totalSituationalAdj.totalAdjustment !== 0 ? Math.round(totalSituationalAdj.totalAdjustment * 1000) / 10 : undefined,
+              situationalNotes: totalSituationalAdj.notes.length > 0 ? totalSituationalAdj.notes : undefined,
               calculatedAt: now
             })
           }
@@ -1058,9 +1134,10 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
           curr.outcome.price > best.outcome.price ? curr : best
         )
         
-        // Calculate Elo-based under probability
+        // Calculate Elo-based under probability and apply situational adjustment
         const underResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, false)
-        const eloUnderProb = underResult.probability
+        const baseEloUnderProb = underResult.probability
+        const eloUnderProb = applyAdjustment(baseEloUnderProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
         const impliedProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
@@ -1109,6 +1186,8 @@ export async function analyzeGame(game: Game, injuries?: InjuryInfo[]): Promise<
               roi: Math.round(roi * 100) / 100,
               allBookPrices,
               score,
+              situationalAdjustment: totalSituationalAdj.totalAdjustment !== 0 ? Math.round(totalSituationalAdj.totalAdjustment * 1000) / 10 : undefined,
+              situationalNotes: totalSituationalAdj.notes.length > 0 ? totalSituationalAdj.notes : undefined,
               calculatedAt: now
             })
           }

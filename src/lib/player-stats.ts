@@ -790,6 +790,7 @@ export interface EnhancedPropProbability {
   reliabilityScore: number      // 0-100, higher = more consistent
   homeAwayAdjustment: number    // Multiplier for home/away
   opponentAdjustment: number    // Multiplier for opponent defense
+  backToBackAdjustment?: number // Multiplier for back-to-back fatigue
   adjustedAverage: number       // Average after all adjustments
   confidence: 'high' | 'medium' | 'low'  // Based on sample size and reliability
 }
@@ -810,7 +811,8 @@ export async function getPlayerPropProbability(
   statType: string,
   line: number,
   opponentTeamId?: string,
-  isHomeGame?: boolean
+  isHomeGame?: boolean,
+  isBackToBack?: boolean  // New: whether the player's team is on a back-to-back
 ): Promise<EnhancedPropProbability | null> {
   const statsData = await getPlayerStatsData()
   if (!statsData) return null
@@ -848,8 +850,22 @@ export async function getPlayerPropProbability(
     homeAwayAdjustment = isHomeGame ? player.homeAwgMultiplier : (1 / player.homeAwgMultiplier)
   }
   
+  // Get back-to-back fatigue adjustment
+  // Players typically perform 3-5% worse on back-to-back games
+  let backToBackAdjustment = 1.0
+  if (isBackToBack) {
+    // Sport-specific fatigue factors for player props
+    const fatigueFactor: Record<string, number> = {
+      'NBA': 0.95,      // -5% for NBA (high minutes, physical)
+      'NCAAB': 0.96,    // -4% for college basketball
+      'NHL': 0.96,      // -4% for NHL
+      'MLB': 0.98,      // -2% for MLB (less physical)
+    }
+    backToBackAdjustment = fatigueFactor[sport] || 0.97  // Default -3%
+  }
+  
   // Calculate adjusted average
-  const adjustedAverage = avg * opponentAdjustment * homeAwayAdjustment
+  const adjustedAverage = avg * opponentAdjustment * homeAwayAdjustment * backToBackAdjustment
   
   // Calculate statistical probability using normal distribution
   const statisticalProb = calculateOverProbability(adjustedAverage, stdDev, line, 1.0)
@@ -909,6 +925,7 @@ export async function getPlayerPropProbability(
     reliabilityScore,
     homeAwayAdjustment,
     opponentAdjustment,
+    backToBackAdjustment: isBackToBack ? backToBackAdjustment : undefined,
     adjustedAverage,
     confidence
   }
