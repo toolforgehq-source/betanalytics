@@ -234,6 +234,81 @@ export default function MethodologyPage() {
             </p>
           </section>
 
+          {/* Situational Factors */}
+          <section className="mb-12">
+            <h2 className="text-2xl font-bold mb-4">7 Situational Factors</h2>
+            <p className="text-slate-300 mb-6">
+              Beyond Elo ratings, we analyze 7 situational factors that Vegas often underweights. These adjustments are applied at prediction time to capture real-world context.
+            </p>
+            <div className="grid md:grid-cols-2 gap-4 mb-6">
+              <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-4">
+                <h4 className="font-semibold mb-3 text-cyan-400">Schedule & Rest</h4>
+                <ul className="text-slate-300 space-y-2 text-sm">
+                  <li><strong className="text-white">Rest Days:</strong> Back-to-back games (-4%), extra rest (+2%)</li>
+                  <li><strong className="text-white">Travel Fatigue:</strong> Cross-country flights, timezone changes</li>
+                  <li><strong className="text-white">Recent Form:</strong> Hot/cold streaks from last 5 games</li>
+                </ul>
+              </div>
+              <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-4">
+                <h4 className="font-semibold mb-3 text-cyan-400">External Factors</h4>
+                <ul className="text-slate-300 space-y-2 text-sm">
+                  <li><strong className="text-white">Weather:</strong> Wind, cold, rain for outdoor games (NFL, MLB, MLS)</li>
+                  <li><strong className="text-white">Sharp Money:</strong> Line movement indicating professional bettors</li>
+                  <li><strong className="text-white">Injuries:</strong> Real-time ESPN data with quantified impact</li>
+                </ul>
+              </div>
+            </div>
+            <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-4">
+              <h4 className="font-semibold mb-3 text-cyan-400">Motivation Factors</h4>
+              <ul className="text-slate-300 space-y-2 text-sm">
+                <li><strong className="text-white">Rivalry Games:</strong> +2% boost (Lakers vs Celtics, Yankees vs Red Sox)</li>
+                <li><strong className="text-white">Revenge Games:</strong> +1.5% boost (lost to this team recently)</li>
+                <li><strong className="text-white">Eliminated Teams:</strong> -3% penalty (out of playoff contention)</li>
+                <li><strong className="text-white">Look-ahead Spots:</strong> -2% penalty (big game coming up next - trap game detection)</li>
+                <li><strong className="text-white">Letdown Spots:</strong> -2% penalty (just beat a great team - emotional hangover)</li>
+              </ul>
+            </div>
+          </section>
+
+          {/* CLV Tracking */}
+          <section className="mb-12">
+            <h2 className="text-2xl font-bold mb-4">Closing Line Value (CLV) Tracking</h2>
+            <p className="text-slate-300 mb-4">
+              CLV is the gold standard for measuring betting edge. We track every recommendation against the closing line to verify our system actually works.
+            </p>
+            <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-6 mb-4">
+              <h4 className="font-semibold mb-3 text-cyan-400">How It Works</h4>
+              <ul className="space-y-2 text-slate-300">
+                <li><strong className="text-white">At Pick Time:</strong> We record the line when we make the recommendation</li>
+                <li><strong className="text-white">At Game Time:</strong> We record the closing line (after sharp money has moved it)</li>
+                <li><strong className="text-white">CLV Calculation:</strong> If you got Lakers -3.5 and it closed at -5.0, you beat the closing line by 1.5 points</li>
+              </ul>
+            </div>
+            <p className="text-slate-400">
+              Consistently beating the closing line means you&apos;re getting better prices than the sharpest bettors in the world. This is the ultimate validation that a betting system has real edge.
+            </p>
+          </section>
+
+          {/* Calibration System */}
+          <section className="mb-12">
+            <h2 className="text-2xl font-bold mb-4">Self-Correcting Calibration</h2>
+            <p className="text-slate-300 mb-4">
+              Our system learns from its mistakes. We track predicted probabilities vs actual outcomes and automatically adjust future predictions.
+            </p>
+            <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-6 mb-4">
+              <h4 className="font-semibold mb-3 text-cyan-400">Calibration Process</h4>
+              <ul className="space-y-2 text-slate-300">
+                <li><strong className="text-white">Track Predictions:</strong> Every bet records its predicted probability</li>
+                <li><strong className="text-white">Compare to Outcomes:</strong> Did 65% predictions actually win 65% of the time?</li>
+                <li><strong className="text-white">Auto-Adjust:</strong> If we&apos;re overconfident, future predictions are adjusted down</li>
+                <li><strong className="text-white">Brier Score:</strong> Industry-standard metric for probability accuracy (lower = better)</li>
+              </ul>
+            </div>
+            <p className="text-slate-400">
+              After 50+ completed picks, the calibration system kicks in and starts applying corrections. The more games that complete, the more accurate the model becomes.
+            </p>
+          </section>
+
           {/* Limitations */}
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Limitations & Honest Disclaimers</h2>
@@ -243,7 +318,7 @@ export default function MethodologyPage() {
                   <strong className="text-white">Probabilities, not guarantees:</strong> When we say 86%, you should expect to win roughly 86% of similar bets over many trials. Individual bets can and will lose.
                 </li>
                 <li>
-                  <strong className="text-white">Model limitations:</strong> Elo doesn&apos;t capture everything - coaching changes, motivation, travel fatigue, and other factors may not be fully reflected.
+                  <strong className="text-white">Model limitations:</strong> While we now capture motivation, travel fatigue, and many situational factors, some things like coaching changes and locker room dynamics may not be fully reflected.
                 </li>
                 <li>
                   <strong className="text-white">Injury data lag:</strong> While we use real-time ESPN data, last-minute scratches may not be captured before game time.

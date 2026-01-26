@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { Send, AlertTriangle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 
 interface Message {
   id: string
@@ -20,31 +21,18 @@ export interface ChatInterfaceRef {
   sendMessage: (text: string) => void
 }
 
-const WELCOME_MESSAGE = `Welcome to Betanalytics.ai! 🎯
+const WELCOME_MESSAGE = `Welcome to BetAnalytics.ai! 🎯
 
-I'm your AI sports betting assistant. I analyze games using multiple statistical models and provide data-driven insights with full transparency.
+I find betting edges using Elo ratings and 7 situational factors (rest, travel, weather, sharp money, form, motivation, injuries).
 
-**What I can help you with:**
-• Best bets across any sport or platform
-• Parlay builders (DraftKings, PrizePicks, Underdog, etc.)
-• Player prop analysis
-• Line value assessment
-• Hedge calculations for live parlays
-• Arbitrage opportunities
-• Betting education and strategy
+Ask me:
+• "What's the best bet today?"
+• "Best NBA bet tonight?"
+• "Should I take Lakers -5.5?"
 
-**How it works:**
-Every recommendation comes with:
-• Multi-model consensus (I only suggest bets when 3-4 models agree)
-• Clear reasoning and data
-• Educational insights so you learn WHY
-• Risk assessment and bankroll guidance
+I'll show you the Elo ratings, edge calculation, and exactly where the edge comes from.
 
-Ask me anything! Examples:
-"What's the best bet today?"
-"Build me a 3-leg parlay on PrizePicks"
-"Should I take Lakers -5.5?"
-"Help me hedge my 4-leg parlay"`
+[How this works →](/methodology)`
 
 const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function ChatInterface({ 
   isSubscribed, 
@@ -65,14 +53,6 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
     }
   }, [messages])
 
-  useEffect(() => {
-    setMessages([{
-      id: '1',
-      role: 'assistant',
-      content: WELCOME_MESSAGE,
-      timestamp: new Date(),
-    }])
-  }, [])
 
   const sendMessageInternal = async (messageText: string) => {
     if (!messageText.trim() || isLoading) return
@@ -102,7 +82,7 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ 
-          messages: [...messages, userMessage].slice(1).map(m => ({
+          messages: [...messages, userMessage].map(m => ({
             role: m.role,
             content: m.content
           }))
@@ -192,6 +172,16 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
       if (line.trim() === '') {
         return <br key={i} />
       }
+      const linkMatch = line.match(/\[([^\]]+)\]\(([^)]+)\)/)
+      if (linkMatch) {
+        return (
+          <p key={i} className="text-slate-300 mt-2">
+            <Link href={linkMatch[2]} className="text-cyan-400 hover:text-cyan-300 underline">
+              {linkMatch[1]}
+            </Link>
+          </p>
+        )
+      }
       return <p key={i} className="text-slate-300">{line}</p>
     })
   }
@@ -224,6 +214,15 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
       )}
 
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-6 space-y-6">
+        {messages.length === 0 && (
+          <div className="flex justify-start">
+            <div className="max-w-[85%] bg-slate-800/50 text-slate-100 rounded-2xl rounded-bl-sm border border-slate-700/50 p-4 shadow-lg">
+              <div className="prose prose-invert max-w-none text-sm">
+                {formatMessage(WELCOME_MESSAGE)}
+              </div>
+            </div>
+          </div>
+        )}
         {messages.map((message) => (
           <div
             key={message.id}
