@@ -222,7 +222,7 @@ export default function MethodologyPage() {
               <div className="text-center">
                 <p className="text-slate-400 mb-2">Edge Formula</p>
                 <p className="text-2xl font-mono text-white">
-                  Edge = Our Probability - Vegas Implied Probability
+                  Edge = Our Probability - Market Implied Probability
                 </p>
               </div>
             </div>
