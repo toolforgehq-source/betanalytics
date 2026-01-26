@@ -13,6 +13,8 @@ import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
 import { getWeatherForGames } from "@/lib/weather"
 import { getLineMovement } from "@/lib/line-movement"
 import { getCachedTeamScheduleData } from "@/lib/team-schedule"
+import { storeCLVPick } from "@/lib/clv-tracking"
+import { storeCalibrationRecord } from "@/lib/calibration"
 
 // Extended Game type with ESPN data for injury support
 interface EnrichedGame extends Game {
@@ -300,6 +302,30 @@ export async function GET(request: Request) {
         })
         pickStored = true
         console.log(`Stored pick for track record: ${bet.team}`)
+        
+        // Track CLV for this pick (stores the line at pick time)
+        await storeCLVPick({
+          gameId: bet.gameId,
+          sport: bet.sport,
+          betType: bet.betType as 'spread' | 'moneyline' | 'total' | 'prop',
+          team: bet.team,
+          pickLine: bet.line ?? 0, // Spread/total line, 0 for moneyline
+          pickPrice: bet.bestPrice,
+          pickProbability: bet.consensusProbability / 100, // Convert from percentage
+          pickTimestamp: new Date().toISOString(),
+          gameTimestamp: bet.commenceTime
+        })
+        console.log(`[CLV] Tracked pick: ${bet.team} ${bet.betType} at line ${bet.line ?? 'ML'}`)
+        
+        // Store calibration record (tracks predicted probability vs actual outcome)
+        await storeCalibrationRecord({
+          gameId: bet.gameId,
+          sport: bet.sport,
+          betType: bet.betType as 'spread' | 'moneyline' | 'total' | 'prop',
+          team: bet.team,
+          predictedProbability: bet.consensusProbability / 100 // Convert from percentage
+        })
+        console.log(`[Calibration] Tracked prediction: ${bet.team} at ${bet.consensusProbability}%`)
       }
     }
     
