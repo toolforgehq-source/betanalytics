@@ -4,7 +4,7 @@ import Footer from '@/components/Footer'
 
 export const metadata = {
   title: 'Sports Betting AI | Elo-Based Edge Detection - BetAnalytics.ai',
-  description: 'AI-powered sports betting analytics using Elo ratings. Find edges where our model disagrees with Vegas. 692 teams tracked across NBA, NFL, NHL, MLB. 3-day free trial.',
+  description: 'AI-powered sports betting analytics using Elo ratings. Find edges where our model disagrees with the market. 692 teams tracked across NBA, NFL, NHL, MLB. 3-day free trial.',
 }
 
 export default function HomePage() {
@@ -47,14 +47,14 @@ export default function HomePage() {
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-6">
               Sports Betting AI:{' '}
               <span className="bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
-                Find The Edge Vegas Is Missing
+                Find The Edge The Market Is Missing
               </span>
             </h1>
             <p className="text-xl text-slate-300 mb-4 max-w-3xl mx-auto">
               Our Elo rating system analyzes 3+ months of game data across 692 teams to find bets where the market undervalues teams.
             </p>
             <p className="text-lg text-cyan-400 mb-8 max-w-2xl mx-auto font-medium">
-              When our model says 86.7% but Vegas shows 68.6%, that&apos;s an 18% edge.
+              When our model says 86.7% but the market shows 68.6%, that&apos;s an 18% edge.
             </p>
             
             {/* Edge Example Box - Visual Hook */}
@@ -75,7 +75,7 @@ export default function HomePage() {
                   
                   <div>
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-slate-300">Vegas Implied</span>
+                      <span className="text-slate-300">Market Implied</span>
                       <span className="text-2xl font-bold text-slate-400">68.6%</span>
                     </div>
                     <div className="w-full bg-slate-700/50 rounded-full h-3">
@@ -120,7 +120,7 @@ export default function HomePage() {
               How Our AI Sports Picks Work
             </h2>
             <p className="text-slate-400 text-center mb-12 max-w-2xl mx-auto">
-              We calculate independent probabilities using Elo ratings, then show you where our model disagrees with Vegas.{' '}
+              We calculate independent probabilities using Elo ratings, then show you where our model disagrees with the market.{' '}
               <Link href="/methodology" className="text-cyan-400 hover:text-cyan-300 underline">Learn more about our methodology</Link>
             </p>
             
@@ -152,7 +152,7 @@ export default function HomePage() {
               <HowItWorksStep 
                 number={3}
                 title="We Show You The Edge"
-                description="We compare our Elo probability to Vegas implied probability. When they disagree significantly, that's an edge. You see every calculation. Full transparency."
+                description="We compare our Elo probability to market implied probability. When they disagree significantly, that's an edge. You see every calculation. Full transparency."
               />
             </div>
           </div>
@@ -172,7 +172,7 @@ export default function HomePage() {
               <FeatureCard 
                 icon={<Target className="w-7 h-7" />}
                 title="Independent Elo Rating System"
-                description="We calculate our own probabilities - not copying Vegas. 692 teams tracked across NBA, NFL, NHL, MLB, NCAAB, NCAAF, and major soccer leagues."
+                description="We calculate our own probabilities - not copying the market. 692 teams tracked across NBA, NFL, NHL, MLB, NCAAB, NCAAF, and major soccer leagues."
               />
               <FeatureCard 
                 icon={<Activity className="w-7 h-7" />}
@@ -218,7 +218,7 @@ export default function HomePage() {
             <div className="space-y-6">
               <FAQItem 
                 question="What is Elo rating in sports betting?"
-                answer="Elo is a rating system originally created for chess. Each team starts at 1500. Win games and your rating goes up; lose and it goes down. We use Elo to calculate the probability of one team beating another, independent of what Vegas thinks."
+                answer="Elo is a rating system originally created for chess. Each team starts at 1500. Win games and your rating goes up; lose and it goes down. We use Elo to calculate the probability of one team beating another, independent of what the market thinks."
               />
               <FAQItem 
                 question="How accurate are AI sports picks?"
@@ -226,7 +226,7 @@ export default function HomePage() {
               />
               <FAQItem 
                 question="What makes this different from other betting tools?"
-                answer="We don't give opinions. We calculate independent probabilities using Elo ratings, then show you where our model disagrees with Vegas. Full transparency - you see every calculation, every adjustment, every edge."
+                answer="We don't give opinions. We calculate independent probabilities using Elo ratings, then show you where our model disagrees with the market. Full transparency - you see every calculation, every adjustment, every edge."
               />
               <FAQItem 
                 question="How do injury adjustments work?"
@@ -275,7 +275,7 @@ export default function HomePage() {
         {/* Final CTA Section */}
         <section className="py-16 px-4 bg-slate-900/30">
           <div className="container mx-auto max-w-3xl text-center">
-            <h2 className="text-3xl font-bold mb-4">Ready to Find Edges Vegas Is Missing?</h2>
+            <h2 className="text-3xl font-bold mb-4">Ready to Find Edges The Market Is Missing?</h2>
             <p className="text-slate-300 mb-8 text-lg">
               Our Elo rating system has tracked 692 teams across 3+ months of games. We quantify injuries, weight recent performance, and show you exactly where our probability differs from the market.
             </p>
