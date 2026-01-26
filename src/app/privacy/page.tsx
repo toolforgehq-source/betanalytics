@@ -130,7 +130,7 @@ export default function PrivacyPage() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">10. Contact Us</h2>
               <p className="text-slate-300">
-                For questions about this Privacy Policy, please contact us at privacy@betanalytics.ai.
+                For questions about this Privacy Policy, please contact us at contact@betanalytics.ai.
               </p>
             </section>
           </div>

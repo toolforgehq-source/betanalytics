@@ -119,7 +119,7 @@ export default function TermsPage() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">11. Contact</h2>
               <p className="text-slate-300">
-                For questions about these Terms of Service, please contact us at support@betanalytics.ai.
+                For questions about these Terms of Service, please contact us at contact@betanalytics.ai.
               </p>
             </section>
           </div>

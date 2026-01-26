@@ -14,6 +14,7 @@ export default function Footer() {
           <Link href="/pricing" className="hover:text-slate-300 transition-colors">Pricing</Link>
           <Link href="/terms" className="hover:text-slate-300 transition-colors">Terms of Service</Link>
           <Link href="/privacy" className="hover:text-slate-300 transition-colors">Privacy Policy</Link>
+          <a href="mailto:contact@betanalytics.ai" className="hover:text-slate-300 transition-colors">contact@betanalytics.ai</a>
         </div>
       </div>
     </footer>
