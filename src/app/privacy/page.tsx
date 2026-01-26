@@ -13,6 +13,9 @@ export default function PrivacyPage() {
             </Link>
             
             <div className="flex items-center gap-4">
+              <Link href="/methodology" className="text-slate-300 hover:text-white transition-colors">
+                Methodology
+              </Link>
               <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
                 Sign In
               </Link>
