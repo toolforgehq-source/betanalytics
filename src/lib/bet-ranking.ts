@@ -810,7 +810,7 @@ export async function analyzeGame(
       lineMovement  // Line movement data for sharp money detection
     )
     
-    const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational)
+    const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational, team, opponentName)
     
     // Apply situational adjustment to model probability
     const adjustedModelProbability = applyAdjustment(modelProbability, situationalAdj.totalAdjustment)
@@ -954,7 +954,7 @@ export async function analyzeGame(
         weather,   // Weather data for outdoor sports
         lineMovement  // Line movement data for sharp money detection
       )
-      const spreadSituationalAdj = calculateSituationalAdjustment(spreadSituationalFactors, eloLeague)
+      const spreadSituationalAdj = calculateSituationalAdjustment(spreadSituationalFactors, eloLeague, teamName, opponentName)
       const eloCoverProb = applyAdjustment(baseEloCoverProb, spreadSituationalAdj.totalAdjustment)
       
       // DEBUG: Log spread calculation inputs for high-probability bets
@@ -1077,7 +1077,7 @@ export async function analyzeGame(
         weather,   // Weather data - critical for outdoor sports totals
         lineMovement  // Line movement data for sharp money detection
       )
-      const totalSituationalAdj = calculateSituationalAdjustment(totalSituationalFactors, eloLeague)
+      const totalSituationalAdj = calculateSituationalAdjustment(totalSituationalFactors, eloLeague, game.homeTeam, game.awayTeam)
       
       // Analyze OVER bets
       if (overEntries.length > 0) {

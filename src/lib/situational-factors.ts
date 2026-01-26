@@ -17,6 +17,11 @@
 
 import type { WeatherData, WeatherImpact } from './weather'
 import type { LineMovement } from './line-movement'
+import { 
+  calculateMotivationFactors, 
+  calculateMotivationAdjustment,
+  type MotivationAdjustment 
+} from './motivation-factors'
 
 // ============================================
 // TYPES
@@ -57,8 +62,10 @@ export interface SituationalAdjustment {
     recentForm: number            // Adjustment for recent form
     weather: number               // Adjustment for weather
     sharpMoney: number            // Adjustment for sharp money
+    motivation: number            // Adjustment for motivation factors (rivalry, revenge, etc.)
   }
   factors: SituationalFactors
+  motivationAdjustment?: MotivationAdjustment  // Detailed motivation breakdown
   confidence: 'high' | 'medium' | 'low'  // How confident we are in the adjustment
   notes: string[]                 // Human-readable notes about the factors
 }
@@ -408,7 +415,9 @@ export function calculateSituationalFactors(
  */
 export function calculateSituationalAdjustment(
   factors: SituationalFactors,
-  sport: string
+  sport: string,
+  teamName?: string,
+  opponentName?: string
 ): SituationalAdjustment {
   const notes: string[] = []
   const breakdown = {
@@ -418,6 +427,7 @@ export function calculateSituationalAdjustment(
     recentForm: 0,
     weather: 0,
     sharpMoney: 0,
+    motivation: 0,
   }
   
   // 1. Back-to-back adjustment
@@ -477,6 +487,20 @@ export function calculateSituationalAdjustment(
     }
   }
   
+  // 7. Motivation factors adjustment (rivalry games, revenge spots, etc.)
+  let motivationAdjustment: MotivationAdjustment | undefined
+  if (teamName && opponentName) {
+    const motivationFactors = calculateMotivationFactors(teamName, opponentName, sport)
+    motivationAdjustment = calculateMotivationAdjustment(motivationFactors)
+    breakdown.motivation = motivationAdjustment.totalAdjustment
+    
+    if (motivationAdjustment.notes.length > 0) {
+      for (const note of motivationAdjustment.notes) {
+        notes.push(`Motivation: ${note}`)
+      }
+    }
+  }
+  
   // Calculate total adjustment
   const totalAdjustment = 
     breakdown.backToBack +
@@ -484,7 +508,8 @@ export function calculateSituationalAdjustment(
     breakdown.travel +
     breakdown.recentForm +
     breakdown.weather +
-    breakdown.sharpMoney
+    breakdown.sharpMoney +
+    breakdown.motivation
   
   // Determine confidence based on data availability
   let confidence: SituationalAdjustment['confidence'] = 'high'
@@ -500,6 +525,7 @@ export function calculateSituationalAdjustment(
     totalAdjustment,
     breakdown,
     factors,
+    motivationAdjustment,
     confidence,
     notes,
   }
