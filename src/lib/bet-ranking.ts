@@ -1554,13 +1554,23 @@ export async function computeBestBets(
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   
-  const bestBet = filteredRankedBets[0] || null
-  const runnerUp = filteredRankedBets[1] || null
+  // ============================================
+  // ELO REQUIREMENT: Only recommend bets with Elo data
+  // ============================================
+  // Elo is our core differentiator - we should only recommend bets
+  // where our Elo model has analyzed the matchup. This ensures every
+  // recommendation is powered by our proprietary Elo system.
+  const eloPoweredBets = filteredRankedBets.filter(bet => bet.eloProbability !== undefined)
+  
+  const bestBet = eloPoweredBets[0] || null
+  const runnerUp = eloPoweredBets[1] || null
   
   let reason: string | null = null
   if (!bestBet) {
     if (games.length === 0) {
       reason = 'No games available'
+    } else if (filteredRankedBets.length > 0 && eloPoweredBets.length === 0) {
+      reason = 'No games have Elo data available - our model requires Elo ratings to make recommendations'
     } else {
       reason = 'No games meet strict criteria (52%+ prob, -4.5%+ ROI, -250 odds limit)'
     }
@@ -1623,11 +1633,11 @@ export async function computeBestBets(
   return {
     bestBet,
     runnerUp,
-    allRankedBets: filteredRankedBets.slice(0, 10),
+    allRankedBets: eloPoweredBets.slice(0, 10),  // Only Elo-powered bets
     allEloBets,  // ALL bets with Elo data for sport-specific queries
     calculatedAt: now,
     gamesAnalyzed: games.length,
-    gamesQualified: filteredRankedBets.length,
+    gamesQualified: eloPoweredBets.length,  // Count of Elo-powered bets
     reason,
     closestMisses,
     mostLikelyWinners
