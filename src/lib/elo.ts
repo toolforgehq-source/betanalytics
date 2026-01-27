@@ -798,7 +798,19 @@ export async function getEloWinProbabilityByName(
   awayTeamName: string
 ): Promise<{ probability: number; homeRating: number; awayRating: number; confidence: string } | null> {
   const eloData = await getEloRatings()
-  if (!eloData) return null
+  
+  // If no Elo data in cache, use default ratings (1500) with very_low confidence
+  // This ensures we always return Elo-based recommendations, even for new teams
+  if (!eloData) {
+    console.log(`[Elo] No Elo data in cache, using default ratings for ${homeTeamName} vs ${awayTeamName}`)
+    const probability = calculateWinProbability(DEFAULT_RATING, DEFAULT_RATING, league)
+    return {
+      probability,
+      homeRating: DEFAULT_RATING,
+      awayRating: DEFAULT_RATING,
+      confidence: 'very_low'
+    }
+  }
   
   // Defensive: ensure ratings object exists
   const ratings = eloData.ratings || {}
