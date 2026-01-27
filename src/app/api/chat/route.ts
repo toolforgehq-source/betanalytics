@@ -5,7 +5,7 @@ import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
 import { getCachedESPNOdds } from "@/lib/espn"
-import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext } from "@/lib/bet-ranking"
+import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
@@ -1146,7 +1146,90 @@ export async function POST(request: Request) {
           }
         } else {
           // Use cached best bet for general "best bet" questions without filters
-          const bestBetResult = await getCachedBestBet()
+          let bestBetResult = await getCachedBestBet()
+          
+          // FALLBACK: If cache is empty, compute best bets on-demand from ESPN data
+          if (!bestBetResult) {
+            console.log(`[chat] Cache empty - computing best bets on-demand...`)
+            try {
+              const espnOdds = await getCachedESPNOdds()
+              if (espnOdds.games.length > 0) {
+                // Filter to today's games (ET timezone)
+                const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+                
+                // Sport key mapping (same as cron job)
+                const sportKeyMap: Record<string, string> = {
+                  'NBA': 'basketball_nba',
+                  'NFL': 'americanfootball_nfl',
+                  'NHL': 'icehockey_nhl',
+                  'NCAAB': 'basketball_ncaab',
+                  'NCAAF': 'americanfootball_ncaaf',
+                  'MLB': 'baseball_mlb',
+                  'English Premier League': 'soccer_epl',
+                  'La Liga': 'soccer_spain_la_liga',
+                  'Bundesliga': 'soccer_germany_bundesliga',
+                  'Serie A': 'soccer_italy_serie_a',
+                  'Ligue 1': 'soccer_france_ligue_one',
+                  'MLS': 'soccer_usa_mls',
+                  'UEFA Champions League': 'soccer_uefa_champs_league',
+                }
+                
+                const todaysGames: Game[] = espnOdds.games
+                  .filter(g => {
+                    const gameDate = new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+                    return gameDate === todayET
+                  })
+                  .map(g => {
+                    const sportKey = sportKeyMap[g.league] || g.sport
+                    const provider = g.provider || 'DraftKings'
+                    const homeSpread = g.spread ?? 0
+                    
+                    return {
+                      id: g.gameId,
+                      sport: sportKey,
+                      sportName: g.league,
+                      homeTeam: g.homeTeam,
+                      awayTeam: g.awayTeam,
+                      commenceTime: g.commenceTime,
+                      spreads: g.spread !== null ? [{
+                        bookmaker: provider,
+                        market: 'spreads',
+                        outcomes: [
+                          { name: g.homeTeam, price: g.spreadOdds?.home || -110, point: homeSpread },
+                          { name: g.awayTeam, price: g.spreadOdds?.away || -110, point: -homeSpread }
+                        ]
+                      }] : [],
+                      totals: g.overUnder !== null ? [{
+                        bookmaker: provider,
+                        market: 'totals',
+                        outcomes: [
+                          { name: 'Over', price: g.overUnderOdds?.over || -110, point: g.overUnder },
+                          { name: 'Under', price: g.overUnderOdds?.under || -110, point: g.overUnder }
+                        ]
+                      }] : [],
+                      moneylines: g.moneyline ? [{
+                        bookmaker: provider,
+                        market: 'h2h',
+                        outcomes: [
+                          { name: g.homeTeam, price: g.moneyline.home },
+                          { name: g.awayTeam, price: g.moneyline.away }
+                        ]
+                      }] : []
+                    }
+                  })
+                
+                if (todaysGames.length > 0) {
+                  console.log(`[chat] Computing best bets from ${todaysGames.length} games today...`)
+                  bestBetResult = await computeBestBets(todaysGames)
+                  // Cache the result for future requests
+                  await cacheBestBet(bestBetResult)
+                  console.log(`[chat] On-demand computation complete, cached for future requests`)
+                }
+              }
+            } catch (err) {
+              console.error('[chat] Error computing best bets on-demand:', err)
+            }
+          }
           
           if (bestBetResult) {
             // formatBestBetForContext handles both cases:
