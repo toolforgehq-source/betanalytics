@@ -1182,9 +1182,28 @@ export async function POST(request: Request) {
             console.log(`[chat] Sport bets cache empty - computing on-demand for filter: ${bestBetFilter.filterDescription}`)
             try {
               const espnOdds = await getCachedESPNOdds()
+              console.log(`[chat] ESPN odds fetched: ${espnOdds.games.length} total games`)
+              
+              // Log games by sport for debugging
+              const gamesBySport: Record<string, number> = {}
+              for (const g of espnOdds.games) {
+                gamesBySport[g.league] = (gamesBySport[g.league] || 0) + 1
+              }
+              console.log(`[chat] Games by sport: ${JSON.stringify(gamesBySport)}`)
+              
               if (espnOdds.games.length > 0) {
                 // Filter to today's games (ET timezone)
                 const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+                console.log(`[chat] Today's date (ET): ${todayET}`)
+                
+                // Log all games before filtering
+                const allGameDates = espnOdds.games.map(g => ({
+                  league: g.league,
+                  teams: `${g.awayTeam} @ ${g.homeTeam}`,
+                  date: new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' }),
+                  time: new Date(g.commenceTime).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })
+                }))
+                console.log(`[chat] All games before date filter (first 20):`, JSON.stringify(allGameDates.slice(0, 20)))
                 
                 // Sport key mapping (same as cron job)
                 const sportKeyMap: Record<string, string> = {
@@ -1206,7 +1225,11 @@ export async function POST(request: Request) {
                 const todaysGames: Game[] = espnOdds.games
                   .filter(g => {
                     const gameDate = new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-                    return gameDate === todayET
+                    const isToday = gameDate === todayET
+                    if (!isToday && g.league === 'NHL') {
+                      console.log(`[chat] NHL game filtered out (not today): ${g.awayTeam} @ ${g.homeTeam}, date: ${gameDate}`)
+                    }
+                    return isToday
                   })
                   .map(g => {
                     const sportKey = sportKeyMap[g.league] || g.sport
@@ -1247,13 +1270,40 @@ export async function POST(request: Request) {
                     }
                   })
                 
+                // Log today's games by sport
+                const todaysGamesBySport: Record<string, number> = {}
+                for (const g of todaysGames) {
+                  todaysGamesBySport[g.sportName] = (todaysGamesBySport[g.sportName] || 0) + 1
+                }
+                console.log(`[chat] Today's games by sport: ${JSON.stringify(todaysGamesBySport)}`)
+                
+                // Log NHL games specifically
+                const nhlGames = todaysGames.filter(g => g.sportName === 'NHL')
+                if (nhlGames.length > 0) {
+                  console.log(`[chat] NHL games today: ${nhlGames.map(g => `${g.awayTeam} @ ${g.homeTeam}`).join(', ')}`)
+                } else {
+                  console.log(`[chat] NO NHL games found in today's games!`)
+                }
+                
                 if (todaysGames.length > 0) {
                   console.log(`[chat] Computing sport bets from ${todaysGames.length} games today...`)
                   const bestBetResult = await computeBestBets(todaysGames)
                   
+                  // Log computeBestBets result
+                  console.log(`[chat] computeBestBets result: gamesAnalyzed=${bestBetResult.gamesAnalyzed}, gamesQualified=${bestBetResult.gamesQualified}, allEloBets=${bestBetResult.allEloBets?.length || 0}`)
+                  if (bestBetResult.reason) {
+                    console.log(`[chat] computeBestBets reason: ${bestBetResult.reason}`)
+                  }
+                  
                   // Build sport bets structure from allEloBets (all Elo-powered bets)
                   // SportBestBets maps sport name to the BEST bet for that sport (not an array)
                   if (bestBetResult.allEloBets && bestBetResult.allEloBets.length > 0) {
+                    // Log Elo bets by sport
+                    const eloBetsBySport: Record<string, number> = {}
+                    for (const bet of bestBetResult.allEloBets) {
+                      eloBetsBySport[bet.sportName] = (eloBetsBySport[bet.sportName] || 0) + 1
+                    }
+                    console.log(`[chat] Elo bets by sport: ${JSON.stringify(eloBetsBySport)}`)
                     const tempSportBets: Record<string, RankedBet | null> = {}
                     for (const bet of bestBetResult.allEloBets) {
                       const sportName = bet.sportName

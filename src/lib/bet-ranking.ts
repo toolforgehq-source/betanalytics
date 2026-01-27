@@ -1244,6 +1244,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
   
   // Get Elo prediction for this game (if available)
   const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
+  console.log(`[analyzeGameForSportQuery] Game: ${game.awayTeam} @ ${game.homeTeam}, sport=${game.sport}, sportName=${game.sportName}, eloLeague=${eloLeague || 'NONE'}`)
+  
   let eloResult: { 
     probability: number
     homeRating: number
@@ -1282,6 +1284,15 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
     } catch (error) {
       console.error('[analyzeGameForSportQuery] Error fetching Elo:', error)
     }
+  } else {
+    console.log(`[analyzeGameForSportQuery] No eloLeague mapping for sport=${game.sport}`)
+  }
+  
+  // Log Elo result
+  if (eloResult) {
+    console.log(`[analyzeGameForSportQuery] Elo result: homeRating=${eloResult.homeRating}, awayRating=${eloResult.awayRating}, confidence=${eloResult.confidence}`)
+  } else {
+    console.log(`[analyzeGameForSportQuery] Elo result: NULL`)
   }
   
   // Only return bets if we have Elo data
