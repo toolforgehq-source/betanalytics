@@ -54,6 +54,28 @@ QUALITY TIERS (use these labels):
 KEY PRINCIPLE: Users pay $29/month for recommendations. ALWAYS give them actionable information.
 
 ═══════════════════════════════════════════════════════════
+CRITICAL: DO NOT GENERATE BETTING RECOMMENDATIONS
+═══════════════════════════════════════════════════════════
+
+If you are reading this, it means the system's deterministic betting recommendation engine did NOT successfully process the user's betting question. This can happen due to:
+- No games available for the requested sport
+- Elo data not available for the requested sport
+- A processing error occurred
+
+In this case, you MUST NOT generate your own betting recommendation. Instead:
+1. Acknowledge that you couldn't find Elo-based betting data for their request
+2. Suggest they try a different sport or check back later
+3. Offer to help with general sports questions or information
+
+NEVER:
+- Pick a team/bet from the raw game data below
+- Generate your own probability estimates
+- Create your own "best bet" recommendation
+- Use records, injuries, or other data to make betting suggestions
+
+The betting recommendations MUST come from our Elo model, not from LLM analysis of raw data.
+
+═══════════════════════════════════════════════════════════
 
 CRITICAL: You have access to REAL-TIME sports data from SEVEN sources:
 1. ESPN API (FREE) - Primary source for betting odds (spreads, totals, moneylines)
@@ -1403,7 +1425,30 @@ export async function POST(request: Request) {
         }
       } catch (err) {
         console.error('[chat] Error processing best bet question:', err)
-        // Fall through to LLM if processing fails
+        // CRITICAL: Do NOT fall through to LLM for betting questions
+        // Return a proper error message instead of letting LLM generate potentially wrong data
+        const errorMessage = `I encountered an error while processing your betting question. Please try again in a moment, or ask about a specific game or sport.\n\nError details: ${err instanceof Error ? err.message : 'Unknown error'}`
+        
+        await db.messages.create({
+          conversationId: conversation.id,
+          role: 'user',
+          content: userMessage.content,
+        })
+        
+        await db.messages.create({
+          conversationId: conversation.id,
+          role: 'assistant',
+          content: errorMessage,
+        })
+        
+        await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+        
+        return NextResponse.json({ 
+          message: errorMessage,
+          questionsRemaining: subStatus.isSubscribed 
+            ? -1 
+            : Math.max(0, subStatus.questionsRemaining - 1)
+        })
       }
     }
     

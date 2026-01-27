@@ -2465,32 +2465,81 @@ export function getFilteredBestBetWithElo(
   excludeSports: string[] = [],
   includeSports: string[] = []
 ): { bet: RankedBet | null; availableSports: string[]; message: string } {
-  // Normalize sport names for comparison
+  // Sport name mapping for strict matching
+  // Maps user-friendly names to all possible variations in the data
+  const sportNameMap: Record<string, string[]> = {
+    'nhl': ['nhl', 'hockey', 'icehockey', 'icehockeynhl', 'nationalhockeyleague'],
+    'nba': ['nba', 'basketball', 'basketballnba', 'nationalbasketballassociation'],
+    'nfl': ['nfl', 'football', 'americanfootball', 'americanfootballnfl', 'nationalfootballleague'],
+    'mlb': ['mlb', 'baseball', 'baseballmlb', 'majorleaguebaseball'],
+    'ncaab': ['ncaab', 'collegebasketball', 'basketballncaab', 'ncaa', 'ncaamen'],
+    'ncaaf': ['ncaaf', 'collegefootball', 'americanfootballncaaf'],
+    'soccer': ['soccer', 'football', 'epl', 'premierleague', 'laliga', 'bundesliga', 'seriea', 'ligue1', 'mls', 'championsleague'],
+  }
+  
+  // Normalize sport names for comparison (remove non-letters, lowercase)
   const normalizeForFilter = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '')
   const excludeNorm = excludeSports.map(normalizeForFilter)
   const includeNorm = includeSports.map(normalizeForFilter)
+  
+  // Check if a sport name matches a filter using strict matching
+  const matchesSportFilter = (sportName: string, filterName: string): boolean => {
+    const sportNorm = normalizeForFilter(sportName)
+    const filterNorm = normalizeForFilter(filterName)
+    
+    // Direct match
+    if (sportNorm === filterNorm) return true
+    
+    // Check if the filter maps to known variations
+    const filterVariations = sportNameMap[filterNorm] || [filterNorm]
+    for (const variation of filterVariations) {
+      if (sportNorm === variation) return true
+      // Also check if sportNorm contains the variation as a complete word
+      // e.g., "icehockey_nhl" should match "nhl"
+      if (sportNorm.includes(variation) && variation.length >= 3) return true
+    }
+    
+    // Check reverse - if sportNorm maps to known variations that include filterNorm
+    for (const [key, variations] of Object.entries(sportNameMap)) {
+      if (variations.includes(sportNorm) && (key === filterNorm || variations.includes(filterNorm))) {
+        return true
+      }
+    }
+    
+    return false
+  }
   
   // Get all available sports with Elo data (only require eloProbability - homeElo/awayElo are nice-to-have for display)
   const sportsWithElo = Object.entries(sportBets)
     .filter(([, bet]) => bet && bet.eloProbability != null)
     .map(([sport]) => sport)
   
+  console.log(`[getFilteredBestBetWithElo] Sports with Elo data: ${sportsWithElo.join(', ') || 'none'}`)
+  console.log(`[getFilteredBestBetWithElo] Include filters: ${includeSports.join(', ') || 'none'}`)
+  console.log(`[getFilteredBestBetWithElo] Exclude filters: ${excludeSports.join(', ') || 'none'}`)
+  
   // Apply filters
   let filteredSports = sportsWithElo
   
   if (excludeNorm.length > 0) {
     filteredSports = filteredSports.filter(sport => {
-      const sportNorm = normalizeForFilter(sport)
-      return !excludeNorm.some(ex => sportNorm.includes(ex) || ex.includes(sportNorm))
+      const shouldExclude = excludeNorm.some(ex => matchesSportFilter(sport, ex))
+      if (shouldExclude) {
+        console.log(`[getFilteredBestBetWithElo] Excluding sport: ${sport}`)
+      }
+      return !shouldExclude
     })
   }
   
   if (includeNorm.length > 0) {
     filteredSports = filteredSports.filter(sport => {
-      const sportNorm = normalizeForFilter(sport)
-      return includeNorm.some(inc => sportNorm.includes(inc) || inc.includes(sportNorm))
+      const shouldInclude = includeNorm.some(inc => matchesSportFilter(sport, inc))
+      console.log(`[getFilteredBestBetWithElo] Sport ${sport} matches include filter: ${shouldInclude}`)
+      return shouldInclude
     })
   }
+  
+  console.log(`[getFilteredBestBetWithElo] Filtered sports: ${filteredSports.join(', ') || 'none'}`)
   
   // Find the best bet among filtered sports
   let bestBet: RankedBet | null = null
