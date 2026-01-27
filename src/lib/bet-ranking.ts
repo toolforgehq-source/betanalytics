@@ -1826,6 +1826,8 @@ export function formatBestBetForContext(result: BestBetResult): string {
   
   // Matchup context with Elo
   if (bet.homeElo && bet.awayElo) {
+    lines.push('**MATCHUP:**')
+    lines.push('')
     const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
     const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
     if (isTotal) {
@@ -1833,6 +1835,19 @@ export function formatBestBetForContext(result: BestBetResult): string {
       lines.push(`Combined Elo strength: ${avgElo} average (${bet.homeTeam}: ${bet.homeElo}, ${bet.awayTeam}: ${bet.awayElo}). Market line: ${bet.line}.`)
     } else {
       lines.push(`${bet.homeTeam} (Elo: ${bet.homeElo}) vs ${bet.awayTeam} (Elo: ${bet.awayElo}). The ${eloDiff}-point Elo difference favors ${favoredTeam}.`)
+    }
+    lines.push('')
+  }
+  
+  // Situational factors breakdown
+  if (bet.situationalNotes && bet.situationalNotes.length > 0) {
+    lines.push('**SITUATIONAL FACTORS:**')
+    lines.push('')
+    for (const note of bet.situationalNotes) {
+      lines.push(`- ${note}`)
+    }
+    if (bet.situationalAdjustment !== undefined && bet.situationalAdjustment !== 0) {
+      lines.push(`- Total adjustment: ${bet.situationalAdjustment > 0 ? '+' : ''}${bet.situationalAdjustment.toFixed(1)}%`)
     }
     lines.push('')
   }
@@ -1994,6 +2009,8 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
   
   // Matchup context with Elo
   if (bet.homeElo != null && bet.awayElo != null) {
+    lines.push('**MATCHUP:**')
+    lines.push('')
     const eloDiff = Math.abs(bet.homeElo - bet.awayElo)
     const favoredTeam = bet.homeElo > bet.awayElo ? bet.homeTeam : bet.awayTeam
     if (isTotal) {
@@ -2005,13 +2022,47 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
     lines.push('')
   }
   
+  // Situational factors breakdown
+  if (bet.situationalNotes && bet.situationalNotes.length > 0) {
+    lines.push('**SITUATIONAL FACTORS:**')
+    lines.push('')
+    for (const note of bet.situationalNotes) {
+      lines.push(`- ${note}`)
+    }
+    if (bet.situationalAdjustment !== undefined && bet.situationalAdjustment !== 0) {
+      lines.push(`- Total adjustment: ${bet.situationalAdjustment > 0 ? '+' : ''}${bet.situationalAdjustment.toFixed(1)}%`)
+    }
+    lines.push('')
+  }
+  
   // Value breakdown
   lines.push('**VALUE:**')
   lines.push('')
   lines.push(`${isTotal ? `${bet.team} Probability` : isSpread ? 'Cover Probability' : 'Win Probability'}: ${modelProbPercent}% (${modelSource})`)
+  lines.push(`Market Probability: ${bet.impliedProbability}% (from ${formatOdds(bet.bestPrice)} odds)`)
+  lines.push(`Edge: ${bet.edge}%`)
   lines.push(`Expected Value: $${bet.expectedValue.toFixed(2)} per $100 bet`)
   lines.push(`ROI: ${bet.roi.toFixed(2)}%`)
-  lines.push(`Edge: ${bet.edge}%`)
+  lines.push('')
+  
+  // Score breakdown
+  const probScore = Math.max(0, Math.min(45, ((modelProbPercent - 50) / 40) * 45))
+  const roi = bet.roi
+  let roiScore: number
+  if (roi >= 0) {
+    roiScore = 17.5 + (roi / 20) * 17.5
+  } else {
+    roiScore = 17.5 + (roi / 10) * 17.5
+  }
+  roiScore = Math.max(-35, Math.min(35, roiScore))
+  const edgePercent = bet.edge
+  const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
+  
+  lines.push('**SCORE BREAKDOWN:** ' + `${bet.score}/100`)
+  lines.push('')
+  lines.push(`Probability: ${probScore.toFixed(1)}/45 points`)
+  lines.push(`ROI: ${roiScore.toFixed(1)}/35 points`)
+  lines.push(`Edge: ${edgeScore.toFixed(1)}/20 points`)
   lines.push('')
   
   // Other betting options for this game
