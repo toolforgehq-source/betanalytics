@@ -902,11 +902,18 @@ function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; 
   const normalizedMessage = userMessage.toLowerCase()
   
   // Check if this looks like a "best bet" question
+  // These patterns need to handle variations like:
+  // - "best bet today" (direct)
+  // - "best nhl bet tonight" (sport between best and bet)
+  // - "i want to bet on the nhl tonight" (intent to bet on sport)
   const bestBetPatterns = [
     /\b(best|top|recommended?)\s+(bet|pick|play)\b/i,
+    /\b(best|top|recommended?)\s+\w+\s+(bet|pick|play)\b/i,  // "best nhl bet", "best hockey bet"
     /\bwhat\s+(should|do)\s+(i|you)\s+(bet|pick|play)\b/i,
     /\bgive\s+me\s+a?\s*(bet|pick|play)\b/i,
     /\b(make|give|show)\s+(me\s+)?(the\s+)?(best|a)\s+(bet|pick)\b/i,
+    /\bi\s+want\s+to\s+bet\s+(on\s+)?(the\s+)?(nhl|nba|nfl|mlb|ncaab|ncaaf|hockey|basketball|football|baseball|soccer)/i,  // "i want to bet on the nhl"
+    /\b(bet|betting)\s+(on\s+)?(the\s+)?(nhl|nba|nfl|mlb|ncaab|ncaaf|hockey|basketball|football|baseball|soccer)\s+(tonight|today|this\s+week)/i,  // "betting on nhl tonight"
   ]
   
   const looksLikeBestBetQuestion = bestBetPatterns.some(pattern => pattern.test(normalizedMessage))
@@ -946,7 +953,7 @@ function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; 
     }
   }
   
-  // Inclusion patterns (e.g., "NBA bet", "best hockey pick", "NFL only")
+  // Inclusion patterns (e.g., "NBA bet", "best hockey pick", "NFL only", "bet on the nhl")
   const inclusionPatterns = [
     /\b(hockey|nhl)\s+(bet|pick|play|only)\b/i,
     /\b(basketball|nba|ncaab)\s+(bet|pick|play|only)\b/i,
@@ -961,6 +968,11 @@ function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; 
     /\b(only|just)\s+(hockey|nhl)\b/i,
     /\b(only|just)\s+(basketball|nba)\b/i,
     /\b(only|just)\s+(football|nfl)\b/i,
+    /\bbet\s+(on\s+)?(the\s+)?(hockey|nhl)\b/i,
+    /\bbet\s+(on\s+)?(the\s+)?(basketball|nba|ncaab)\b/i,
+    /\bbet\s+(on\s+)?(the\s+)?(football|nfl|ncaaf)\b/i,
+    /\bbet\s+(on\s+)?(the\s+)?(baseball|mlb)\b/i,
+    /\bbet\s+(on\s+)?(the\s+)?(soccer)\b/i,
   ]
   
   // Only check inclusions if no exclusions were found
@@ -968,16 +980,24 @@ function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; 
     for (const pattern of inclusionPatterns) {
       const match = normalizedMessage.match(pattern)
       if (match) {
-        const sport = match[1] || match[2]
-        if (sport.includes('hockey') || sport.includes('nhl')) includeSports.push('NHL')
-        else if (sport.includes('nba')) includeSports.push('NBA')
-        else if (sport.includes('ncaab')) includeSports.push('NCAAB')
-        else if (sport.includes('basketball')) { includeSports.push('NBA'); includeSports.push('NCAAB') }
-        else if (sport.includes('nfl')) includeSports.push('NFL')
-        else if (sport.includes('ncaaf')) includeSports.push('NCAAF')
-        else if (sport.includes('football')) { includeSports.push('NFL'); includeSports.push('NCAAF') }
-        else if (sport.includes('baseball') || sport.includes('mlb')) includeSports.push('MLB')
-        else if (sport.includes('soccer')) includeSports.push('soccer')
+        // Sport can be in different match groups depending on the pattern
+        // Try all possible groups and find the one that contains a sport keyword
+        const sport = [match[1], match[2], match[3]].find(m => 
+          m && (m.includes('hockey') || m.includes('nhl') || m.includes('nba') || 
+                m.includes('ncaab') || m.includes('basketball') || m.includes('nfl') || 
+                m.includes('ncaaf') || m.includes('football') || m.includes('mlb') || 
+                m.includes('baseball') || m.includes('soccer'))
+        ) || match[1] || match[2]
+        
+        if (sport && (sport.includes('hockey') || sport.includes('nhl'))) includeSports.push('NHL')
+        else if (sport && sport.includes('nba')) includeSports.push('NBA')
+        else if (sport && sport.includes('ncaab')) includeSports.push('NCAAB')
+        else if (sport && sport.includes('basketball')) { includeSports.push('NBA'); includeSports.push('NCAAB') }
+        else if (sport && sport.includes('nfl')) includeSports.push('NFL')
+        else if (sport && sport.includes('ncaaf')) includeSports.push('NCAAF')
+        else if (sport && sport.includes('football')) { includeSports.push('NFL'); includeSports.push('NCAAF') }
+        else if (sport && (sport.includes('baseball') || sport.includes('mlb'))) includeSports.push('MLB')
+        else if (sport && sport.includes('soccer')) includeSports.push('soccer')
       }
     }
   }
