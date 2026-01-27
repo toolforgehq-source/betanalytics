@@ -1333,8 +1333,20 @@ export async function POST(request: Request) {
               console.log(`[chat] No Elo-based bets available for filter: ${bestBetFilter.filterDescription}`)
             }
           } else {
-            deterministicResponse = `No ${bestBetFilter.filterDescription || 'sport'} games with Elo data available right now. Our model requires Elo ratings to make recommendations. Please check back later when games are scheduled.`
-            console.log(`[chat] No sport bets available for filter: ${bestBetFilter.filterDescription}`)
+            // Provide a clear, helpful message when Elo data is unavailable
+            // This happens when the Elo cache hasn't been populated yet (needs backfill)
+            deterministicResponse = `🏒 **${bestBetFilter.filterDescription || 'Sport'} Analysis Temporarily Unavailable**
+
+Our Elo rating system is still building up historical data for accurate predictions. This happens when:
+- The system is new and hasn't processed enough games yet
+- The daily update hasn't run yet today
+
+**What this means:** We won't show you a recommendation until we have real Elo data, because using default ratings would give you meaningless predictions (all teams would appear equal).
+
+**Check back soon!** Our system updates daily with new game results, building more accurate team ratings over time.
+
+If you're seeing this message persistently, please contact us at contact@betanalytics.ai.`
+            console.log(`[chat] No sport bets available for filter: ${bestBetFilter.filterDescription} - Elo cache likely empty`)
           }
         } else {
           // Use cached best bet for general "best bet" questions without filters
