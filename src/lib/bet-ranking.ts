@@ -778,7 +778,7 @@ export async function analyzeGame(
     let homeElo: number | undefined
     let awayElo: number | undefined
     
-    if (eloResult && eloResult.confidence !== 'very_low') {
+    if (eloResult) {
       // Elo returns home team win probability, so flip for away team
       eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
       eloConfidence = eloResult.confidence
@@ -786,7 +786,13 @@ export async function analyzeGame(
       awayElo = eloResult.awayRating
       
       // Use Elo as the model probability for edge calculation
+      // Note: We now use Elo even with 'very_low' confidence to ensure all sports have Elo-based recommendations
+      // The confidence level is still tracked and displayed to users
       modelProbability = eloProbability
+      
+      if (eloResult.confidence === 'very_low') {
+        console.log(`[analyzeGame] Using Elo with very_low confidence for ${game.homeTeam} vs ${game.awayTeam} (${game.sportName})`)
+      }
     }
     
     // Calculate situational factors and apply adjustment to model probability
@@ -1279,8 +1285,14 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
   }
   
   // Only return bets if we have Elo data
-  if (!eloResult || eloResult.confidence === 'very_low') {
+  // Note: We now accept 'very_low' confidence to ensure all sports have Elo-based recommendations
+  if (!eloResult) {
+    console.log(`[analyzeGameForSportQuery] No Elo data available for ${game.homeTeam} vs ${game.awayTeam} (${game.sportName})`)
     return []
+  }
+  
+  if (eloResult.confidence === 'very_low') {
+    console.log(`[analyzeGameForSportQuery] Using Elo with very_low confidence for ${game.homeTeam} vs ${game.awayTeam} (${game.sportName})`)
   }
   
   // Analyze both teams - NO strict filters, just basic requirements
