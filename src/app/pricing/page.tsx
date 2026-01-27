@@ -36,9 +36,9 @@ export default async function PricingPage() {
                 </>
               ) : (
                 <>
-                  <Link href="/methodology" className="text-slate-300 hover:text-white transition-colors">
-                    Methodology
-                  </Link>
+                                    <Link href="/methodology" className="hidden sm:block text-slate-300 hover:text-white transition-colors">
+                                      Methodology
+                                    </Link>
                   <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
                     Sign In
                   </Link>
