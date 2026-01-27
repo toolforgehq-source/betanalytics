@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { TrendingUp, Activity, Shield, BarChart3, CheckCircle, Clock, Target, Zap, ChevronDown } from 'lucide-react'
 import Footer from '@/components/Footer'
+import MobileNav from '@/components/MobileNav'
 
 export const metadata = {
   title: 'Sports Betting AI | Elo-Based Edge Detection - BetAnalytics.ai',
@@ -10,38 +11,42 @@ export const metadata = {
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white">
-      <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-400 rounded-lg flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
-                  BetAnalytics.ai
-                </span>
-                <p className="text-xs text-slate-400">Elo-Powered Sports Betting Intelligence</p>
-              </div>
-            </div>
+            <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm relative">
+              <div className="container mx-auto px-4 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-400 rounded-lg flex items-center justify-center">
+                      <TrendingUp className="w-6 h-6 text-white" />
+                    </div>
+                    <div>
+                      <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
+                        BetAnalytics.ai
+                      </span>
+                      <p className="text-xs text-slate-400">Elo-Powered Sports Betting Intelligence</p>
+                    </div>
+                  </div>
             
-            <div className="flex items-center gap-4">
-                                          <Link href="/methodology" className="text-slate-300 hover:text-white transition-colors">
-                              Methodology
-                            </Link>
-                            <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
-                              Sign In
-                            </Link>
-                            <Link 
-                              href="/signup" 
-                              className="hidden sm:block px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
-                            >
-                              Start Free Trial
-                            </Link>
-            </div>
-          </div>
-        </div>
-      </header>
+                  {/* Desktop Navigation */}
+                  <div className="hidden md:flex items-center gap-4">
+                    <Link href="/methodology" className="text-slate-300 hover:text-white transition-colors">
+                      Methodology
+                    </Link>
+                    <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
+                      Sign In
+                    </Link>
+                    <Link 
+                      href="/signup" 
+                      className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
+                    >
+                      Start Free Trial
+                    </Link>
+                  </div>
+
+                  {/* Mobile Navigation */}
+                  <MobileNav />
+                </div>
+              </div>
+            </header>
 
       <main>
         {/* Hero Section */}
