@@ -1940,8 +1940,11 @@ export async function analyzeSpecificGame(game: Game): Promise<GameAnalysisResul
   // Analyze the game to get all betting options
   const bets = await analyzeGame(game)
   
+  // Filter to only Elo-powered bets - Elo is our core differentiator
+  const eloPoweredBets = bets.filter(bet => bet.eloProbability !== undefined)
+  
   // Sort by score to find the best bet for this game
-  const sortedBets = [...bets].sort((a, b) => b.score - a.score)
+  const sortedBets = [...eloPoweredBets].sort((a, b) => b.score - a.score)
   
   return {
     game: {
@@ -2248,8 +2251,11 @@ const PARLAY_MAX_PROBABILITY = 85
 export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult {
   const now = new Date().toISOString()
   
-  // Filter to only moneyline bets for parlays (spreads/totals have different probability semantics)
-  const moneylineBets = allRankedBets.filter(bet => bet.betType === 'moneyline')
+  // Filter to only moneyline bets WITH Elo data for parlays
+  // Elo is our core differentiator - every parlay leg must be Elo-powered
+  const moneylineBets = allRankedBets.filter(bet => 
+    bet.betType === 'moneyline' && bet.eloProbability !== undefined
+  )
   
   if (moneylineBets.length < 2) {
     return {
@@ -2257,12 +2263,12 @@ export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult 
       aggressiveParlay: null,
       combinedProbability: null,
       calculatedAt: now,
-      reason: 'Not enough moneyline bets available for a parlay (need at least 2 moneyline bets from different games)'
+      reason: 'Not enough Elo-powered moneyline bets available for a parlay (need at least 2 from different games)'
     }
   }
   
-  // Get model probability for a bet
-  const getModelProb = (bet: RankedBet) => bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+  // Get model probability for a bet (always Elo since we filtered above)
+  const getModelProb = (bet: RankedBet) => bet.eloProbability!
   
   // STEP 1: Filter out extreme favorites (poor parlay value)
   // Bets worse than -400 odds or >85% probability are excluded
