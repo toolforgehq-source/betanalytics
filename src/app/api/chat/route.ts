@@ -6,6 +6,7 @@ import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
 import { getCachedESPNOdds } from "@/lib/espn"
 import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet } from "@/lib/bet-ranking"
+import type { RankedBet } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
@@ -1132,7 +1133,103 @@ export async function POST(request: Request) {
         
         if (hasFilters) {
           // Use filtered sport bets for questions with filters
-          const sportBets = await getCachedSportBets()
+          let sportBets = await getCachedSportBets()
+          
+          // FALLBACK: If cache is empty, compute sport bets on-demand from ESPN data
+          if (!sportBets) {
+            console.log(`[chat] Sport bets cache empty - computing on-demand for filter: ${bestBetFilter.filterDescription}`)
+            try {
+              const espnOdds = await getCachedESPNOdds()
+              if (espnOdds.games.length > 0) {
+                // Filter to today's games (ET timezone)
+                const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+                
+                // Sport key mapping (same as cron job)
+                const sportKeyMap: Record<string, string> = {
+                  'NBA': 'basketball_nba',
+                  'NFL': 'americanfootball_nfl',
+                  'NHL': 'icehockey_nhl',
+                  'NCAAB': 'basketball_ncaab',
+                  'NCAAF': 'americanfootball_ncaaf',
+                  'MLB': 'baseball_mlb',
+                  'English Premier League': 'soccer_epl',
+                  'La Liga': 'soccer_spain_la_liga',
+                  'Bundesliga': 'soccer_germany_bundesliga',
+                  'Serie A': 'soccer_italy_serie_a',
+                  'Ligue 1': 'soccer_france_ligue_one',
+                  'MLS': 'soccer_usa_mls',
+                  'UEFA Champions League': 'soccer_uefa_champs_league',
+                }
+                
+                const todaysGames: Game[] = espnOdds.games
+                  .filter(g => {
+                    const gameDate = new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+                    return gameDate === todayET
+                  })
+                  .map(g => {
+                    const sportKey = sportKeyMap[g.league] || g.sport
+                    const provider = g.provider || 'DraftKings'
+                    const homeSpread = g.spread ?? 0
+                    
+                    return {
+                      id: g.gameId,
+                      sport: sportKey,
+                      sportName: g.league,
+                      homeTeam: g.homeTeam,
+                      awayTeam: g.awayTeam,
+                      commenceTime: g.commenceTime,
+                      spreads: g.spread !== null ? [{
+                        bookmaker: provider,
+                        market: 'spreads',
+                        outcomes: [
+                          { name: g.homeTeam, price: g.spreadOdds?.home || -110, point: homeSpread },
+                          { name: g.awayTeam, price: g.spreadOdds?.away || -110, point: -homeSpread }
+                        ]
+                      }] : [],
+                      totals: g.overUnder !== null ? [{
+                        bookmaker: provider,
+                        market: 'totals',
+                        outcomes: [
+                          { name: 'Over', price: g.overUnderOdds?.over || -110, point: g.overUnder },
+                          { name: 'Under', price: g.overUnderOdds?.under || -110, point: g.overUnder }
+                        ]
+                      }] : [],
+                      moneylines: g.moneyline ? [{
+                        bookmaker: provider,
+                        market: 'h2h',
+                        outcomes: [
+                          { name: g.homeTeam, price: g.moneyline.home },
+                          { name: g.awayTeam, price: g.moneyline.away }
+                        ]
+                      }] : []
+                    }
+                  })
+                
+                if (todaysGames.length > 0) {
+                  console.log(`[chat] Computing sport bets from ${todaysGames.length} games today...`)
+                  const bestBetResult = await computeBestBets(todaysGames)
+                  
+                  // Build sport bets structure from allEloBets (all Elo-powered bets)
+                  // SportBestBets maps sport name to the BEST bet for that sport (not an array)
+                  if (bestBetResult.allEloBets && bestBetResult.allEloBets.length > 0) {
+                    const tempSportBets: Record<string, RankedBet | null> = {}
+                    for (const bet of bestBetResult.allEloBets) {
+                      const sportName = bet.sportName
+                      // Only keep the first (best) bet for each sport since allEloBets is sorted by score
+                      if (!tempSportBets[sportName]) {
+                        tempSportBets[sportName] = bet
+                      }
+                    }
+                    sportBets = tempSportBets
+                    console.log(`[chat] On-demand sport bets computed: ${Object.keys(sportBets).join(', ')}`)
+                  }
+                }
+              }
+            } catch (err) {
+              console.error('[chat] Error computing sport bets on-demand:', err)
+            }
+          }
+          
           if (sportBets) {
             const result = getFilteredBestBetWithElo(sportBets, bestBetFilter.excludeSports, bestBetFilter.includeSports)
             
@@ -1143,6 +1240,9 @@ export async function POST(request: Request) {
               deterministicResponse = result.message
               console.log(`[chat] No Elo-based bets available for filter: ${bestBetFilter.filterDescription}`)
             }
+          } else {
+            deterministicResponse = `No ${bestBetFilter.filterDescription || 'sport'} games with Elo data available right now. Our model requires Elo ratings to make recommendations. Please check back later when games are scheduled.`
+            console.log(`[chat] No sport bets available for filter: ${bestBetFilter.filterDescription}`)
           }
         } else {
           // Use cached best bet for general "best bet" questions without filters
