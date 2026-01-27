@@ -13,18 +13,18 @@ export default function TermsPage() {
             </Link>
             
             <div className="flex items-center gap-4">
-                            <Link href="/methodology" className="hidden sm:block text-slate-300 hover:text-white transition-colors">
+                                          <Link href="/methodology" className="text-slate-300 hover:text-white transition-colors">
                               Methodology
                             </Link>
-              <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
-                Sign In
-              </Link>
-              <Link 
-                href="/signup" 
-                className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
-              >
-                Start Free Trial
-              </Link>
+                            <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
+                              Sign In
+                            </Link>
+                            <Link 
+                              href="/signup" 
+                              className="hidden sm:block px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
+                            >
+                              Start Free Trial
+                            </Link>
             </div>
           </div>
         </div>
