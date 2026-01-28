@@ -1316,14 +1316,26 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
   
   // Analyze both teams - NO strict filters, just basic requirements
   for (const team of [game.homeTeam, game.awayTeam]) {
-    const consensus = calculateConsensusProbability(game, team)
-    if (!consensus) continue
-    
+    // First try to get best price - this is required
     const bestPrice = findBestPrice(game, team)
-    if (!bestPrice) continue
+    if (!bestPrice) {
+      console.log(`[analyzeGameForSportQuery] No price found for ${team} in ${game.homeTeam} vs ${game.awayTeam}`)
+      continue
+    }
     
     // Only filter out extremely bad odds (worse than -500)
     if (bestPrice.price < -500) continue
+    
+    // Try to get consensus probability (requires 2+ books)
+    // If not available, use the single book's implied probability
+    const consensus = calculateConsensusProbability(game, team)
+    const consensusProb = consensus?.consensusProb ?? bestPrice.impliedProb
+    const bookPrices = consensus?.bookPrices ?? [{
+      book: bestPrice.book,
+      price: bestPrice.price,
+      impliedProb: bestPrice.impliedProb,
+      noVigProb: bestPrice.impliedProb
+    }]
     
     const isHomeTeam = team === game.homeTeam
     const eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
@@ -1343,7 +1355,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
       commenceTime: game.commenceTime,
       team,
       betType: 'moneyline',
-      consensusProbability: Math.round(consensus.consensusProb * 1000) / 10,
+      consensusProbability: Math.round(consensusProb * 1000) / 10,
       bestPrice: bestPrice.price,
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
@@ -1354,7 +1366,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
       awayElo: eloResult.awayRating,
       expectedValue: Math.round(ev * 100) / 100,
       roi: Math.round(roi * 100) / 100,
-      allBookPrices: consensus.bookPrices.map(b => ({
+      allBookPrices: bookPrices.map(b => ({
         book: b.book,
         price: b.price,
         impliedProb: Math.round(b.impliedProb * 1000) / 10
