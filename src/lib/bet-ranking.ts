@@ -193,8 +193,10 @@ const CONSENSUS_BOOKS = [
   'BetRivers', 'Unibet', 'Barstool', 'WynnBET', 'SuperBook'
 ]
 
-// Map odds API sport codes to Elo league names
+// Map sport codes to Elo league names
+// Includes both odds API sport codes (e.g., 'icehockey_nhl') and ESPN sport codes (e.g., 'hockey')
 const SPORT_TO_ELO_LEAGUE: Record<string, string> = {
+  // Odds API sport codes
   'basketball_nba': 'NBA',
   'basketball_ncaab': 'NCAAB',
   'americanfootball_nfl': 'NFL',
@@ -208,6 +210,12 @@ const SPORT_TO_ELO_LEAGUE: Record<string, string> = {
   'soccer_france_ligue_one': 'soccer_france_ligue_one',
   'soccer_usa_mls': 'soccer_usa_mls',
   'soccer_uefa_champs_league': 'soccer_uefa_champs_league',
+  // ESPN sport codes (from ESPN odds cache)
+  'hockey': 'NHL',
+  'basketball': 'NBA',
+  'football': 'NFL',
+  'baseball': 'MLB',
+  'soccer': 'soccer_epl',  // Default to EPL for generic soccer
 }
 
 /**
