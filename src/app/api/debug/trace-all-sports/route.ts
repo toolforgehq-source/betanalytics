@@ -193,7 +193,7 @@ export async function GET() {
             result.computedBetsSample = sportBets.slice(0, 3).map(b => ({
               team: b.team,
               score: b.score,
-              eloProbability: b.eloProbability,
+              eloProbability: b.eloProbability ?? 0,
               edge: b.edge
             }))
             
@@ -215,7 +215,7 @@ export async function GET() {
           result.cachedBet = {
             team: cachedBet.team,
             score: cachedBet.score,
-            eloProbability: cachedBet.eloProbability
+            eloProbability: cachedBet.eloProbability ?? 0
           }
         }
       }
