@@ -1093,6 +1093,45 @@ export async function analyzeGame(
         score,
         situationalAdjustment: spreadSituationalAdj.totalAdjustment !== 0 ? Math.round(spreadSituationalAdj.totalAdjustment * 1000) / 10 : undefined,
         situationalNotes: spreadSituationalAdj.notes.length > 0 ? spreadSituationalAdj.notes : undefined,
+        // Store base Elo probability (before situational adjustments) and full breakdown
+        baseEloProbability: Math.round(baseEloCoverProb * 1000) / 10,
+        situationalBreakdown: {
+          restDays: {
+            value: spreadSituationalFactors.isBackToBack ? 'Back-to-back' : 
+                   spreadSituationalFactors.restAdvantage > 0 ? `+${spreadSituationalFactors.restAdvantage} days rest advantage` :
+                   spreadSituationalFactors.restAdvantage < 0 ? `${spreadSituationalFactors.restAdvantage} days rest disadvantage` : 'Normal rest',
+            adjustment: Math.round((spreadSituationalAdj.breakdown.backToBack + spreadSituationalAdj.breakdown.restAdvantage) * 1000) / 10
+          },
+          travel: {
+            value: spreadSituationalFactors.travelDistance === 'none' ? 'Home game' :
+                   spreadSituationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${spreadSituationalFactors.timezoneChange}hr TZ change)` :
+                   spreadSituationalFactors.travelDistance === 'long' ? `Long travel (${spreadSituationalFactors.timezoneChange}hr TZ change)` :
+                   spreadSituationalFactors.travelDistance === 'medium' ? 'Medium distance travel' : 'Short travel',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.travel * 1000) / 10
+          },
+          recentForm: {
+            value: spreadSituationalFactors.formTrend === 'hot' ? 'Hot streak' :
+                   spreadSituationalFactors.formTrend === 'cold' ? 'Cold streak' : 'Neutral form',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.recentForm * 1000) / 10
+          },
+          weather: {
+            value: spreadSituationalFactors.weatherImpact ? `${spreadSituationalFactors.weatherImpact.level} impact` : 'No weather impact',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.weather * 1000) / 10
+          },
+          sharpMoney: {
+            value: spreadSituationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
+                   spreadSituationalFactors.lineMovementDirection !== 'neutral' ? `Line moving ${spreadSituationalFactors.lineMovementDirection}` : 'No sharp action',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.sharpMoney * 1000) / 10
+          },
+          motivation: {
+            value: spreadSituationalAdj.motivationAdjustment?.notes.length ? spreadSituationalAdj.motivationAdjustment.notes[0] : 'Standard game',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.motivation * 1000) / 10
+          },
+          injuries: {
+            value: 'See injury report',
+            adjustment: 0
+          }
+        },
         calculatedAt: now
       })
     })
@@ -1201,6 +1240,45 @@ export async function analyzeGame(
               score,
               situationalAdjustment: totalSituationalAdj.totalAdjustment !== 0 ? Math.round(totalSituationalAdj.totalAdjustment * 1000) / 10 : undefined,
               situationalNotes: totalSituationalAdj.notes.length > 0 ? totalSituationalAdj.notes : undefined,
+              // Store base Elo probability (before situational adjustments) and full breakdown
+              baseEloProbability: Math.round(baseEloOverProb * 1000) / 10,
+              situationalBreakdown: {
+                restDays: {
+                  value: totalSituationalFactors.isBackToBack ? 'Back-to-back' : 
+                         totalSituationalFactors.restAdvantage > 0 ? `+${totalSituationalFactors.restAdvantage} days rest advantage` :
+                         totalSituationalFactors.restAdvantage < 0 ? `${totalSituationalFactors.restAdvantage} days rest disadvantage` : 'Normal rest',
+                  adjustment: Math.round((totalSituationalAdj.breakdown.backToBack + totalSituationalAdj.breakdown.restAdvantage) * 1000) / 10
+                },
+                travel: {
+                  value: totalSituationalFactors.travelDistance === 'none' ? 'Home game' :
+                         totalSituationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${totalSituationalFactors.timezoneChange}hr TZ change)` :
+                         totalSituationalFactors.travelDistance === 'long' ? `Long travel (${totalSituationalFactors.timezoneChange}hr TZ change)` :
+                         totalSituationalFactors.travelDistance === 'medium' ? 'Medium distance travel' : 'Short travel',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.travel * 1000) / 10
+                },
+                recentForm: {
+                  value: totalSituationalFactors.formTrend === 'hot' ? 'Hot streak' :
+                         totalSituationalFactors.formTrend === 'cold' ? 'Cold streak' : 'Neutral form',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.recentForm * 1000) / 10
+                },
+                weather: {
+                  value: totalSituationalFactors.weatherImpact ? `${totalSituationalFactors.weatherImpact.level} impact` : 'No weather impact',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.weather * 1000) / 10
+                },
+                sharpMoney: {
+                  value: totalSituationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
+                         totalSituationalFactors.lineMovementDirection !== 'neutral' ? `Line moving ${totalSituationalFactors.lineMovementDirection}` : 'No sharp action',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.sharpMoney * 1000) / 10
+                },
+                motivation: {
+                  value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Standard game',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.motivation * 1000) / 10
+                },
+                injuries: {
+                  value: 'See injury report',
+                  adjustment: 0
+                }
+              },
               calculatedAt: now
             })
           }
@@ -1267,6 +1345,45 @@ export async function analyzeGame(
               score,
               situationalAdjustment: totalSituationalAdj.totalAdjustment !== 0 ? Math.round(totalSituationalAdj.totalAdjustment * 1000) / 10 : undefined,
               situationalNotes: totalSituationalAdj.notes.length > 0 ? totalSituationalAdj.notes : undefined,
+              // Store base Elo probability (before situational adjustments) and full breakdown
+              baseEloProbability: Math.round(baseEloUnderProb * 1000) / 10,
+              situationalBreakdown: {
+                restDays: {
+                  value: totalSituationalFactors.isBackToBack ? 'Back-to-back' : 
+                         totalSituationalFactors.restAdvantage > 0 ? `+${totalSituationalFactors.restAdvantage} days rest advantage` :
+                         totalSituationalFactors.restAdvantage < 0 ? `${totalSituationalFactors.restAdvantage} days rest disadvantage` : 'Normal rest',
+                  adjustment: Math.round((totalSituationalAdj.breakdown.backToBack + totalSituationalAdj.breakdown.restAdvantage) * 1000) / 10
+                },
+                travel: {
+                  value: totalSituationalFactors.travelDistance === 'none' ? 'Home game' :
+                         totalSituationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${totalSituationalFactors.timezoneChange}hr TZ change)` :
+                         totalSituationalFactors.travelDistance === 'long' ? `Long travel (${totalSituationalFactors.timezoneChange}hr TZ change)` :
+                         totalSituationalFactors.travelDistance === 'medium' ? 'Medium distance travel' : 'Short travel',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.travel * 1000) / 10
+                },
+                recentForm: {
+                  value: totalSituationalFactors.formTrend === 'hot' ? 'Hot streak' :
+                         totalSituationalFactors.formTrend === 'cold' ? 'Cold streak' : 'Neutral form',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.recentForm * 1000) / 10
+                },
+                weather: {
+                  value: totalSituationalFactors.weatherImpact ? `${totalSituationalFactors.weatherImpact.level} impact` : 'No weather impact',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.weather * 1000) / 10
+                },
+                sharpMoney: {
+                  value: totalSituationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
+                         totalSituationalFactors.lineMovementDirection !== 'neutral' ? `Line moving ${totalSituationalFactors.lineMovementDirection}` : 'No sharp action',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.sharpMoney * 1000) / 10
+                },
+                motivation: {
+                  value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Standard game',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.motivation * 1000) / 10
+                },
+                injuries: {
+                  value: 'See injury report',
+                  adjustment: 0
+                }
+              },
               calculatedAt: now
             })
           }
