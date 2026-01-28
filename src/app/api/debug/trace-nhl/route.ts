@@ -9,7 +9,7 @@ import { NextResponse } from 'next/server'
 import { getCachedESPNOdds } from '@/lib/espn'
 import { getEloWinProbabilityByName, getEloRatings } from '@/lib/elo'
 import { computeBestBets, getCachedSportBets, getFilteredBestBetWithElo } from '@/lib/bet-ranking'
-import type { Game } from '@/lib/bet-ranking'
+import type { Game } from '@/lib/odds'
 
 export const runtime = 'edge'
 export const maxDuration = 60
