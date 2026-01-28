@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server"
 import { auth } from "@/auth"
-import { stripe } from "@/lib/stripe"
+import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { db } from "@/db"
 
 export async function POST() {
   try {
+    // Check if Stripe is configured
+    if (!isStripeConfigured() || !stripe) {
+      return NextResponse.json(
+        { error: 'Payments are not configured yet. Please try again later.' },
+        { status: 503 }
+      )
+    }
+
     const session = await auth()
     
     if (!session?.user?.id) {

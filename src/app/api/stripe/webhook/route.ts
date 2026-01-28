@@ -1,13 +1,34 @@
 import { NextResponse } from "next/server"
 import { headers } from "next/headers"
-import { stripe } from "@/lib/stripe"
+import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { db } from "@/db"
 import Stripe from "stripe"
 
 export async function POST(request: Request) {
+  // Check if Stripe is configured
+  if (!isStripeConfigured() || !stripe) {
+    console.warn('[Stripe Webhook] Stripe not configured - webhook disabled')
+    return NextResponse.json(
+      { error: 'Stripe not configured - payments disabled' },
+      { status: 503 }
+    )
+  }
+
   const body = await request.text()
   const headersList = await headers()
-  const signature = headersList.get("stripe-signature")!
+  const signature = headersList.get("stripe-signature")
+
+  if (!signature) {
+    return NextResponse.json({ error: "Missing signature" }, { status: 400 })
+  }
+
+  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+    console.warn('[Stripe Webhook] STRIPE_WEBHOOK_SECRET not configured')
+    return NextResponse.json(
+      { error: 'Stripe webhook secret not configured' },
+      { status: 503 }
+    )
+  }
 
   let event: Stripe.Event
 
@@ -15,7 +36,7 @@ export async function POST(request: Request) {
     event = stripe.webhooks.constructEvent(
       body,
       signature,
-      process.env.STRIPE_WEBHOOK_SECRET!
+      process.env.STRIPE_WEBHOOK_SECRET
     )
   } catch (error) {
     console.error("Webhook signature verification failed:", error)
