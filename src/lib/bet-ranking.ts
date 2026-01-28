@@ -75,6 +75,16 @@ export interface RankedBet {
   // Situational factors (when available)
   situationalAdjustment?: number     // Total probability adjustment from situational factors
   situationalNotes?: string[]        // Human-readable notes about situational factors
+  situationalBreakdown?: {           // Full breakdown of all 7 situational factors
+    restDays: { value: string; adjustment: number }
+    travel: { value: string; adjustment: number }
+    recentForm: { value: string; adjustment: number }
+    weather: { value: string; adjustment: number }
+    sharpMoney: { value: string; adjustment: number }
+    motivation: { value: string; adjustment: number }
+    injuries: { value: string; adjustment: number }
+  }
+  baseEloProbability?: number        // Base Elo probability before situational adjustments
   
   // Timestamp
   calculatedAt: string
@@ -884,6 +894,44 @@ export async function analyzeGame(
       score,
       situationalAdjustment: situationalAdj.totalAdjustment !== 0 ? Math.round(situationalAdj.totalAdjustment * 1000) / 10 : undefined,
       situationalNotes: situationalAdj.notes.length > 0 ? situationalAdj.notes : undefined,
+      situationalBreakdown: {
+        restDays: {
+          value: situationalFactors.isBackToBack ? 'Back-to-back' : 
+                 situationalFactors.restAdvantage > 0 ? `+${situationalFactors.restAdvantage} days rest advantage` :
+                 situationalFactors.restAdvantage < 0 ? `${situationalFactors.restAdvantage} days rest disadvantage` : 'Normal rest',
+          adjustment: Math.round((situationalAdj.breakdown.backToBack + situationalAdj.breakdown.restAdvantage) * 1000) / 10
+        },
+        travel: {
+          value: situationalFactors.travelDistance === 'none' ? 'Home game' :
+                 situationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${situationalFactors.timezoneChange}hr TZ change)` :
+                 situationalFactors.travelDistance === 'long' ? `Long travel (${situationalFactors.timezoneChange}hr TZ change)` :
+                 situationalFactors.travelDistance === 'medium' ? 'Medium distance travel' : 'Short travel',
+          adjustment: Math.round(situationalAdj.breakdown.travel * 1000) / 10
+        },
+        recentForm: {
+          value: situationalFactors.formTrend === 'hot' ? 'Hot streak' :
+                 situationalFactors.formTrend === 'cold' ? 'Cold streak' : 'Neutral form',
+          adjustment: Math.round(situationalAdj.breakdown.recentForm * 1000) / 10
+        },
+        weather: {
+          value: situationalFactors.weatherImpact ? `${situationalFactors.weatherImpact.level} impact` : 'No weather impact',
+          adjustment: Math.round(situationalAdj.breakdown.weather * 1000) / 10
+        },
+        sharpMoney: {
+          value: situationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
+                 situationalFactors.lineMovementDirection !== 'neutral' ? `Line moving ${situationalFactors.lineMovementDirection}` : 'No sharp action',
+          adjustment: Math.round(situationalAdj.breakdown.sharpMoney * 1000) / 10
+        },
+        motivation: {
+          value: situationalAdj.motivationAdjustment?.notes.length ? situationalAdj.motivationAdjustment.notes[0] : 'Standard game',
+          adjustment: Math.round(situationalAdj.breakdown.motivation * 1000) / 10
+        },
+        injuries: {
+          value: 'See injury report',
+          adjustment: 0
+        }
+      },
+      baseEloProbability: eloProbability ? Math.round(eloProbability * 1000) / 10 : undefined,
       calculatedAt: now
     })
   }
@@ -1892,18 +1940,36 @@ export function formatBestBetForContext(result: BestBetResult): string {
     lines.push('')
   }
   
-  // Situational factors breakdown
-  if (bet.situationalNotes && bet.situationalNotes.length > 0) {
-    lines.push('**SITUATIONAL FACTORS:**')
+  // Situational factors breakdown - ALWAYS show all 7 factors
+  lines.push('**SITUATIONAL FACTORS:**')
+  lines.push('')
+  if (bet.situationalBreakdown) {
+    const formatAdj = (adj: number) => adj === 0 ? '0%' : `${adj > 0 ? '+' : ''}${adj.toFixed(1)}%`
+    lines.push(`- Rest days: ${bet.situationalBreakdown.restDays.value} (${formatAdj(bet.situationalBreakdown.restDays.adjustment)})`)
+    lines.push(`- Travel: ${bet.situationalBreakdown.travel.value} (${formatAdj(bet.situationalBreakdown.travel.adjustment)})`)
+    lines.push(`- Recent form: ${bet.situationalBreakdown.recentForm.value} (${formatAdj(bet.situationalBreakdown.recentForm.adjustment)})`)
+    lines.push(`- Weather: ${bet.situationalBreakdown.weather.value} (${formatAdj(bet.situationalBreakdown.weather.adjustment)})`)
+    lines.push(`- Sharp money: ${bet.situationalBreakdown.sharpMoney.value} (${formatAdj(bet.situationalBreakdown.sharpMoney.adjustment)})`)
+    lines.push(`- Motivation: ${bet.situationalBreakdown.motivation.value} (${formatAdj(bet.situationalBreakdown.motivation.adjustment)})`)
+    lines.push(`- Injuries: ${bet.situationalBreakdown.injuries.value} (${formatAdj(bet.situationalBreakdown.injuries.adjustment)})`)
     lines.push('')
+    const totalAdj = bet.situationalAdjustment ?? 0
+    lines.push(`**Total adjustment: ${totalAdj > 0 ? '+' : ''}${totalAdj.toFixed(1)}%**`)
+    if (bet.baseEloProbability !== undefined && bet.eloProbability !== undefined) {
+      lines.push(`Base Elo probability: ${bet.baseEloProbability}% -> Adjusted: ${bet.eloProbability}%`)
+    }
+  } else if (bet.situationalNotes && bet.situationalNotes.length > 0) {
+    // Fallback to old format if breakdown not available
     for (const note of bet.situationalNotes) {
       lines.push(`- ${note}`)
     }
     if (bet.situationalAdjustment !== undefined && bet.situationalAdjustment !== 0) {
       lines.push(`- Total adjustment: ${bet.situationalAdjustment > 0 ? '+' : ''}${bet.situationalAdjustment.toFixed(1)}%`)
     }
-    lines.push('')
+  } else {
+    lines.push('- No significant situational factors detected')
   }
+  lines.push('')
   
   // Value breakdown
   lines.push('**VALUE:**')
@@ -2078,18 +2144,36 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
     lines.push('')
   }
   
-  // Situational factors breakdown
-  if (bet.situationalNotes && bet.situationalNotes.length > 0) {
-    lines.push('**SITUATIONAL FACTORS:**')
+  // Situational factors breakdown - ALWAYS show all 7 factors
+  lines.push('**SITUATIONAL FACTORS:**')
+  lines.push('')
+  if (bet.situationalBreakdown) {
+    const formatAdj = (adj: number) => adj === 0 ? '0%' : `${adj > 0 ? '+' : ''}${adj.toFixed(1)}%`
+    lines.push(`- Rest days: ${bet.situationalBreakdown.restDays.value} (${formatAdj(bet.situationalBreakdown.restDays.adjustment)})`)
+    lines.push(`- Travel: ${bet.situationalBreakdown.travel.value} (${formatAdj(bet.situationalBreakdown.travel.adjustment)})`)
+    lines.push(`- Recent form: ${bet.situationalBreakdown.recentForm.value} (${formatAdj(bet.situationalBreakdown.recentForm.adjustment)})`)
+    lines.push(`- Weather: ${bet.situationalBreakdown.weather.value} (${formatAdj(bet.situationalBreakdown.weather.adjustment)})`)
+    lines.push(`- Sharp money: ${bet.situationalBreakdown.sharpMoney.value} (${formatAdj(bet.situationalBreakdown.sharpMoney.adjustment)})`)
+    lines.push(`- Motivation: ${bet.situationalBreakdown.motivation.value} (${formatAdj(bet.situationalBreakdown.motivation.adjustment)})`)
+    lines.push(`- Injuries: ${bet.situationalBreakdown.injuries.value} (${formatAdj(bet.situationalBreakdown.injuries.adjustment)})`)
     lines.push('')
+    const totalAdj = bet.situationalAdjustment ?? 0
+    lines.push(`**Total adjustment: ${totalAdj > 0 ? '+' : ''}${totalAdj.toFixed(1)}%**`)
+    if (bet.baseEloProbability !== undefined && bet.eloProbability !== undefined) {
+      lines.push(`Base Elo probability: ${bet.baseEloProbability}% -> Adjusted: ${bet.eloProbability}%`)
+    }
+  } else if (bet.situationalNotes && bet.situationalNotes.length > 0) {
+    // Fallback to old format if breakdown not available
     for (const note of bet.situationalNotes) {
       lines.push(`- ${note}`)
     }
     if (bet.situationalAdjustment !== undefined && bet.situationalAdjustment !== 0) {
       lines.push(`- Total adjustment: ${bet.situationalAdjustment > 0 ? '+' : ''}${bet.situationalAdjustment.toFixed(1)}%`)
     }
-    lines.push('')
+  } else {
+    lines.push('- No significant situational factors detected')
   }
+  lines.push('')
   
   // Value breakdown
   lines.push('**VALUE:**')
@@ -2633,7 +2717,9 @@ export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription:
     pickDisplay = `${bet.team} ML @ ${formatOdds(bet.bestPrice)}`
   }
   
-  lines.push(`${emoji} BEST BET${filterDescription ? ` (${filterDescription})` : ''}`)
+  // Format header: "BEST NHL BET" instead of "BEST BET (NHL)"
+  const headerText = filterDescription ? `BEST ${filterDescription.toUpperCase()} BET` : 'BEST BET'
+  lines.push(`${emoji} ${headerText}`)
   lines.push('')
   lines.push(`**${pickDisplay}**`)
   lines.push(`${bet.awayTeam} @ ${bet.homeTeam} | ${bet.sportName} | ${formatTime(bet.commenceTime)}`)

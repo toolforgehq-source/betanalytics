@@ -723,6 +723,9 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
     /\bwho\s+(wins?|should|will)\b/i,
     /\bshould\s+i\s+(bet|take|play)\b/i,
     /\bwhat.*\b(think|like|recommend)\b.*\bgame\b/i,
+    /\bi\s+want\s+to\s+bet\s+(the\s+)?\w+\s+game\b/i,  // "I want to bet the Lakers game"
+    /\bbet\s+(on\s+)?(the\s+)?\w+\s+(game|tonight|today)\b/i,  // "bet on the Lakers tonight"
+    /\b(analysis|prediction|pick)\s+(for|on)\s+(the\s+)?\w+/i,  // "analysis for the Lakers"
   ]
   
   const looksLikeGameQuestion = gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage))
@@ -1024,17 +1027,21 @@ function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; 
     }
   }
   
+  // Deduplicate sports arrays to prevent "NHL/NHL" issues
+  const uniqueExcludeSports = Array.from(new Set(excludeSports))
+  const uniqueIncludeSports = Array.from(new Set(includeSports))
+  
   // Build filter description
   let filterDescription = ''
-  if (excludeSports.length > 0) {
-    filterDescription = `excluding ${excludeSports.join(', ')}`
-  } else if (includeSports.length > 0) {
-    filterDescription = `${includeSports.join('/')}`
+  if (uniqueExcludeSports.length > 0) {
+    filterDescription = `excluding ${uniqueExcludeSports.join(', ')}`
+  } else if (uniqueIncludeSports.length > 0) {
+    filterDescription = uniqueIncludeSports.join('/')
   }
   
-  console.log(`[detectBestBetQuestion] Detected best bet question. Exclude: ${excludeSports.join(', ') || 'none'}, Include: ${includeSports.join(', ') || 'all'}`)
+  console.log(`[detectBestBetQuestion] Detected best bet question. Exclude: ${uniqueExcludeSports.join(', ') || 'none'}, Include: ${uniqueIncludeSports.join(', ') || 'all'}`)
   
-  return { excludeSports, includeSports, filterDescription }
+  return { excludeSports: uniqueExcludeSports, includeSports: uniqueIncludeSports, filterDescription }
 }
 
 /**
@@ -1109,7 +1116,57 @@ export async function POST(request: Request) {
     const userMessage = chatMessages[chatMessages.length - 1]
     const userMessageContent = extractMessageContent(userMessage.content)
     
-    // Check for parlay questions first
+    // PRIORITY ORDER: Game-specific > Parlay > Best bet > LLM fallback
+    // Check for game-specific questions FIRST (e.g., "I want to bet the Lakers game")
+    // This must come before best bet detection to avoid generic responses for team-specific queries
+    const detectedGame = await detectGameQuestion(userMessageContent)
+    if (detectedGame) {
+      console.log(`[chat] Running on-demand analysis for: ${detectedGame.awayTeam} @ ${detectedGame.homeTeam}`)
+      try {
+        const gameAnalysis = await analyzeSpecificGame(detectedGame)
+        const deterministicAnalysis = formatGameAnalysisForContext(gameAnalysis)
+        console.log(`[chat] Game analysis complete: ${gameAnalysis.bets.length} betting options found`)
+        console.log(`[chat] Returning deterministic analysis (bypassing LLM)`)
+        
+        // Save messages to database
+        await db.messages.create({
+          conversationId: conversation.id,
+          role: 'user',
+          content: userMessage.content,
+        })
+        
+        await db.messages.create({
+          conversationId: conversation.id,
+          role: 'assistant',
+          content: deterministicAnalysis,
+        })
+        
+        await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+        
+        // Update question count for non-subscribers
+        if (!subStatus.isSubscribed) {
+          const user = await db.users.findById(session.user.id)
+          if (user) {
+            await db.users.update(session.user.id, { 
+              questionCount: (user.questionCount || 0) + 1
+            })
+          }
+        }
+        
+        // Return deterministic analysis directly, bypassing LLM
+        return NextResponse.json({ 
+          message: deterministicAnalysis,
+          questionsRemaining: subStatus.isSubscribed 
+            ? -1 
+            : Math.max(0, subStatus.questionsRemaining - 1)
+        })
+      } catch (err) {
+        console.error('[chat] Error running game analysis:', err)
+        // Fall through to other detection methods if analysis fails
+      }
+    }
+    
+    // Check for parlay questions
     const isParlayQuestion = detectParlayQuestion(userMessageContent)
     if (isParlayQuestion) {
       console.log(`[chat] Detected parlay question`)
@@ -1514,52 +1571,8 @@ If you're seeing this message persistently, please contact us at contact@betanal
       }
     }
     
-    const detectedGame = await detectGameQuestion(userMessageContent)
-    if (detectedGame) {
-      console.log(`[chat] Running on-demand analysis for: ${detectedGame.awayTeam} @ ${detectedGame.homeTeam}`)
-      try {
-        const gameAnalysis = await analyzeSpecificGame(detectedGame)
-        const deterministicAnalysis = formatGameAnalysisForContext(gameAnalysis)
-        console.log(`[chat] Game analysis complete: ${gameAnalysis.bets.length} betting options found`)
-        console.log(`[chat] Returning deterministic analysis (bypassing LLM)`)
-        
-        // Save messages to database
-        await db.messages.create({
-          conversationId: conversation.id,
-          role: 'user',
-          content: userMessage.content,
-        })
-        
-        await db.messages.create({
-          conversationId: conversation.id,
-          role: 'assistant',
-          content: deterministicAnalysis,
-        })
-        
-        await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
-        
-        // Update question count for non-subscribers
-        if (!subStatus.isSubscribed) {
-          const user = await db.users.findById(session.user.id)
-          if (user) {
-            await db.users.update(session.user.id, { 
-              questionCount: (user.questionCount || 0) + 1
-            })
-          }
-        }
-        
-        // Return deterministic analysis directly, bypassing LLM
-        return NextResponse.json({ 
-          message: deterministicAnalysis,
-          questionsRemaining: subStatus.isSubscribed 
-            ? -1 
-            : Math.max(0, subStatus.questionsRemaining - 1)
-        })
-      } catch (err) {
-        console.error('[chat] Error running game analysis:', err)
-        // Fall through to LLM if analysis fails
-      }
-    }
+    // Game-specific detection already handled at the top of the function
+    // If we reach here, fall through to LLM
     
     const systemPromptWithData = `${SYSTEM_PROMPT}
 
