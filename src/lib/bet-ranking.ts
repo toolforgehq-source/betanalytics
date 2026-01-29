@@ -896,38 +896,53 @@ export async function analyzeGame(
       situationalNotes: situationalAdj.notes.length > 0 ? situationalAdj.notes : undefined,
       situationalBreakdown: {
         restDays: {
-          value: situationalFactors.isBackToBack ? 'Back-to-back' : 
-                 situationalFactors.restAdvantage > 0 ? `+${situationalFactors.restAdvantage} days rest advantage` :
-                 situationalFactors.restAdvantage < 0 ? `${situationalFactors.restAdvantage} days rest disadvantage` : 'Normal rest',
+          // Show actual rest days info even if adjustment is 0
+          value: situationalFactors.isBackToBack ? 'Back-to-back game' : 
+                 situationalFactors.restAdvantage > 0 ? `+${situationalFactors.restAdvantage} days rest vs opponent` :
+                 situationalFactors.restAdvantage < 0 ? `${situationalFactors.restAdvantage} days rest vs opponent` : 
+                 `${situationalFactors.restDays || 3} days rest (equal)`,
           adjustment: Math.round((situationalAdj.breakdown.backToBack + situationalAdj.breakdown.restAdvantage) * 1000) / 10
         },
         travel: {
-          value: situationalFactors.travelDistance === 'none' ? 'Home game' :
+          // Fix: Show correct travel info based on whether team is home or away
+          // isHomeTeam is true if this team is the home team, false if away
+          value: isHomeTeam ? 'Home game (no travel)' :
                  situationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${situationalFactors.timezoneChange}hr TZ change)` :
                  situationalFactors.travelDistance === 'long' ? `Long travel (${situationalFactors.timezoneChange}hr TZ change)` :
-                 situationalFactors.travelDistance === 'medium' ? 'Medium distance travel' : 'Short travel',
+                 situationalFactors.travelDistance === 'medium' ? 'Medium distance travel' :
+                 situationalFactors.travelDistance === 'short' ? 'Short travel' :
+                 'Away game (travel data unavailable)',
           adjustment: Math.round(situationalAdj.breakdown.travel * 1000) / 10
         },
         recentForm: {
-          value: situationalFactors.formTrend === 'hot' ? 'Hot streak' :
-                 situationalFactors.formTrend === 'cold' ? 'Cold streak' : 'Neutral form',
+          // Show actual form info even if neutral
+          value: situationalFactors.formTrend === 'hot' ? 'Hot streak (winning)' :
+                 situationalFactors.formTrend === 'cold' ? 'Cold streak (losing)' : 
+                 'Recent form: neutral',
           adjustment: Math.round(situationalAdj.breakdown.recentForm * 1000) / 10
         },
         weather: {
-          value: situationalFactors.weatherImpact ? `${situationalFactors.weatherImpact.level} impact` : 'No weather impact',
+          // Show weather info or explain why N/A
+          value: situationalFactors.weatherImpact ? `${situationalFactors.weatherImpact.level} weather impact` : 
+                 (eloLeagueForSituational === 'NFL' || eloLeagueForSituational === 'MLB' || eloLeagueForSituational?.includes('soccer')) ? 'Weather: normal conditions' : 'Indoor sport (N/A)',
           adjustment: Math.round(situationalAdj.breakdown.weather * 1000) / 10
         },
         sharpMoney: {
+          // Show line movement info even if no sharp action detected
           value: situationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
-                 situationalFactors.lineMovementDirection !== 'neutral' ? `Line moving ${situationalFactors.lineMovementDirection}` : 'No sharp action',
+                 situationalFactors.lineMovementDirection === 'toward' ? 'Line moving toward this team' :
+                 situationalFactors.lineMovementDirection === 'away' ? 'Line moving away from this team' : 
+                 'No significant line movement',
           adjustment: Math.round(situationalAdj.breakdown.sharpMoney * 1000) / 10
         },
         motivation: {
-          value: situationalAdj.motivationAdjustment?.notes.length ? situationalAdj.motivationAdjustment.notes[0] : 'Standard game',
+          // Show motivation info or explain standard game
+          value: situationalAdj.motivationAdjustment?.notes.length ? situationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
           adjustment: Math.round(situationalAdj.breakdown.motivation * 1000) / 10
         },
         injuries: {
-          value: 'See injury report',
+          // Show injury info
+          value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
           adjustment: 0
         }
       },
@@ -1259,38 +1274,47 @@ export async function analyzeGame(
               baseEloProbability: Math.round(baseEloOverProb * 1000) / 10,
               situationalBreakdown: {
                 restDays: {
-                  value: totalSituationalFactors.isBackToBack ? 'Back-to-back' : 
-                         totalSituationalFactors.restAdvantage > 0 ? `+${totalSituationalFactors.restAdvantage} days rest advantage` :
-                         totalSituationalFactors.restAdvantage < 0 ? `${totalSituationalFactors.restAdvantage} days rest disadvantage` : 'Normal rest',
+                  // Show actual rest days info even if adjustment is 0
+                  value: totalSituationalFactors.isBackToBack ? 'Back-to-back game' : 
+                         totalSituationalFactors.restAdvantage > 0 ? `+${totalSituationalFactors.restAdvantage} days rest vs opponent` :
+                         totalSituationalFactors.restAdvantage < 0 ? `${totalSituationalFactors.restAdvantage} days rest vs opponent` : 
+                         `${totalSituationalFactors.restDays || 3} days rest (equal)`,
                   adjustment: Math.round((totalSituationalAdj.breakdown.backToBack + totalSituationalAdj.breakdown.restAdvantage) * 1000) / 10
                 },
                 travel: {
-                  value: totalSituationalFactors.travelDistance === 'none' ? 'Home game' :
-                         totalSituationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${totalSituationalFactors.timezoneChange}hr TZ change)` :
-                         totalSituationalFactors.travelDistance === 'long' ? `Long travel (${totalSituationalFactors.timezoneChange}hr TZ change)` :
-                         totalSituationalFactors.travelDistance === 'medium' ? 'Medium distance travel' : 'Short travel',
+                  // For totals, travel is analyzed from home team perspective
+                  value: 'Game total bet (travel N/A)',
                   adjustment: Math.round(totalSituationalAdj.breakdown.travel * 1000) / 10
                 },
                 recentForm: {
-                  value: totalSituationalFactors.formTrend === 'hot' ? 'Hot streak' :
-                         totalSituationalFactors.formTrend === 'cold' ? 'Cold streak' : 'Neutral form',
+                  // Show actual form info even if neutral
+                  value: totalSituationalFactors.formTrend === 'hot' ? 'Hot streak (winning)' :
+                         totalSituationalFactors.formTrend === 'cold' ? 'Cold streak (losing)' : 
+                         'Recent form: neutral',
                   adjustment: Math.round(totalSituationalAdj.breakdown.recentForm * 1000) / 10
                 },
                 weather: {
-                  value: totalSituationalFactors.weatherImpact ? `${totalSituationalFactors.weatherImpact.level} impact` : 'No weather impact',
+                  // Show weather info or explain why N/A
+                  value: totalSituationalFactors.weatherImpact ? `${totalSituationalFactors.weatherImpact.level} weather impact` : 
+                         (eloLeague === 'NFL' || eloLeague === 'MLB' || eloLeague?.includes('soccer')) ? 'Weather: normal conditions' : 'Indoor sport (N/A)',
                   adjustment: Math.round(totalSituationalAdj.breakdown.weather * 1000) / 10
                 },
                 sharpMoney: {
+                  // Show line movement info even if no sharp action detected
                   value: totalSituationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
-                         totalSituationalFactors.lineMovementDirection !== 'neutral' ? `Line moving ${totalSituationalFactors.lineMovementDirection}` : 'No sharp action',
+                         totalSituationalFactors.lineMovementDirection === 'toward' ? 'Line moving toward this team' :
+                         totalSituationalFactors.lineMovementDirection === 'away' ? 'Line moving away from this team' : 
+                         'No significant line movement',
                   adjustment: Math.round(totalSituationalAdj.breakdown.sharpMoney * 1000) / 10
                 },
                 motivation: {
-                  value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Standard game',
+                  // Show motivation info or explain standard game
+                  value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
                   adjustment: Math.round(totalSituationalAdj.breakdown.motivation * 1000) / 10
                 },
                 injuries: {
-                  value: 'See injury report',
+                  // Show injury info
+                  value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
                   adjustment: 0
                 }
               },
@@ -1364,38 +1388,47 @@ export async function analyzeGame(
               baseEloProbability: Math.round(baseEloUnderProb * 1000) / 10,
               situationalBreakdown: {
                 restDays: {
-                  value: totalSituationalFactors.isBackToBack ? 'Back-to-back' : 
-                         totalSituationalFactors.restAdvantage > 0 ? `+${totalSituationalFactors.restAdvantage} days rest advantage` :
-                         totalSituationalFactors.restAdvantage < 0 ? `${totalSituationalFactors.restAdvantage} days rest disadvantage` : 'Normal rest',
+                  // Show actual rest days info even if adjustment is 0
+                  value: totalSituationalFactors.isBackToBack ? 'Back-to-back game' : 
+                         totalSituationalFactors.restAdvantage > 0 ? `+${totalSituationalFactors.restAdvantage} days rest vs opponent` :
+                         totalSituationalFactors.restAdvantage < 0 ? `${totalSituationalFactors.restAdvantage} days rest vs opponent` : 
+                         `${totalSituationalFactors.restDays || 3} days rest (equal)`,
                   adjustment: Math.round((totalSituationalAdj.breakdown.backToBack + totalSituationalAdj.breakdown.restAdvantage) * 1000) / 10
                 },
                 travel: {
-                  value: totalSituationalFactors.travelDistance === 'none' ? 'Home game' :
-                         totalSituationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${totalSituationalFactors.timezoneChange}hr TZ change)` :
-                         totalSituationalFactors.travelDistance === 'long' ? `Long travel (${totalSituationalFactors.timezoneChange}hr TZ change)` :
-                         totalSituationalFactors.travelDistance === 'medium' ? 'Medium distance travel' : 'Short travel',
+                  // For totals, travel is analyzed from home team perspective
+                  value: 'Game total bet (travel N/A)',
                   adjustment: Math.round(totalSituationalAdj.breakdown.travel * 1000) / 10
                 },
                 recentForm: {
-                  value: totalSituationalFactors.formTrend === 'hot' ? 'Hot streak' :
-                         totalSituationalFactors.formTrend === 'cold' ? 'Cold streak' : 'Neutral form',
+                  // Show actual form info even if neutral
+                  value: totalSituationalFactors.formTrend === 'hot' ? 'Hot streak (winning)' :
+                         totalSituationalFactors.formTrend === 'cold' ? 'Cold streak (losing)' : 
+                         'Recent form: neutral',
                   adjustment: Math.round(totalSituationalAdj.breakdown.recentForm * 1000) / 10
                 },
                 weather: {
-                  value: totalSituationalFactors.weatherImpact ? `${totalSituationalFactors.weatherImpact.level} impact` : 'No weather impact',
+                  // Show weather info or explain why N/A
+                  value: totalSituationalFactors.weatherImpact ? `${totalSituationalFactors.weatherImpact.level} weather impact` : 
+                         (eloLeague === 'NFL' || eloLeague === 'MLB' || eloLeague?.includes('soccer')) ? 'Weather: normal conditions' : 'Indoor sport (N/A)',
                   adjustment: Math.round(totalSituationalAdj.breakdown.weather * 1000) / 10
                 },
                 sharpMoney: {
+                  // Show line movement info even if no sharp action detected
                   value: totalSituationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
-                         totalSituationalFactors.lineMovementDirection !== 'neutral' ? `Line moving ${totalSituationalFactors.lineMovementDirection}` : 'No sharp action',
+                         totalSituationalFactors.lineMovementDirection === 'toward' ? 'Line moving toward this team' :
+                         totalSituationalFactors.lineMovementDirection === 'away' ? 'Line moving away from this team' : 
+                         'No significant line movement',
                   adjustment: Math.round(totalSituationalAdj.breakdown.sharpMoney * 1000) / 10
                 },
                 motivation: {
-                  value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Standard game',
+                  // Show motivation info or explain standard game
+                  value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
                   adjustment: Math.round(totalSituationalAdj.breakdown.motivation * 1000) / 10
                 },
                 injuries: {
-                  value: 'See injury report',
+                  // Show injury info
+                  value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
                   adjustment: 0
                 }
               },

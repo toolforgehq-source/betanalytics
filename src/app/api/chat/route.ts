@@ -715,6 +715,7 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
   const normalizedMessage = userMessage.toLowerCase()
   
   // Check if this looks like a game-specific question
+  // IMPORTANT: Patterns must handle multi-word team names like "minnesota wild", "golden state warriors"
   const gameQuestionPatterns = [
     /\b(vs|versus|@|at)\b/i,
     /\b(game|matchup|match)\b/i,
@@ -723,9 +724,11 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
     /\bwho\s+(wins?|should|will)\b/i,
     /\bshould\s+i\s+(bet|take|play)\b/i,
     /\bwhat.*\b(think|like|recommend)\b.*\bgame\b/i,
-    /\bi\s+want\s+to\s+bet\s+(the\s+)?\w+\s+game\b/i,  // "I want to bet the Lakers game"
-    /\bbet\s+(on\s+)?(the\s+)?\w+\s+(game|tonight|today)\b/i,  // "bet on the Lakers tonight"
-    /\b(analysis|prediction|pick)\s+(for|on)\s+(the\s+)?\w+/i,  // "analysis for the Lakers"
+    /\bi\s+want\s+to\s+bet\s+(the\s+)?[\w\s]+\s+game\b/i,  // "I want to bet the Lakers game" or "I want to bet the Minnesota Wild game"
+    /\bi\s+want\s+to\s+bet\s+(the\s+)?[\w\s]+\s+(tonight|today)\b/i,  // "I want to bet the Minnesota Wild tonight"
+    /\bi\s+want\s+to\s+bet\s+(on\s+)?(the\s+)?[\w\s]+\b/i,  // "I want to bet on the Wild" or "I want to bet the Wild"
+    /\bbet\s+(on\s+)?(the\s+)?[\w\s]+\s+(game|tonight|today)\b/i,  // "bet on the Lakers tonight"
+    /\b(analysis|prediction|pick)\s+(for|on)\s+(the\s+)?[\w\s]+/i,  // "analysis for the Lakers"
   ]
   
   const looksLikeGameQuestion = gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage))
