@@ -1306,6 +1306,77 @@ function isBettingQuestion(userMessage: string): boolean {
   return isBetting
 }
 
+/**
+ * Conversational prompt for formatting Elo data naturally
+ * This prompt ensures the LLM uses ONLY the provided Elo data while making responses conversational
+ */
+const CONVERSATIONAL_BETTING_PROMPT = `You are a knowledgeable sports betting analyst having a conversation with a user. Your job is to take the Elo-based analysis data provided and present it conversationally.
+
+CRITICAL RULES:
+1. You MUST use ONLY the Elo data provided below - do not invent your own analysis or probabilities
+2. All recommendations MUST come from the Elo analysis - never make up your own picks
+3. Reference the specific Elo ratings, edges, and scores from the data
+4. Be conversational and natural - don't just dump data
+5. When comparing options, use the Elo data to explain why one is better
+6. When asked for opinions, base them on the Elo edge and confidence scores
+7. Remember context from the conversation - "this game", "these bets", etc. refer to previously discussed items
+
+RESPONSE STYLE:
+- Be direct and confident: "I'd take X because..." not "Based on the analysis..."
+- Use natural language: "The Timberwolves have a solid 19.8% edge here" 
+- Compare when asked: "Actually, the Wolves have better value (19.8% edge vs 9.1%)"
+- Synthesize when asked: "Looking at everything, Colorado is the best play tonight"
+- Reference Elo naturally: "Minnesota's Elo of 1540 vs Calgary's 1435 gives us..."
+- Be opinionated based on the data: "I like this bet because the edge is significant"
+
+NEVER:
+- Invent probabilities or edges not in the data
+- Recommend bets not supported by the Elo analysis
+- Say "I don't have data" if data is provided
+- Be robotic or just repeat the structured data verbatim
+
+The Elo analysis is your source of truth. Present it like a knowledgeable friend explaining their picks.`
+
+/**
+ * Generate a conversational response from Elo data using the LLM
+ * This keeps Elo as the source of truth while making responses natural
+ */
+async function generateConversationalResponse(
+  anthropic: Anthropic,
+  eloAnalysis: string,
+  userQuestion: string,
+  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>
+): Promise<string> {
+  // Build the context with Elo data
+  const systemPrompt = `${CONVERSATIONAL_BETTING_PROMPT}
+
+═══════════════════════════════════════════════════════════
+ELO ANALYSIS DATA (USE THIS AS YOUR SOURCE OF TRUTH):
+═══════════════════════════════════════════════════════════
+
+${eloAnalysis}
+
+═══════════════════════════════════════════════════════════
+
+Now respond to the user's question conversationally, using ONLY the Elo data above for any betting recommendations.`
+
+  // Include recent conversation history for context
+  const recentHistory = conversationHistory.slice(-6) // Last 3 exchanges
+  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
+    ...recentHistory,
+    { role: 'user' as const, content: userQuestion }
+  ]
+
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1500,
+    system: systemPrompt,
+    messages: messages,
+  })
+
+  return response.content[0].type === 'text' ? response.content[0].text : ''
+}
+
 export async function POST(request: Request) {
   try {
     // Check if API key is configured
@@ -1362,6 +1433,16 @@ export async function POST(request: Request) {
     const userMessage = chatMessages[chatMessages.length - 1]
     const userMessageContent = extractMessageContent(userMessage.content)
     
+    // Build conversation history for context-aware responses
+    // This allows the LLM to understand "this game", "these bets", etc.
+    const conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = chatMessages
+      .slice(0, -1) // Exclude the current message
+      .map((msg: { role: string; content: unknown }) => ({
+        role: msg.role === 'user' ? 'user' as const : 'assistant' as const,
+        content: extractMessageContent(msg.content)
+      }))
+      .filter((msg: { role: 'user' | 'assistant'; content: string }) => msg.content.length > 0)
+    
     // PRIORITY ORDER: Game-specific > Parlay > Best bet > LLM fallback
     // Check for game-specific questions FIRST (e.g., "I want to bet the Lakers game")
     // This must come before best bet detection to avoid generic responses for team-specific queries
@@ -1370,9 +1451,17 @@ export async function POST(request: Request) {
       console.log(`[chat] Running on-demand analysis for: ${detectedGame.awayTeam} @ ${detectedGame.homeTeam}`)
       try {
         const gameAnalysis = await analyzeSpecificGame(detectedGame)
-        const deterministicAnalysis = formatGameAnalysisForContext(gameAnalysis)
+        const eloAnalysisData = formatGameAnalysisForContext(gameAnalysis)
         console.log(`[chat] Game analysis complete: ${gameAnalysis.bets.length} betting options found`)
-        console.log(`[chat] Returning deterministic analysis (bypassing LLM)`)
+        
+        // Generate conversational response using Elo data as source of truth
+        console.log(`[chat] Generating conversational response for game analysis`)
+        const conversationalResponse = await generateConversationalResponse(
+          anthropic,
+          eloAnalysisData,
+          userMessageContent,
+          conversationHistory
+        )
         
         // Save messages to database
         await db.messages.create({
@@ -1384,7 +1473,7 @@ export async function POST(request: Request) {
         await db.messages.create({
           conversationId: conversation.id,
           role: 'assistant',
-          content: deterministicAnalysis,
+          content: conversationalResponse,
         })
         
         await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
@@ -1399,9 +1488,9 @@ export async function POST(request: Request) {
           }
         }
         
-        // Return deterministic analysis directly, bypassing LLM
+        // Return conversational response
         return NextResponse.json({ 
-          message: deterministicAnalysis,
+          message: conversationalResponse,
           questionsRemaining: subStatus.isSubscribed 
             ? -1 
             : Math.max(0, subStatus.questionsRemaining - 1)
@@ -1425,8 +1514,16 @@ export async function POST(request: Request) {
           // 2. Unrealistic probabilities (LLM hallucination)
           // 3. OVER/UNDER contradictions
           const hasEloData = parlay.safeParlay.some(leg => leg.eloProbability != null)
-          const deterministicResponse = formatParlayForContext(parlay)
-          console.log(`[chat] Returning cached parlay with ${parlay.safeParlay.length} legs (Elo data: ${hasEloData})`)
+          const eloAnalysisData = formatParlayForContext(parlay)
+          console.log(`[chat] Generating conversational response for parlay with ${parlay.safeParlay.length} legs (Elo data: ${hasEloData})`)
+          
+          // Generate conversational response using Elo data as source of truth
+          const conversationalResponse = await generateConversationalResponse(
+            anthropic,
+            eloAnalysisData,
+            userMessageContent,
+            conversationHistory
+          )
           
           // Save messages to database
           await db.messages.create({
@@ -1438,7 +1535,7 @@ export async function POST(request: Request) {
           await db.messages.create({
             conversationId: conversation.id,
             role: 'assistant',
-            content: deterministicResponse,
+            content: conversationalResponse,
           })
           
           await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
@@ -1453,9 +1550,9 @@ export async function POST(request: Request) {
             }
           }
           
-          // Return deterministic response directly, bypassing LLM
+          // Return conversational response
           return NextResponse.json({ 
-            message: deterministicResponse,
+            message: conversationalResponse,
             questionsRemaining: subStatus.isSubscribed 
               ? -1 
               : Math.max(0, subStatus.questionsRemaining - 1)
@@ -1755,6 +1852,15 @@ If you're seeing this message persistently, please contact us at contact@betanal
         }
         
         if (deterministicResponse) {
+          // Generate conversational response using Elo data as source of truth
+          console.log(`[chat] Generating conversational response for best bet question`)
+          const conversationalResponse = await generateConversationalResponse(
+            anthropic,
+            deterministicResponse,
+            userMessageContent,
+            conversationHistory
+          )
+          
           // Save messages to database
           await db.messages.create({
             conversationId: conversation.id,
@@ -1765,7 +1871,7 @@ If you're seeing this message persistently, please contact us at contact@betanal
           await db.messages.create({
             conversationId: conversation.id,
             role: 'assistant',
-            content: deterministicResponse,
+            content: conversationalResponse,
           })
           
           await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
@@ -1780,9 +1886,9 @@ If you're seeing this message persistently, please contact us at contact@betanal
             }
           }
           
-          // Return deterministic response directly, bypassing LLM
+          // Return conversational response
           return NextResponse.json({ 
-            message: deterministicResponse,
+            message: conversationalResponse,
             questionsRemaining: subStatus.isSubscribed 
               ? -1 
               : Math.max(0, subStatus.questionsRemaining - 1)
@@ -1902,8 +2008,16 @@ If you're seeing this message persistently, please contact us at contact@betanal
         }
         
         if (bestBetResult) {
-          const deterministicResponse = formatBestBetForContext(bestBetResult)
-          console.log(`[chat] Returning Elo-based best bet for broad betting question`)
+          const eloAnalysisData = formatBestBetForContext(bestBetResult)
+          console.log(`[chat] Generating conversational response for broad betting question`)
+          
+          // Generate conversational response using Elo data as source of truth
+          const conversationalResponse = await generateConversationalResponse(
+            anthropic,
+            eloAnalysisData,
+            userMessageContent,
+            conversationHistory
+          )
           
           // Save messages to database
           await db.messages.create({
@@ -1915,7 +2029,7 @@ If you're seeing this message persistently, please contact us at contact@betanal
           await db.messages.create({
             conversationId: conversation.id,
             role: 'assistant',
-            content: deterministicResponse,
+            content: conversationalResponse,
           })
           
           await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
@@ -1931,7 +2045,7 @@ If you're seeing this message persistently, please contact us at contact@betanal
           }
           
           return NextResponse.json({ 
-            message: deterministicResponse,
+            message: conversationalResponse,
             questionsRemaining: subStatus.isSubscribed 
               ? -1 
               : Math.max(0, subStatus.questionsRemaining - 1)
