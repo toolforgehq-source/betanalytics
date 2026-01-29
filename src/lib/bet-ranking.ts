@@ -715,6 +715,8 @@ export async function analyzeGame(
   
   // Get Elo prediction for this game (if available)
   const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
+  console.log(`[analyzeGame] Game: ${game.awayTeam} @ ${game.homeTeam}, sport="${game.sport}", eloLeague="${eloLeague || 'NONE'}"`)
+  
   let eloResult: { 
     probability: number
     homeRating: number
