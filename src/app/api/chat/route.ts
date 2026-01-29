@@ -981,7 +981,7 @@ function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; 
     }
   }
   
-  // Inclusion patterns (e.g., "NBA bet", "best hockey pick", "NFL only", "bet on the nhl")
+  // Inclusion patterns (e.g., "NBA bet", "best hockey pick", "NFL only", "bet on the nhl", "best bet in the nba")
   const inclusionPatterns = [
     /\b(hockey|nhl)\s+(bet|pick|play|only)\b/i,
     /\b(basketball|nba|ncaab)\s+(bet|pick|play|only)\b/i,
@@ -1001,6 +1001,18 @@ function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; 
     /\bbet\s+(on\s+)?(the\s+)?(football|nfl|ncaaf)\b/i,
     /\bbet\s+(on\s+)?(the\s+)?(baseball|mlb)\b/i,
     /\bbet\s+(on\s+)?(the\s+)?(soccer)\b/i,
+    // NEW: Handle "best bet in the [sport]" and "best bet for [sport]" patterns
+    /\bbest\s+bet\s+(in|for)\s+(the\s+)?(hockey|nhl)\b/i,
+    /\bbest\s+bet\s+(in|for)\s+(the\s+)?(basketball|nba|ncaab)\b/i,
+    /\bbest\s+bet\s+(in|for)\s+(the\s+)?(football|nfl|ncaaf)\b/i,
+    /\bbest\s+bet\s+(in|for)\s+(the\s+)?(baseball|mlb)\b/i,
+    /\bbest\s+bet\s+(in|for)\s+(the\s+)?(soccer)\b/i,
+    // NEW: Handle "[sport] best bet" patterns
+    /\b(hockey|nhl)\s+best\s+bet\b/i,
+    /\b(basketball|nba|ncaab)\s+best\s+bet\b/i,
+    /\b(football|nfl|ncaaf)\s+best\s+bet\b/i,
+    /\b(baseball|mlb)\s+best\s+bet\b/i,
+    /\b(soccer)\s+best\s+bet\b/i,
   ]
   
   // Only check inclusions if no exclusions were found
