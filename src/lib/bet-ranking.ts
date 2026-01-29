@@ -977,8 +977,9 @@ export async function analyzeGame(
       )
       
       // Determine if this is for home or away team
-      const isHomeTeam = teamName.toLowerCase().includes(game.homeTeam.toLowerCase()) ||
-                         game.homeTeam.toLowerCase().includes(teamName.toLowerCase())
+      // Use exact match first, then fall back to case-insensitive match
+      const isHomeTeam = teamName === game.homeTeam || 
+                         teamName.toLowerCase() === game.homeTeam.toLowerCase()
       
       // Use effective ratings if available (injury-adjusted), otherwise use base ratings
       const homeElo = eloResult.homeEffectiveRating ?? eloResult.homeRating

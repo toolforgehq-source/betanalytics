@@ -856,6 +856,21 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
   }
   
   // Fallback: If only one team was mentioned and it uniquely identifies a game, use that
+  // Also handle cases where multiple games match but only one is from the sport hint
+  console.log(`[detectGameQuestion] Single-team matches: ${singleTeamMatches.length} games, message tokens: ${messageTokens.join(', ')}`)
+  if (singleTeamMatches.length > 1) {
+    console.log(`[detectGameQuestion] Multiple matches found: ${singleTeamMatches.map(g => `${g.awayTeam} @ ${g.homeTeam} (${g.league})`).join(', ')}`)
+    // If we have a sport hint, filter to just that sport
+    if (sportHintLeagues.length > 0) {
+      const filteredMatches = singleTeamMatches.filter(g => sportHintLeagues.includes(g.league))
+      if (filteredMatches.length === 1) {
+        console.log(`[detectGameQuestion] Filtered to single match using sport hint: ${filteredMatches[0].awayTeam} @ ${filteredMatches[0].homeTeam}`)
+        singleTeamMatches.length = 0
+        singleTeamMatches.push(filteredMatches[0])
+      }
+    }
+  }
+  
   if (singleTeamMatches.length === 1) {
     const espnGame = singleTeamMatches[0]
     const sportKeyMap: Record<string, string> = {
