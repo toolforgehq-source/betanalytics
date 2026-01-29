@@ -1097,38 +1097,53 @@ export async function analyzeGame(
         baseEloProbability: Math.round(baseEloCoverProb * 1000) / 10,
         situationalBreakdown: {
           restDays: {
-            value: spreadSituationalFactors.isBackToBack ? 'Back-to-back' : 
-                   spreadSituationalFactors.restAdvantage > 0 ? `+${spreadSituationalFactors.restAdvantage} days rest advantage` :
-                   spreadSituationalFactors.restAdvantage < 0 ? `${spreadSituationalFactors.restAdvantage} days rest disadvantage` : 'Normal rest',
+            // Show actual rest days info even if adjustment is 0
+            value: spreadSituationalFactors.isBackToBack ? 'Back-to-back game' : 
+                   spreadSituationalFactors.restAdvantage > 0 ? `+${spreadSituationalFactors.restAdvantage} days rest vs opponent` :
+                   spreadSituationalFactors.restAdvantage < 0 ? `${spreadSituationalFactors.restAdvantage} days rest vs opponent` : 
+                   `${spreadSituationalFactors.restDays || 3} days rest (equal)`,
             adjustment: Math.round((spreadSituationalAdj.breakdown.backToBack + spreadSituationalAdj.breakdown.restAdvantage) * 1000) / 10
           },
           travel: {
-            value: spreadSituationalFactors.travelDistance === 'none' ? 'Home game' :
+            // Fix: Show correct travel info based on whether team is home or away
+            // isHomeTeam is true if this team is the home team, false if away
+            value: isHomeTeam ? 'Home game (no travel)' :
                    spreadSituationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${spreadSituationalFactors.timezoneChange}hr TZ change)` :
                    spreadSituationalFactors.travelDistance === 'long' ? `Long travel (${spreadSituationalFactors.timezoneChange}hr TZ change)` :
-                   spreadSituationalFactors.travelDistance === 'medium' ? 'Medium distance travel' : 'Short travel',
+                   spreadSituationalFactors.travelDistance === 'medium' ? 'Medium distance travel' :
+                   spreadSituationalFactors.travelDistance === 'short' ? 'Short travel' :
+                   'Away game (travel data unavailable)',
             adjustment: Math.round(spreadSituationalAdj.breakdown.travel * 1000) / 10
           },
           recentForm: {
-            value: spreadSituationalFactors.formTrend === 'hot' ? 'Hot streak' :
-                   spreadSituationalFactors.formTrend === 'cold' ? 'Cold streak' : 'Neutral form',
+            // Show actual form info even if neutral
+            value: spreadSituationalFactors.formTrend === 'hot' ? 'Hot streak (winning)' :
+                   spreadSituationalFactors.formTrend === 'cold' ? 'Cold streak (losing)' : 
+                   'Recent form: neutral',
             adjustment: Math.round(spreadSituationalAdj.breakdown.recentForm * 1000) / 10
           },
           weather: {
-            value: spreadSituationalFactors.weatherImpact ? `${spreadSituationalFactors.weatherImpact.level} impact` : 'No weather impact',
+            // Show weather info or explain why N/A
+            value: spreadSituationalFactors.weatherImpact ? `${spreadSituationalFactors.weatherImpact.level} weather impact` : 
+                   (eloLeague === 'NFL' || eloLeague === 'MLB' || eloLeague?.includes('soccer')) ? 'Weather: normal conditions' : 'Indoor sport (N/A)',
             adjustment: Math.round(spreadSituationalAdj.breakdown.weather * 1000) / 10
           },
           sharpMoney: {
+            // Show line movement info even if no sharp action detected
             value: spreadSituationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
-                   spreadSituationalFactors.lineMovementDirection !== 'neutral' ? `Line moving ${spreadSituationalFactors.lineMovementDirection}` : 'No sharp action',
+                   spreadSituationalFactors.lineMovementDirection === 'toward' ? 'Line moving toward this team' :
+                   spreadSituationalFactors.lineMovementDirection === 'away' ? 'Line moving away from this team' : 
+                   'No significant line movement',
             adjustment: Math.round(spreadSituationalAdj.breakdown.sharpMoney * 1000) / 10
           },
           motivation: {
-            value: spreadSituationalAdj.motivationAdjustment?.notes.length ? spreadSituationalAdj.motivationAdjustment.notes[0] : 'Standard game',
+            // Show motivation info or explain standard game
+            value: spreadSituationalAdj.motivationAdjustment?.notes.length ? spreadSituationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
             adjustment: Math.round(spreadSituationalAdj.breakdown.motivation * 1000) / 10
           },
           injuries: {
-            value: 'See injury report',
+            // Show injury info
+            value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
             adjustment: 0
           }
         },
@@ -2166,11 +2181,22 @@ export async function analyzeSpecificGame(game: Game): Promise<GameAnalysisResul
   // Analyze the game to get all betting options
   const bets = await analyzeGame(game)
   
-  // Filter to only Elo-powered bets - Elo is our core differentiator
+  // Prefer Elo-powered bets, but fall back to all bets if Elo isn't available
+  // This ensures game-specific queries always return useful analysis
   const eloPoweredBets = bets.filter(bet => bet.eloProbability !== undefined)
   
+  // Use Elo bets if available, otherwise use all bets (with market consensus)
+  const betsToUse = eloPoweredBets.length > 0 ? eloPoweredBets : bets
+  
   // Sort by score to find the best bet for this game
-  const sortedBets = [...eloPoweredBets].sort((a, b) => b.score - a.score)
+  const sortedBets = [...betsToUse].sort((a, b) => b.score - a.score)
+  
+  // Log for debugging
+  if (eloPoweredBets.length === 0 && bets.length > 0) {
+    console.log(`[analyzeSpecificGame] No Elo data for ${game.awayTeam} @ ${game.homeTeam} (${game.sport}), using market consensus for ${bets.length} bets`)
+  } else if (bets.length === 0) {
+    console.log(`[analyzeSpecificGame] No bets available for ${game.awayTeam} @ ${game.homeTeam} - game may have started or no odds`)
+  }
   
   return {
     game: {
@@ -2727,6 +2753,7 @@ export function getFilteredBestBetWithElo(
   const includeNorm = includeSports.map(normalizeForFilter)
   
   // Check if a sport name matches a filter using strict matching
+  // IMPORTANT: NBA and NCAAB are different sports and must NOT match each other
   const matchesSportFilter = (sportName: string, filterName: string): boolean => {
     const sportNorm = normalizeForFilter(sportName)
     const filterNorm = normalizeForFilter(filterName)
@@ -2734,13 +2761,46 @@ export function getFilteredBestBetWithElo(
     // Direct match
     if (sportNorm === filterNorm) return true
     
+    // STRICT MATCHING: NBA and NCAAB must be kept separate
+    // If filter is specifically 'nba', only match NBA (not NCAAB)
+    // If filter is specifically 'ncaab', only match NCAAB (not NBA)
+    if (filterNorm === 'nba') {
+      // Only match if sport is exactly NBA or basketball_nba
+      return sportNorm === 'nba' || sportNorm === 'basketballnba' || sportNorm === 'basketball_nba'
+    }
+    if (filterNorm === 'ncaab') {
+      // Only match if sport is exactly NCAAB or basketball_ncaab
+      return sportNorm === 'ncaab' || sportNorm === 'basketballncaab' || sportNorm === 'basketball_ncaab'
+    }
+    if (filterNorm === 'nfl') {
+      // Only match if sport is exactly NFL or americanfootball_nfl
+      return sportNorm === 'nfl' || sportNorm === 'americanfootballnfl' || sportNorm === 'americanfootball_nfl'
+    }
+    if (filterNorm === 'ncaaf') {
+      // Only match if sport is exactly NCAAF or americanfootball_ncaaf
+      return sportNorm === 'ncaaf' || sportNorm === 'americanfootballncaaf' || sportNorm === 'americanfootball_ncaaf'
+    }
+    
+    // For generic terms like 'basketball' or 'football', allow both pro and college
+    if (filterNorm === 'basketball') {
+      return sportNorm.includes('basketball') || sportNorm === 'nba' || sportNorm === 'ncaab'
+    }
+    if (filterNorm === 'football') {
+      return sportNorm.includes('football') || sportNorm === 'nfl' || sportNorm === 'ncaaf'
+    }
+    
     // Check if the filter maps to known variations
     const filterVariations = sportNameMap[filterNorm] || [filterNorm]
     for (const variation of filterVariations) {
       if (sportNorm === variation) return true
-      // Also check if sportNorm contains the variation as a complete word
-      // e.g., "icehockey_nhl" should match "nhl"
-      if (sportNorm.includes(variation) && variation.length >= 3) return true
+      // Only use substring matching for non-ambiguous cases (not nba/ncaab or nfl/ncaaf)
+      // e.g., "icehockey_nhl" should match "nhl" but "ncaab" should NOT match "nba"
+      if (sportNorm.includes(variation) && variation.length >= 3) {
+        // Exclude cases where substring matching would cause NBA/NCAAB or NFL/NCAAF confusion
+        if (variation === 'nba' && sportNorm.includes('ncaab')) continue
+        if (variation === 'nfl' && sportNorm.includes('ncaaf')) continue
+        return true
+      }
     }
     
     // Check reverse - if sportNorm maps to known variations that include filterNorm
