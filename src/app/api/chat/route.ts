@@ -1090,6 +1090,222 @@ function detectParlayQuestion(userMessage: string): boolean {
   return parlayPatterns.some(pattern => pattern.test(normalizedMessage))
 }
 
+/**
+ * BROAD betting question detector - catches ANY betting-related query
+ * This ensures ALL betting questions use Elo-based analysis, never LLM fallback
+ * 
+ * Returns true if the query contains ANY betting-related terms:
+ * - Betting verbs: bet, wager, pick, play, take
+ * - Betting terms: odds, line, spread, moneyline, total, over, under, prop, futures
+ * - Game terms: game, matchup, vs, @, tonight, today
+ * - Analysis terms: prediction, analysis, recommendation, edge, value
+ * - Sport names: NBA, NHL, NFL, etc.
+ * - Common team name patterns
+ */
+function isBettingQuestion(userMessage: string): boolean {
+  const normalizedMessage = userMessage.toLowerCase()
+  
+  // Exclusion patterns - these are NOT betting questions, use LLM
+  const nonBettingPatterns = [
+    /\bhow\s+does\s+(elo|the\s+system|your\s+model|betting|the\s+algorithm)\s+work\b/i,
+    /\bexplain\s+(elo|bankroll|betting|odds|probability|the\s+system)\b/i,
+    /\bwhat\s+is\s+(elo|bankroll|edge|ev|expected\s+value)\b/i,
+    /\bhelp\s+me\s+understand\b/i,
+    /\bteach\s+me\b/i,
+    /\bhow\s+do\s+i\s+read\b/i,
+    /\bwhat\s+does\s+.*\s+mean\b/i,
+    /\bdefine\b/i,
+    /\btutorial\b/i,
+    /\bguide\b/i,
+    /\bstrategy\s+(guide|tips|advice)\b/i,
+    /\bbankroll\s+management\b/i,
+    /\bhow\s+much\s+should\s+i\s+bet\b/i,
+    /\bunit\s+size\b/i,
+  ]
+  
+  // If it matches a non-betting pattern, it's NOT a betting question
+  if (nonBettingPatterns.some(pattern => pattern.test(normalizedMessage))) {
+    console.log(`[isBettingQuestion] Excluded by non-betting pattern`)
+    return false
+  }
+  
+  // Betting action verbs
+  const bettingVerbs = [
+    /\bbet\b/i,
+    /\bwager\b/i,
+    /\bpick\b/i,
+    /\bplay\b/i,
+    /\btake\b/i,
+    /\bfade\b/i,
+    /\bhammer\b/i,
+    /\block\b/i,
+  ]
+  
+  // Betting market terms
+  const bettingTerms = [
+    /\bodds\b/i,
+    /\bline\b/i,
+    /\bspread\b/i,
+    /\bmoneyline\b/i,
+    /\bml\b/i,
+    /\btotal\b/i,
+    /\bover\b/i,
+    /\bunder\b/i,
+    /\bprop\b/i,
+    /\bfutures?\b/i,
+    /\bparlay\b/i,
+    /\bteaser\b/i,
+    /\bparlays?\b/i,
+    /\bpoints?\b/i,
+    /\bhandicap\b/i,
+    /\bcover\b/i,
+    /\bats\b/i,  // against the spread
+  ]
+  
+  // Game/matchup terms
+  const gameTerms = [
+    /\bgame\b/i,
+    /\bmatchup\b/i,
+    /\bvs\b/i,
+    /\bversus\b/i,
+    /\b@\b/,
+    /\btonight\b/i,
+    /\btoday\b/i,
+    /\btomorrow\b/i,
+    /\bthis\s+week\b/i,
+    /\bweekend\b/i,
+  ]
+  
+  // Analysis/recommendation terms
+  const analysisTerms = [
+    /\bprediction\b/i,
+    /\banalysis\b/i,
+    /\brecommend/i,
+    /\bedge\b/i,
+    /\bvalue\b/i,
+    /\bwinner\b/i,
+    /\bwho\s+wins\b/i,
+    /\bwho\s+should\b/i,
+    /\bshould\s+i\b/i,
+    /\bwhat.*think\b/i,
+    /\bgood\s+bet\b/i,
+    /\bbest\s+bet\b/i,
+    /\bsafe\s+bet\b/i,
+    /\bsure\s+thing\b/i,
+    /\block\s+of\s+the\b/i,
+    /\bconfident\b/i,
+    /\blike\s+the\b/i,
+    /\bfavor\b/i,
+    /\belo\b/i,
+  ]
+  
+  // Sport names (major leagues)
+  const sportTerms = [
+    /\bnba\b/i,
+    /\bnfl\b/i,
+    /\bnhl\b/i,
+    /\bmlb\b/i,
+    /\bncaa[bf]?\b/i,
+    /\bcollege\s+(basketball|football)\b/i,
+    /\bmarch\s+madness\b/i,
+    /\bpremier\s+league\b/i,
+    /\bepl\b/i,
+    /\bla\s+liga\b/i,
+    /\bbundesliga\b/i,
+    /\bserie\s+a\b/i,
+    /\bligue\s+1\b/i,
+    /\bmls\b/i,
+    /\bchampions\s+league\b/i,
+    /\bbasketball\b/i,
+    /\bfootball\b/i,
+    /\bhockey\b/i,
+    /\bbaseball\b/i,
+    /\bsoccer\b/i,
+  ]
+  
+  // Common team name keywords (partial matches for team names)
+  // These are distinctive words that appear in team names
+  const teamKeywords = [
+    // NBA
+    /\blakers\b/i, /\bceltics\b/i, /\bwarriors\b/i, /\bnuggets\b/i, /\bheat\b/i,
+    /\bbucks\b/i, /\b76ers\b/i, /\bsixers\b/i, /\bknicks\b/i, /\bnets\b/i,
+    /\bsuns\b/i, /\bmavericks\b/i, /\bmavs\b/i, /\bclippers\b/i, /\bgrizzlies\b/i,
+    /\bcavaliers\b/i, /\bcavs\b/i, /\bthunder\b/i, /\bpelicans\b/i, /\bkings\b/i,
+    /\btimberwolves\b/i, /\bwolves\b/i, /\btrailblazers\b/i, /\bblazers\b/i,
+    /\bhawks\b/i, /\bhornets\b/i, /\bbulls\b/i, /\bpistons\b/i, /\bpacers\b/i,
+    /\bmagic\b/i, /\braptors\b/i, /\bwizards\b/i, /\bspurs\b/i, /\brockets\b/i,
+    /\bjazz\b/i,
+    // NHL
+    /\bbruins\b/i, /\bmaple\s+leafs\b/i, /\bleafs\b/i, /\bcanadiens\b/i, /\bhabs\b/i,
+    /\bflyers\b/i, /\bpenguins\b/i, /\bpens\b/i, /\bcapitals\b/i, /\bcaps\b/i,
+    /\bblackhawks\b/i, /\bred\s+wings\b/i, /\bwild\b/i, /\bflames\b/i, /\boilers\b/i,
+    /\bcanucks\b/i, /\bkraken\b/i, /\bknights\b/i, /\bavalanche\b/i, /\bavs\b/i,
+    /\bstars\b/i, /\bblues\b/i, /\bpredators\b/i, /\bpreds\b/i, /\blightning\b/i,
+    /\bpanthers\b/i, /\bhurricanes\b/i, /\bcanes\b/i, /\bdevils\b/i, /\bislanders\b/i,
+    /\brangers\b/i, /\bsabres\b/i, /\bsenators\b/i, /\bsens\b/i, /\bjets\b/i,
+    /\bsharks\b/i, /\bducks\b/i, /\bcoyotes\b/i, /\bjackets\b/i,
+    // NFL
+    /\bchiefs\b/i, /\beagles\b/i, /\bbills\b/i, /\bdolphins\b/i, /\bpatriots\b/i,
+    /\bpats\b/i, /\bravens\b/i, /\bbengals\b/i, /\bsteelers\b/i, /\bbrowns\b/i,
+    /\btitans\b/i, /\bcolts\b/i, /\btexans\b/i, /\bjaguars\b/i, /\bjags\b/i,
+    /\bbroncos\b/i, /\braiders\b/i, /\bchargers\b/i, /\bcowboys\b/i, /\bgiants\b/i,
+    /\bcommanders\b/i, /\bpackers\b/i, /\bvikings\b/i, /\bbears\b/i, /\blions\b/i,
+    /\bsaints\b/i, /\bfalcons\b/i, /\bbuccaneers\b/i, /\bbucs\b/i, /\bseahawks\b/i,
+    /\bcardinals\b/i, /\b49ers\b/i, /\bniners\b/i, /\brams\b/i,
+    // MLB
+    /\byankees\b/i, /\bred\s+sox\b/i, /\bdodgers\b/i, /\bbraves\b/i, /\bastros\b/i,
+    /\bphillies\b/i, /\bmets\b/i, /\bpadres\b/i, /\bguardians\b/i, /\btwins\b/i,
+    /\borioles\b/i, /\brays\b/i, /\bblue\s+jays\b/i, /\bjays\b/i, /\bwhite\s+sox\b/i,
+    /\bcubs\b/i, /\brewers\b/i, /\breds\b/i, /\bpirates\b/i, /\bcardinals\b/i,
+    /\bgiants\b/i, /\brockies\b/i, /\bdiamondbacks\b/i, /\bdbacks\b/i, /\bmariners\b/i,
+    /\bangels\b/i, /\bathletics\b/i, /\bas\b/i, /\btigers\b/i, /\broyals\b/i,
+    /\bnationals\b/i, /\bnats\b/i, /\bmarlins\b/i,
+    // College (common)
+    /\bduke\b/i, /\bkentucky\b/i, /\bkansas\b/i, /\bnorth\s+carolina\b/i, /\bunc\b/i,
+    /\bvillanova\b/i, /\bgonzaga\b/i, /\bbaylor\b/i, /\balabama\b/i, /\bgeorgia\b/i,
+    /\bohio\s+state\b/i, /\bmichigan\b/i, /\bpenn\s+state\b/i, /\btexas\b/i,
+    /\boklahoma\b/i, /\busc\b/i, /\bucla\b/i, /\boregon\b/i, /\bnotre\s+dame\b/i,
+    /\bclemson\b/i, /\bflorida\b/i, /\bfsu\b/i, /\blsu\b/i, /\bauburn\b/i,
+    /\btennessee\b/i, /\barkansas\b/i, /\bmississippi\b/i, /\bole\s+miss\b/i,
+    /\biowa\b/i, /\bwisconsin\b/i, /\bpurdue\b/i, /\bindiana\b/i, /\billinois\b/i,
+    /\bminnesota\b/i, /\bcolorado\b/i, /\butah\b/i, /\barizona\b/i, /\bstanford\b/i,
+    /\bwashington\b/i, /\bcal\b/i, /\bberkeley\b/i,
+    // Soccer (EPL, etc.)
+    /\bmanchester\b/i, /\bman\s+(utd|united|city)\b/i, /\bliverpool\b/i, /\bchelsea\b/i,
+    /\barsenal\b/i, /\btottenham\b/i, /\bspurs\b/i, /\bnewcastle\b/i, /\baston\s+villa\b/i,
+    /\bbrighton\b/i, /\bwest\s+ham\b/i, /\bcrystal\s+palace\b/i, /\bfulham\b/i,
+    /\bbrentford\b/i, /\bnottingham\b/i, /\bwolves\b/i, /\beverton\b/i, /\bbournemouth\b/i,
+    /\breal\s+madrid\b/i, /\bbarcelona\b/i, /\bbarca\b/i, /\batletico\b/i,
+    /\bbayern\b/i, /\bdortmund\b/i, /\bjuventus\b/i, /\bjuve\b/i, /\binter\b/i,
+    /\bac\s+milan\b/i, /\bnapoli\b/i, /\bpsg\b/i, /\bparis\b/i,
+  ]
+  
+  // Check all pattern categories
+  const hasBettingVerb = bettingVerbs.some(p => p.test(normalizedMessage))
+  const hasBettingTerm = bettingTerms.some(p => p.test(normalizedMessage))
+  const hasGameTerm = gameTerms.some(p => p.test(normalizedMessage))
+  const hasAnalysisTerm = analysisTerms.some(p => p.test(normalizedMessage))
+  const hasSportTerm = sportTerms.some(p => p.test(normalizedMessage))
+  const hasTeamKeyword = teamKeywords.some(p => p.test(normalizedMessage))
+  
+  // A query is a betting question if it has:
+  // 1. A betting verb OR betting term, OR
+  // 2. A sport term + (game term OR analysis term), OR
+  // 3. A team keyword + (game term OR analysis term OR betting verb), OR
+  // 4. An analysis term that implies betting (prediction, who wins, should i, etc.)
+  
+  const isBetting = 
+    hasBettingVerb || 
+    hasBettingTerm || 
+    (hasSportTerm && (hasGameTerm || hasAnalysisTerm)) ||
+    (hasTeamKeyword && (hasGameTerm || hasAnalysisTerm || hasBettingVerb)) ||
+    hasAnalysisTerm
+  
+  console.log(`[isBettingQuestion] Query: "${userMessage.substring(0, 50)}..." => ${isBetting ? 'BETTING' : 'NOT BETTING'} (verb:${hasBettingVerb}, term:${hasBettingTerm}, game:${hasGameTerm}, analysis:${hasAnalysisTerm}, sport:${hasSportTerm}, team:${hasTeamKeyword})`)
+  
+  return isBetting
+}
+
 export async function POST(request: Request) {
   try {
     // Check if API key is configured
@@ -1602,7 +1818,194 @@ If you're seeing this message persistently, please contact us at contact@betanal
     }
     
     // Game-specific detection already handled at the top of the function
-    // If we reach here, fall through to LLM
+    // CRITICAL: Check if this is a betting question that slipped through specific detectors
+    // If so, use Elo-based best bet instead of falling through to LLM
+    if (isBettingQuestion(userMessageContent)) {
+      console.log(`[chat] Betting question detected by broad detector - using Elo-based best bet instead of LLM`)
+      
+      try {
+        // Try to get the best bet with Elo data
+        let bestBetResult = await getCachedBestBet()
+        
+        // FALLBACK: If cache is empty, compute best bets on-demand from ESPN data
+        if (!bestBetResult) {
+          console.log(`[chat] Cache empty for betting question fallback - computing on-demand...`)
+          const espnOdds = await getCachedESPNOdds()
+          if (espnOdds.games.length > 0) {
+            const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+            const sportKeyMap: Record<string, string> = {
+              'NBA': 'basketball_nba',
+              'NFL': 'americanfootball_nfl',
+              'NHL': 'icehockey_nhl',
+              'NCAAB': 'basketball_ncaab',
+              'NCAAF': 'americanfootball_ncaaf',
+              'MLB': 'baseball_mlb',
+              'English Premier League': 'soccer_epl',
+              'La Liga': 'soccer_spain_la_liga',
+              'Bundesliga': 'soccer_germany_bundesliga',
+              'Serie A': 'soccer_italy_serie_a',
+              'Ligue 1': 'soccer_france_ligue_one',
+              'MLS': 'soccer_usa_mls',
+              'UEFA Champions League': 'soccer_uefa_champs_league',
+            }
+            
+            const todaysGames: Game[] = espnOdds.games
+              .filter(g => {
+                const gameDate = new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+                return gameDate === todayET
+              })
+              .map(g => {
+                const sportKey = sportKeyMap[g.league] || g.sport
+                const provider = g.provider || 'DraftKings'
+                const homeSpread = g.spread ?? 0
+                
+                return {
+                  id: g.gameId,
+                  sport: sportKey,
+                  sportName: g.league,
+                  homeTeam: g.homeTeam,
+                  awayTeam: g.awayTeam,
+                  commenceTime: g.commenceTime,
+                  spreads: g.spread !== null ? [{
+                    bookmaker: provider,
+                    market: 'spreads',
+                    outcomes: [
+                      { name: g.homeTeam, price: g.spreadOdds?.home || -110, point: homeSpread },
+                      { name: g.awayTeam, price: g.spreadOdds?.away || -110, point: -homeSpread }
+                    ]
+                  }] : [],
+                  totals: g.overUnder !== null ? [{
+                    bookmaker: provider,
+                    market: 'totals',
+                    outcomes: [
+                      { name: 'Over', price: g.overUnderOdds?.over || -110, point: g.overUnder },
+                      { name: 'Under', price: g.overUnderOdds?.under || -110, point: g.overUnder }
+                    ]
+                  }] : [],
+                  moneylines: g.moneyline ? [{
+                    bookmaker: provider,
+                    market: 'h2h',
+                    outcomes: [
+                      { name: g.homeTeam, price: g.moneyline.home },
+                      { name: g.awayTeam, price: g.moneyline.away }
+                    ]
+                  }] : []
+                }
+              })
+            
+            if (todaysGames.length > 0) {
+              console.log(`[chat] Computing best bets from ${todaysGames.length} games for betting question fallback...`)
+              bestBetResult = await computeBestBets(todaysGames)
+              await cacheBestBet(bestBetResult)
+            }
+          }
+        }
+        
+        if (bestBetResult) {
+          const deterministicResponse = formatBestBetForContext(bestBetResult)
+          console.log(`[chat] Returning Elo-based best bet for broad betting question`)
+          
+          // Save messages to database
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'user',
+            content: userMessage.content,
+          })
+          
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: deterministicResponse,
+          })
+          
+          await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+          
+          // Update question count for non-subscribers
+          if (!subStatus.isSubscribed) {
+            const user = await db.users.findById(session.user.id)
+            if (user) {
+              await db.users.update(session.user.id, { 
+                questionCount: (user.questionCount || 0) + 1
+              })
+            }
+          }
+          
+          return NextResponse.json({ 
+            message: deterministicResponse,
+            questionsRemaining: subStatus.isSubscribed 
+              ? -1 
+              : Math.max(0, subStatus.questionsRemaining - 1)
+          })
+        } else {
+          // No Elo data available - return clear message instead of LLM fallback
+          const noDataMessage = `🎯 **Betting Analysis Temporarily Unavailable**
+
+I detected your question is about betting, but our Elo rating system doesn't have data available right now.
+
+**Why this happens:**
+- The daily Elo update may not have run yet
+- No games are scheduled for today
+- The requested sport may not have Elo data yet
+
+**What you can try:**
+- Ask about a specific sport: "What's the best NBA bet today?"
+- Ask about a specific game: "Lakers vs Celtics prediction"
+- Check back in a few hours after our system updates
+
+Our Elo ratings are our edge - we won't give you a recommendation without them.`
+          
+          console.log(`[chat] No Elo data available for betting question - returning no-data message`)
+          
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'user',
+            content: userMessage.content,
+          })
+          
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: noDataMessage,
+          })
+          
+          await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+          
+          return NextResponse.json({ 
+            message: noDataMessage,
+            questionsRemaining: subStatus.isSubscribed 
+              ? -1 
+              : Math.max(0, subStatus.questionsRemaining - 1)
+          })
+        }
+      } catch (err) {
+        console.error('[chat] Error in betting question fallback:', err)
+        const errorMessage = `I encountered an error while processing your betting question. Please try again in a moment, or ask about a specific game or sport.\n\nError details: ${err instanceof Error ? err.message : 'Unknown error'}`
+        
+        await db.messages.create({
+          conversationId: conversation.id,
+          role: 'user',
+          content: userMessage.content,
+        })
+        
+        await db.messages.create({
+          conversationId: conversation.id,
+          role: 'assistant',
+          content: errorMessage,
+        })
+        
+        await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+        
+        return NextResponse.json({ 
+          message: errorMessage,
+          questionsRemaining: subStatus.isSubscribed 
+            ? -1 
+            : Math.max(0, subStatus.questionsRemaining - 1)
+        })
+      }
+    }
+    
+    // If we reach here, it's NOT a betting question - use LLM for general questions
+    console.log(`[chat] Non-betting question detected - using LLM`)
     
     const systemPromptWithData = `${SYSTEM_PROMPT}
 
