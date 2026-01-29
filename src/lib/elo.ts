@@ -791,12 +791,16 @@ export async function getEloWinProbability(
 /**
  * Get Elo-based win probability by team names (fuzzy match)
  * Used when we don't have exact team IDs
+ * 
+ * IMPORTANT: Returns null if EITHER team is not found in the cache.
+ * This ensures we only return Elo data when we have real ratings for both teams.
+ * Using default 1500 for missing teams would give meaningless predictions.
  */
 export async function getEloWinProbabilityByName(
   league: string,
   homeTeamName: string,
   awayTeamName: string
-): Promise<{ probability: number; homeRating: number; awayRating: number; confidence: string } | null> {
+): Promise<{ probability: number; homeRating: number; awayRating: number; confidence: string; homeFound: boolean; awayFound: boolean } | null> {
   const eloData = await getEloRatings()
   
   // If no Elo data in cache, return null - don't use default ratings
@@ -831,14 +835,25 @@ export async function getEloWinProbabilityByName(
     }
   }
   
-  const homeRating = homeTeam?.rating || DEFAULT_RATING
-  const awayRating = awayTeam?.rating || DEFAULT_RATING
+  // CRITICAL: If either team is not found, return null
+  // This prevents using default 1500 ratings which would give meaningless predictions
+  // The caller should handle this by falling back to market consensus or showing a message
+  if (!homeTeam || !awayTeam) {
+    const missingTeams = []
+    if (!homeTeam) missingTeams.push(`home: ${homeTeamName}`)
+    if (!awayTeam) missingTeams.push(`away: ${awayTeamName}`)
+    console.log(`[Elo] Teams not found in ${league} cache: ${missingTeams.join(', ')}. Run backfill to populate.`)
+    return null
+  }
+  
+  const homeRating = homeTeam.rating
+  const awayRating = awayTeam.rating
   
   const probability = calculateWinProbability(homeRating, awayRating, league)
   
   // Confidence based on how many games we've seen
-  const homeGames = homeTeam?.gamesPlayed || 0
-  const awayGames = awayTeam?.gamesPlayed || 0
+  const homeGames = homeTeam.gamesPlayed
+  const awayGames = awayTeam.gamesPlayed
   const minGames = Math.min(homeGames, awayGames)
   
   let confidence: string
@@ -856,7 +871,9 @@ export async function getEloWinProbabilityByName(
     probability,
     homeRating,
     awayRating,
-    confidence
+    confidence,
+    homeFound: true,
+    awayFound: true
   }
 }
 
