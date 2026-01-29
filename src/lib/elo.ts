@@ -801,23 +801,35 @@ export async function getEloWinProbabilityByName(
   homeTeamName: string,
   awayTeamName: string
 ): Promise<{ probability: number; homeRating: number; awayRating: number; confidence: string; homeFound: boolean; awayFound: boolean } | null> {
+  console.log(`[Elo Lookup] Starting lookup for ${league}: ${homeTeamName} vs ${awayTeamName}`)
+  
   const eloData = await getEloRatings()
   
   // If no Elo data in cache, return null - don't use default ratings
   // Using default 1500 for all teams would make all recommendations meaningless (all teams equal)
   // The caller should handle this case by showing a clear message to the user
   if (!eloData) {
-    console.log(`[Elo] No Elo data in cache - cache needs to be populated via /api/cron/update-elo?backfill=true`)
+    console.log(`[Elo Lookup] FAIL: No Elo data in cache at all - cache needs to be populated via /api/cron/update-elo?backfill=true`)
     return null
   }
   
   // Defensive: ensure ratings object exists
   const ratings = eloData.ratings || {}
+  const totalTeams = Object.keys(ratings).length
+  console.log(`[Elo Lookup] Cache has ${totalTeams} total teams, last updated: ${eloData.lastUpdated}`)
   
   // Find teams by name (case-insensitive partial match)
   const normalizeTeamName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, '')
   const homeNorm = normalizeTeamName(homeTeamName)
   const awayNorm = normalizeTeamName(awayTeamName)
+  
+  // Count teams in this league for debugging
+  const leagueTeams = Object.values(ratings).filter(r => r.league === league)
+  console.log(`[Elo Lookup] Found ${leagueTeams.length} teams in ${league} cache`)
+  if (leagueTeams.length > 0 && leagueTeams.length <= 5) {
+    // If very few teams, log them all for debugging
+    console.log(`[Elo Lookup] ${league} teams: ${leagueTeams.map(t => t.teamName).join(', ')}`)
+  }
   
   let homeTeam: TeamRating | null = null
   let awayTeam: TeamRating | null = null
@@ -829,9 +841,11 @@ export async function getEloWinProbabilityByName(
     
     if (teamNorm.includes(homeNorm) || homeNorm.includes(teamNorm)) {
       homeTeam = rating
+      console.log(`[Elo Lookup] MATCHED home team: "${homeTeamName}" -> "${rating.teamName}" (Elo: ${rating.rating})`)
     }
     if (teamNorm.includes(awayNorm) || awayNorm.includes(teamNorm)) {
       awayTeam = rating
+      console.log(`[Elo Lookup] MATCHED away team: "${awayTeamName}" -> "${rating.teamName}" (Elo: ${rating.rating})`)
     }
   }
   
@@ -840,9 +854,9 @@ export async function getEloWinProbabilityByName(
   // The caller should handle this by falling back to market consensus or showing a message
   if (!homeTeam || !awayTeam) {
     const missingTeams = []
-    if (!homeTeam) missingTeams.push(`home: ${homeTeamName}`)
-    if (!awayTeam) missingTeams.push(`away: ${awayTeamName}`)
-    console.log(`[Elo] Teams not found in ${league} cache: ${missingTeams.join(', ')}. Run backfill to populate.`)
+    if (!homeTeam) missingTeams.push(`home: "${homeTeamName}" (normalized: "${homeNorm}")`)
+    if (!awayTeam) missingTeams.push(`away: "${awayTeamName}" (normalized: "${awayNorm}")`)
+    console.log(`[Elo Lookup] FAIL: Teams not found in ${league} cache: ${missingTeams.join(', ')}. Run backfill to populate.`)
     return null
   }
   
