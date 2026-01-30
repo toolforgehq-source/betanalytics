@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
-import { getCachedESPNOdds } from "@/lib/espn"
+import { getCachedESPNOdds, getCachedESPNData, type ESPNOdds, type ESPNInjury } from "@/lib/espn"
 import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet } from "@/lib/bet-ranking"
 import type { RankedBet } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
@@ -1090,6 +1090,132 @@ function detectParlayQuestion(userMessage: string): boolean {
   return parlayPatterns.some(pattern => pattern.test(normalizedMessage))
 }
 
+// Extended Game type with ESPN data for injury support
+interface EnrichedGame extends Game {
+  espnData?: {
+    injuries: ESPNInjury[]
+    homeRecord?: string
+    awayRecord?: string
+  }
+}
+
+/**
+ * Normalize team name for matching between ESPN odds and ESPN data
+ */
+function normalizeTeamName(name: string): string {
+  return name.toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^a-z0-9 ]/g, '')
+    .trim()
+}
+
+/**
+ * Convert ESPN odds to enriched games WITH injury data
+ * This is critical for proper injury detection in bet recommendations
+ */
+async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] }): Promise<EnrichedGame[]> {
+  // Fetch ESPN data with injuries
+  const espnData = await getCachedESPNData()
+  
+  const sportKeyMap: Record<string, string> = {
+    'NBA': 'basketball_nba',
+    'NFL': 'americanfootball_nfl',
+    'NHL': 'icehockey_nhl',
+    'NCAAB': 'basketball_ncaab',
+    'NCAAF': 'americanfootball_ncaaf',
+    'MLB': 'baseball_mlb',
+    'English Premier League': 'soccer_epl',
+    'La Liga': 'soccer_spain_la_liga',
+    'Bundesliga': 'soccer_germany_bundesliga',
+    'Serie A': 'soccer_italy_serie_a',
+    'Ligue 1': 'soccer_france_ligue_one',
+    'MLS': 'soccer_usa_mls',
+    'UEFA Champions League': 'soccer_uefa_champs_league',
+  }
+  
+  const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+  
+  const enrichedGames: EnrichedGame[] = espnOddsData.games
+    .filter(g => {
+      const gameDate = new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+      return gameDate === todayET
+    })
+    .map(g => {
+      const sportKey = sportKeyMap[g.league] || g.sport
+      const provider = g.provider || 'DraftKings'
+      const homeSpread = g.spread ?? 0
+      
+      // Find matching ESPN game data (which has injuries)
+      const matchingEspnGame = espnData.games.find(eg => {
+        const oddsHome = normalizeTeamName(g.homeTeam)
+        const oddsAway = normalizeTeamName(g.awayTeam)
+        const espnHome = normalizeTeamName(eg.homeTeam.name)
+        const espnAway = normalizeTeamName(eg.awayTeam.name)
+        
+        // Check for exact or partial matches
+        const homeMatch = oddsHome === espnHome || 
+          oddsHome.includes(espnHome) || espnHome.includes(oddsHome) ||
+          oddsHome.split(' ').some(word => espnHome.includes(word) && word.length > 3)
+        const awayMatch = oddsAway === espnAway || 
+          oddsAway.includes(espnAway) || espnAway.includes(oddsAway) ||
+          oddsAway.split(' ').some(word => espnAway.includes(word) && word.length > 3)
+        
+        return homeMatch && awayMatch
+      })
+      
+      const baseGame: EnrichedGame = {
+        id: g.gameId,
+        sport: sportKey,
+        sportName: g.league,
+        homeTeam: g.homeTeam,
+        awayTeam: g.awayTeam,
+        commenceTime: g.commenceTime,
+        spreads: g.spread !== null ? [{
+          bookmaker: provider,
+          market: 'spreads',
+          outcomes: [
+            { name: g.homeTeam, price: g.spreadOdds?.home || -110, point: homeSpread },
+            { name: g.awayTeam, price: g.spreadOdds?.away || -110, point: -homeSpread }
+          ]
+        }] : [],
+        totals: g.overUnder !== null ? [{
+          bookmaker: provider,
+          market: 'totals',
+          outcomes: [
+            { name: 'Over', price: g.overUnderOdds?.over || -110, point: g.overUnder },
+            { name: 'Under', price: g.overUnderOdds?.under || -110, point: g.overUnder }
+          ]
+        }] : [],
+        moneylines: g.moneyline ? [{
+          bookmaker: provider,
+          market: 'h2h',
+          outcomes: [
+            { name: g.homeTeam, price: g.moneyline.home },
+            { name: g.awayTeam, price: g.moneyline.away }
+          ]
+        }] : []
+      }
+      
+      // Attach injury data if found
+      if (matchingEspnGame && matchingEspnGame.injuries.length > 0) {
+        console.log(`[chat] Found ${matchingEspnGame.injuries.length} injuries for ${g.homeTeam} vs ${g.awayTeam}`)
+        baseGame.espnData = {
+          injuries: matchingEspnGame.injuries,
+          homeRecord: matchingEspnGame.homeTeam.record,
+          awayRecord: matchingEspnGame.awayTeam.record
+        }
+      }
+      
+      return baseGame
+    })
+  
+  // Log injury data status
+  const gamesWithInjuries = enrichedGames.filter(g => g.espnData?.injuries?.length).length
+  console.log(`[chat] Converted ${enrichedGames.length} games, ${gamesWithInjuries} with injury data`)
+  
+  return enrichedGames
+}
+
 /**
  * BROAD betting question detector - catches ANY betting-related query
  * This ensures ALL betting questions use Elo-based analysis, never LLM fallback
@@ -1592,83 +1718,9 @@ export async function POST(request: Request) {
               console.log(`[chat] Games by sport: ${JSON.stringify(gamesBySport)}`)
               
               if (espnOdds.games.length > 0) {
-                // Filter to today's games (ET timezone)
-                const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-                console.log(`[chat] Today's date (ET): ${todayET}`)
-                
-                // Log all games before filtering
-                const allGameDates = espnOdds.games.map(g => ({
-                  league: g.league,
-                  teams: `${g.awayTeam} @ ${g.homeTeam}`,
-                  date: new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' }),
-                  time: new Date(g.commenceTime).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })
-                }))
-                console.log(`[chat] All games before date filter (first 20):`, JSON.stringify(allGameDates.slice(0, 20)))
-                
-                // Sport key mapping (same as cron job)
-                const sportKeyMap: Record<string, string> = {
-                  'NBA': 'basketball_nba',
-                  'NFL': 'americanfootball_nfl',
-                  'NHL': 'icehockey_nhl',
-                  'NCAAB': 'basketball_ncaab',
-                  'NCAAF': 'americanfootball_ncaaf',
-                  'MLB': 'baseball_mlb',
-                  'English Premier League': 'soccer_epl',
-                  'La Liga': 'soccer_spain_la_liga',
-                  'Bundesliga': 'soccer_germany_bundesliga',
-                  'Serie A': 'soccer_italy_serie_a',
-                  'Ligue 1': 'soccer_france_ligue_one',
-                  'MLS': 'soccer_usa_mls',
-                  'UEFA Champions League': 'soccer_uefa_champs_league',
-                }
-                
-                const todaysGames: Game[] = espnOdds.games
-                  .filter(g => {
-                    const gameDate = new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-                    const isToday = gameDate === todayET
-                    if (!isToday && g.league === 'NHL') {
-                      console.log(`[chat] NHL game filtered out (not today): ${g.awayTeam} @ ${g.homeTeam}, date: ${gameDate}`)
-                    }
-                    return isToday
-                  })
-                  .map(g => {
-                    const sportKey = sportKeyMap[g.league] || g.sport
-                    const provider = g.provider || 'DraftKings'
-                    const homeSpread = g.spread ?? 0
-                    
-                    return {
-                      id: g.gameId,
-                      sport: sportKey,
-                      sportName: g.league,
-                      homeTeam: g.homeTeam,
-                      awayTeam: g.awayTeam,
-                      commenceTime: g.commenceTime,
-                      spreads: g.spread !== null ? [{
-                        bookmaker: provider,
-                        market: 'spreads',
-                        outcomes: [
-                          { name: g.homeTeam, price: g.spreadOdds?.home || -110, point: homeSpread },
-                          { name: g.awayTeam, price: g.spreadOdds?.away || -110, point: -homeSpread }
-                        ]
-                      }] : [],
-                      totals: g.overUnder !== null ? [{
-                        bookmaker: provider,
-                        market: 'totals',
-                        outcomes: [
-                          { name: 'Over', price: g.overUnderOdds?.over || -110, point: g.overUnder },
-                          { name: 'Under', price: g.overUnderOdds?.under || -110, point: g.overUnder }
-                        ]
-                      }] : [],
-                      moneylines: g.moneyline ? [{
-                        bookmaker: provider,
-                        market: 'h2h',
-                        outcomes: [
-                          { name: g.homeTeam, price: g.moneyline.home },
-                          { name: g.awayTeam, price: g.moneyline.away }
-                        ]
-                      }] : []
-                    }
-                  })
+                // CRITICAL: Use enriched games with injury data for proper injury detection
+                console.log(`[chat] Converting ESPN odds to enriched games with injury data...`)
+                const todaysGames = await convertESPNOddsToEnrichedGames(espnOdds)
                 
                 // Log today's games by sport
                 const todaysGamesBySport: Record<string, number> = {}
@@ -1686,7 +1738,7 @@ export async function POST(request: Request) {
                 }
                 
                 if (todaysGames.length > 0) {
-                  console.log(`[chat] Computing sport bets from ${todaysGames.length} games today...`)
+                  console.log(`[chat] Computing sport bets from ${todaysGames.length} games today (with injury data)...`)
                   const bestBetResult = await computeBestBets(todaysGames)
                   
                   // Log computeBestBets result
@@ -1758,72 +1810,12 @@ If you're seeing this message persistently, please contact us at contact@betanal
             try {
               const espnOdds = await getCachedESPNOdds()
               if (espnOdds.games.length > 0) {
-                // Filter to today's games (ET timezone)
-                const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-                
-                // Sport key mapping (same as cron job)
-                const sportKeyMap: Record<string, string> = {
-                  'NBA': 'basketball_nba',
-                  'NFL': 'americanfootball_nfl',
-                  'NHL': 'icehockey_nhl',
-                  'NCAAB': 'basketball_ncaab',
-                  'NCAAF': 'americanfootball_ncaaf',
-                  'MLB': 'baseball_mlb',
-                  'English Premier League': 'soccer_epl',
-                  'La Liga': 'soccer_spain_la_liga',
-                  'Bundesliga': 'soccer_germany_bundesliga',
-                  'Serie A': 'soccer_italy_serie_a',
-                  'Ligue 1': 'soccer_france_ligue_one',
-                  'MLS': 'soccer_usa_mls',
-                  'UEFA Champions League': 'soccer_uefa_champs_league',
-                }
-                
-                const todaysGames: Game[] = espnOdds.games
-                  .filter(g => {
-                    const gameDate = new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-                    return gameDate === todayET
-                  })
-                  .map(g => {
-                    const sportKey = sportKeyMap[g.league] || g.sport
-                    const provider = g.provider || 'DraftKings'
-                    const homeSpread = g.spread ?? 0
-                    
-                    return {
-                      id: g.gameId,
-                      sport: sportKey,
-                      sportName: g.league,
-                      homeTeam: g.homeTeam,
-                      awayTeam: g.awayTeam,
-                      commenceTime: g.commenceTime,
-                      spreads: g.spread !== null ? [{
-                        bookmaker: provider,
-                        market: 'spreads',
-                        outcomes: [
-                          { name: g.homeTeam, price: g.spreadOdds?.home || -110, point: homeSpread },
-                          { name: g.awayTeam, price: g.spreadOdds?.away || -110, point: -homeSpread }
-                        ]
-                      }] : [],
-                      totals: g.overUnder !== null ? [{
-                        bookmaker: provider,
-                        market: 'totals',
-                        outcomes: [
-                          { name: 'Over', price: g.overUnderOdds?.over || -110, point: g.overUnder },
-                          { name: 'Under', price: g.overUnderOdds?.under || -110, point: g.overUnder }
-                        ]
-                      }] : [],
-                      moneylines: g.moneyline ? [{
-                        bookmaker: provider,
-                        market: 'h2h',
-                        outcomes: [
-                          { name: g.homeTeam, price: g.moneyline.home },
-                          { name: g.awayTeam, price: g.moneyline.away }
-                        ]
-                      }] : []
-                    }
-                  })
+                // CRITICAL: Use enriched games with injury data for proper injury detection
+                console.log(`[chat] Converting ESPN odds to enriched games with injury data...`)
+                const todaysGames = await convertESPNOddsToEnrichedGames(espnOdds)
                 
                 if (todaysGames.length > 0) {
-                  console.log(`[chat] Computing best bets from ${todaysGames.length} games today...`)
+                  console.log(`[chat] Computing best bets from ${todaysGames.length} games today (with injury data)...`)
                   bestBetResult = await computeBestBets(todaysGames)
                   // Cache the result for future requests
                   await cacheBestBet(bestBetResult)
@@ -1938,69 +1930,12 @@ If you're seeing this message persistently, please contact us at contact@betanal
           console.log(`[chat] Cache empty for betting question fallback - computing on-demand...`)
           const espnOdds = await getCachedESPNOdds()
           if (espnOdds.games.length > 0) {
-            const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-            const sportKeyMap: Record<string, string> = {
-              'NBA': 'basketball_nba',
-              'NFL': 'americanfootball_nfl',
-              'NHL': 'icehockey_nhl',
-              'NCAAB': 'basketball_ncaab',
-              'NCAAF': 'americanfootball_ncaaf',
-              'MLB': 'baseball_mlb',
-              'English Premier League': 'soccer_epl',
-              'La Liga': 'soccer_spain_la_liga',
-              'Bundesliga': 'soccer_germany_bundesliga',
-              'Serie A': 'soccer_italy_serie_a',
-              'Ligue 1': 'soccer_france_ligue_one',
-              'MLS': 'soccer_usa_mls',
-              'UEFA Champions League': 'soccer_uefa_champs_league',
-            }
-            
-            const todaysGames: Game[] = espnOdds.games
-              .filter(g => {
-                const gameDate = new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-                return gameDate === todayET
-              })
-              .map(g => {
-                const sportKey = sportKeyMap[g.league] || g.sport
-                const provider = g.provider || 'DraftKings'
-                const homeSpread = g.spread ?? 0
-                
-                return {
-                  id: g.gameId,
-                  sport: sportKey,
-                  sportName: g.league,
-                  homeTeam: g.homeTeam,
-                  awayTeam: g.awayTeam,
-                  commenceTime: g.commenceTime,
-                  spreads: g.spread !== null ? [{
-                    bookmaker: provider,
-                    market: 'spreads',
-                    outcomes: [
-                      { name: g.homeTeam, price: g.spreadOdds?.home || -110, point: homeSpread },
-                      { name: g.awayTeam, price: g.spreadOdds?.away || -110, point: -homeSpread }
-                    ]
-                  }] : [],
-                  totals: g.overUnder !== null ? [{
-                    bookmaker: provider,
-                    market: 'totals',
-                    outcomes: [
-                      { name: 'Over', price: g.overUnderOdds?.over || -110, point: g.overUnder },
-                      { name: 'Under', price: g.overUnderOdds?.under || -110, point: g.overUnder }
-                    ]
-                  }] : [],
-                  moneylines: g.moneyline ? [{
-                    bookmaker: provider,
-                    market: 'h2h',
-                    outcomes: [
-                      { name: g.homeTeam, price: g.moneyline.home },
-                      { name: g.awayTeam, price: g.moneyline.away }
-                    ]
-                  }] : []
-                }
-              })
+            // CRITICAL: Use enriched games with injury data for proper injury detection
+            console.log(`[chat] Converting ESPN odds to enriched games with injury data...`)
+            const todaysGames = await convertESPNOddsToEnrichedGames(espnOdds)
             
             if (todaysGames.length > 0) {
-              console.log(`[chat] Computing best bets from ${todaysGames.length} games for betting question fallback...`)
+              console.log(`[chat] Computing best bets from ${todaysGames.length} games for betting question fallback (with injury data)...`)
               bestBetResult = await computeBestBets(todaysGames)
               await cacheBestBet(bestBetResult)
             }
