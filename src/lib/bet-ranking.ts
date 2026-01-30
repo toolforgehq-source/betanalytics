@@ -1784,6 +1784,8 @@ export async function computeBestBets(
   // Filter out bets where the recommended team has a star player OUT
   // This is a hard disqualifier - we don't want to recommend betting on
   // teams missing their best players (e.g., Jokic, LeBron, etc.)
+  // CRITICAL: Apply this filter to BOTH allRankedBets AND allEloBets
+  // allEloBets is used for sport-specific queries (e.g., "best NBA bet")
   const filteredRankedBets: RankedBet[] = []
   for (const bet of allRankedBets) {
     // Only check moneyline bets for star player injuries (spread/total are less affected)
@@ -1794,11 +1796,31 @@ export async function computeBestBets(
       
       const starOut = await getStarPlayerOut(bet.team, bet.sport, injuries)
       if (starOut) {
-        console.log(`[computeBestBets] DISQUALIFIED: ${bet.team} ML - star player ${starOut} is OUT`)
+        console.log(`[computeBestBets] DISQUALIFIED (ranked): ${bet.team} ML - star player ${starOut} is OUT`)
         continue // Skip this bet
       }
     }
     filteredRankedBets.push(bet)
+  }
+  
+  // CRITICAL FIX: Also filter allEloBets for star player injuries
+  // This ensures sport-specific queries (e.g., "best NBA bet today") don't recommend
+  // teams with star players OUT. Previously only allRankedBets was filtered.
+  const filteredEloBets: RankedBet[] = []
+  for (const bet of allEloBets) {
+    // Only check moneyline bets for star player injuries
+    if (bet.betType === 'moneyline') {
+      const enrichedGame = games.find(g => g.id === bet.gameId) as EnrichedGame | undefined
+      const espnInjuries = enrichedGame?.espnData?.injuries || []
+      const injuries = convertESPNInjuriesToInjuryInfo(espnInjuries)
+      
+      const starOut = await getStarPlayerOut(bet.team, bet.sport, injuries)
+      if (starOut) {
+        console.log(`[computeBestBets] DISQUALIFIED (elo): ${bet.team} ML - star player ${starOut} is OUT`)
+        continue // Skip this bet
+      }
+    }
+    filteredEloBets.push(bet)
   }
   
   // Sort ranked bets by score (desc), then by game time (asc) for stable tiebreaker
@@ -1883,8 +1905,9 @@ export async function computeBestBets(
       .slice(0, 5)
   }
   
-  // Sort allEloBets by score for sport-specific queries
-  allEloBets.sort((a, b) => {
+  // Sort filteredEloBets by score for sport-specific queries
+  // CRITICAL: Use filteredEloBets (with star player filter applied) instead of allEloBets
+  filteredEloBets.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
@@ -1893,7 +1916,7 @@ export async function computeBestBets(
     bestBet,
     runnerUp,
     allRankedBets: eloPoweredBets.slice(0, 10),  // Only Elo-powered bets
-    allEloBets,  // ALL bets with Elo data for sport-specific queries
+    allEloBets: filteredEloBets,  // Filtered bets with Elo data for sport-specific queries (star player filter applied)
     calculatedAt: now,
     gamesAnalyzed: games.length,
     gamesQualified: eloPoweredBets.length,  // Count of Elo-powered bets
