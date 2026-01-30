@@ -6,7 +6,7 @@ import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
 import { getCachedESPNOdds, getCachedESPNData, type ESPNOdds, type ESPNInjury } from "@/lib/espn"
 import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext } from "@/lib/bet-ranking"
-import type { RankedBet, BestBetResult, EnhancedParlayResult } from "@/lib/bet-ranking"
+import type { RankedBet, BestBetResult } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
