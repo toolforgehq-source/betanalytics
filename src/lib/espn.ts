@@ -806,10 +806,22 @@ async function fetchGameInjuries(sport: string, league: string, eventId: string)
 
 /**
  * Fetch scoreboard data for a specific sport/league from ESPN
+ * CRITICAL: Must pass today's date to get TODAY's games, not yesterday's
  */
 async function fetchESPNScoreboard(sport: string, league: string, leagueName: string): Promise<ESPNGameData[]> {
   try {
-    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard`
+    // Get today's date in YYYYMMDD format for ESPN API
+    // Use ET timezone since that's what ESPN uses for game scheduling
+    const today = new Date()
+    const etDate = new Date(today.toLocaleString('en-US', { timeZone: 'America/New_York' }))
+    const dateStr = etDate.getFullYear().toString() + 
+      (etDate.getMonth() + 1).toString().padStart(2, '0') + 
+      etDate.getDate().toString().padStart(2, '0')
+    
+    // CRITICAL: Pass dates parameter to get TODAY's games
+    // Without this, ESPN returns yesterday's games (all "Final")
+    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard?dates=${dateStr}`
+    console.log(`[fetchESPNScoreboard] Fetching ${leagueName} games for date ${dateStr}: ${url}`)
     
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
