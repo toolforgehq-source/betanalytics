@@ -638,8 +638,109 @@ function findBestPrice(
  * Analyze a single game and return ranked bets for both teams
  */
 /**
+ * FALLBACK: Hardcoded star players for each NBA team
+ * Used when player stats data is unavailable (Redis not configured or empty)
+ * This ensures star player detection ALWAYS works for injury filtering
+ */
+const NBA_STAR_PLAYERS: Record<string, string[]> = {
+  // Western Conference
+  'nuggets': ['Nikola Jokic', 'Jamal Murray', 'Michael Porter Jr'],
+  'denver': ['Nikola Jokic', 'Jamal Murray', 'Michael Porter Jr'],
+  'lakers': ['LeBron James', 'Anthony Davis', 'Austin Reaves'],
+  'los angeles lakers': ['LeBron James', 'Anthony Davis', 'Austin Reaves'],
+  'clippers': ['Kawhi Leonard', 'Paul George', 'James Harden'],
+  'la clippers': ['Kawhi Leonard', 'Paul George', 'James Harden'],
+  'warriors': ['Stephen Curry', 'Klay Thompson', 'Draymond Green'],
+  'golden state': ['Stephen Curry', 'Klay Thompson', 'Draymond Green'],
+  'suns': ['Kevin Durant', 'Devin Booker', 'Bradley Beal'],
+  'phoenix': ['Kevin Durant', 'Devin Booker', 'Bradley Beal'],
+  'mavericks': ['Luka Doncic', 'Kyrie Irving', 'PJ Washington'],
+  'dallas': ['Luka Doncic', 'Kyrie Irving', 'PJ Washington'],
+  'grizzlies': ['Ja Morant', 'Desmond Bane', 'Jaren Jackson Jr'],
+  'memphis': ['Ja Morant', 'Desmond Bane', 'Jaren Jackson Jr'],
+  'pelicans': ['Zion Williamson', 'Brandon Ingram', 'CJ McCollum'],
+  'new orleans': ['Zion Williamson', 'Brandon Ingram', 'CJ McCollum'],
+  'timberwolves': ['Anthony Edwards', 'Karl-Anthony Towns', 'Rudy Gobert'],
+  'minnesota': ['Anthony Edwards', 'Karl-Anthony Towns', 'Rudy Gobert'],
+  'thunder': ['Shai Gilgeous-Alexander', 'Jalen Williams', 'Chet Holmgren'],
+  'oklahoma city': ['Shai Gilgeous-Alexander', 'Jalen Williams', 'Chet Holmgren'],
+  'rockets': ['Jalen Green', 'Alperen Sengun', 'Fred VanVleet'],
+  'houston': ['Jalen Green', 'Alperen Sengun', 'Fred VanVleet'],
+  'spurs': ['Victor Wembanyama', 'Devin Vassell', 'Keldon Johnson'],
+  'san antonio': ['Victor Wembanyama', 'Devin Vassell', 'Keldon Johnson'],
+  'kings': ['De\'Aaron Fox', 'Domantas Sabonis', 'Keegan Murray'],
+  'sacramento': ['De\'Aaron Fox', 'Domantas Sabonis', 'Keegan Murray'],
+  'trail blazers': ['Damian Lillard', 'Anfernee Simons', 'Jerami Grant'],
+  'portland': ['Damian Lillard', 'Anfernee Simons', 'Jerami Grant'],
+  'jazz': ['Lauri Markkanen', 'Jordan Clarkson', 'Collin Sexton'],
+  'utah': ['Lauri Markkanen', 'Jordan Clarkson', 'Collin Sexton'],
+  // Eastern Conference
+  'celtics': ['Jayson Tatum', 'Jaylen Brown', 'Kristaps Porzingis'],
+  'boston': ['Jayson Tatum', 'Jaylen Brown', 'Kristaps Porzingis'],
+  'bucks': ['Giannis Antetokounmpo', 'Damian Lillard', 'Khris Middleton'],
+  'milwaukee': ['Giannis Antetokounmpo', 'Damian Lillard', 'Khris Middleton'],
+  '76ers': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
+  'sixers': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
+  'philadelphia': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
+  'knicks': ['Jalen Brunson', 'Julius Randle', 'RJ Barrett'],
+  'new york': ['Jalen Brunson', 'Julius Randle', 'RJ Barrett'],
+  'nets': ['Mikal Bridges', 'Cameron Johnson', 'Spencer Dinwiddie'],
+  'brooklyn': ['Mikal Bridges', 'Cameron Johnson', 'Spencer Dinwiddie'],
+  'heat': ['Jimmy Butler', 'Bam Adebayo', 'Tyler Herro'],
+  'miami': ['Jimmy Butler', 'Bam Adebayo', 'Tyler Herro'],
+  'cavaliers': ['Donovan Mitchell', 'Darius Garland', 'Evan Mobley'],
+  'cleveland': ['Donovan Mitchell', 'Darius Garland', 'Evan Mobley'],
+  'bulls': ['DeMar DeRozan', 'Zach LaVine', 'Nikola Vucevic'],
+  'chicago': ['DeMar DeRozan', 'Zach LaVine', 'Nikola Vucevic'],
+  'hawks': ['Trae Young', 'Dejounte Murray', 'John Collins'],
+  'atlanta': ['Trae Young', 'Dejounte Murray', 'John Collins'],
+  'raptors': ['Pascal Siakam', 'Scottie Barnes', 'OG Anunoby'],
+  'toronto': ['Pascal Siakam', 'Scottie Barnes', 'OG Anunoby'],
+  'pacers': ['Tyrese Haliburton', 'Myles Turner', 'Buddy Hield'],
+  'indiana': ['Tyrese Haliburton', 'Myles Turner', 'Buddy Hield'],
+  'magic': ['Paolo Banchero', 'Franz Wagner', 'Jalen Suggs'],
+  'orlando': ['Paolo Banchero', 'Franz Wagner', 'Jalen Suggs'],
+  'pistons': ['Cade Cunningham', 'Jaden Ivey', 'Bojan Bogdanovic'],
+  'detroit': ['Cade Cunningham', 'Jaden Ivey', 'Bojan Bogdanovic'],
+  'wizards': ['Kyle Kuzma', 'Jordan Poole', 'Deni Avdija'],
+  'washington': ['Kyle Kuzma', 'Jordan Poole', 'Deni Avdija'],
+  'hornets': ['LaMelo Ball', 'Terry Rozier', 'Gordon Hayward'],
+  'charlotte': ['LaMelo Ball', 'Terry Rozier', 'Gordon Hayward'],
+}
+
+/**
+ * Get fallback star players for a team when player stats data is unavailable
+ */
+function getFallbackStarPlayers(teamName: string, sport: string): PlayerImportance[] {
+  // Only NBA has hardcoded fallback for now
+  if (!sport.toLowerCase().includes('nba') && !sport.toLowerCase().includes('basketball')) {
+    return []
+  }
+  
+  const teamNorm = teamName.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim()
+  
+  // Try to find matching team
+  for (const [key, players] of Object.entries(NBA_STAR_PLAYERS)) {
+    if (teamNorm.includes(key) || key.includes(teamNorm)) {
+      console.log(`[getFallbackStarPlayers] Using fallback for ${teamName}: ${players.join(', ')}`)
+      return players.map(name => ({
+        playerName: name,
+        teamName: teamName,
+        sport: sport,
+        scoringAverage: 25, // Placeholder - these are all star players
+        isTopScorer: true
+      }))
+    }
+  }
+  
+  console.log(`[getFallbackStarPlayers] No fallback found for team: ${teamName}`)
+  return []
+}
+
+/**
  * Get top 3 scorers for a team from player stats data
  * Used for injury adjustment calculations
+ * CRITICAL: Falls back to hardcoded star players when Redis data unavailable
  */
 async function getTopScorersForTeam(
   teamName: string,
@@ -647,7 +748,13 @@ async function getTopScorersForTeam(
 ): Promise<PlayerImportance[]> {
   try {
     const playerStats = await getPlayerStatsData()
-    if (!playerStats || !playerStats.players) return []
+    
+    // CRITICAL FIX: If player stats data is unavailable, use hardcoded fallback
+    // This ensures star player detection works even when Redis is not configured
+    if (!playerStats || !playerStats.players) {
+      console.log(`[getTopScorersForTeam] Player stats unavailable, using fallback for ${teamName}`)
+      return getFallbackStarPlayers(teamName, sport)
+    }
     
     // Filter players for this team and sport (players is a Record, not an array)
     const allPlayers = Object.values(playerStats.players)
@@ -657,6 +764,12 @@ async function getTopScorersForTeam(
       return (playerTeamNorm.includes(teamNorm) || teamNorm.includes(playerTeamNorm)) &&
              p.sport.toLowerCase() === sport.toLowerCase()
     })
+    
+    // If no players found in stats data, use fallback
+    if (teamPlayers.length === 0) {
+      console.log(`[getTopScorersForTeam] No players in stats for ${teamName}, using fallback`)
+      return getFallbackStarPlayers(teamName, sport)
+    }
     
     // Get scoring average based on sport
     const getScoringAverage = (player: PlayerStats): number => {
@@ -685,10 +798,17 @@ async function getTopScorersForTeam(
       .sort((a: PlayerImportance, b: PlayerImportance) => b.scoringAverage - a.scoringAverage)
       .slice(0, 3)
     
+    // If sorted players is empty after filtering, use fallback
+    if (sortedPlayers.length === 0) {
+      console.log(`[getTopScorersForTeam] No scorers found for ${teamName}, using fallback`)
+      return getFallbackStarPlayers(teamName, sport)
+    }
+    
     return sortedPlayers
   } catch (error) {
     console.error('[getTopScorersForTeam] Error:', error)
-    return []
+    // On error, use fallback instead of returning empty
+    return getFallbackStarPlayers(teamName, sport)
   }
 }
 
