@@ -2311,21 +2311,28 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push(`Edge: ${edgeScore.toFixed(1)}/20 points`)
   lines.push('')
   
-  // Runner-up
-  if (result.runnerUp) {
-    const ru = result.runnerUp
-    let ruPickDisplay: string
-    if (ru.betType === 'total' && ru.line !== undefined) {
-      const ruUnit = getTotalUnit(ru.sportName)
-      ruPickDisplay = `${ru.team} ${ru.line} ${ruUnit} @ ${formatOdds(ru.bestPrice)}`
-    } else if (ru.betType === 'spread' && ru.line !== undefined) {
-      ruPickDisplay = `${ru.team} ${ru.line > 0 ? '+' : ''}${ru.line} @ ${formatOdds(ru.bestPrice)}`
-    } else {
-      ruPickDisplay = `${ru.team} ML @ ${formatOdds(ru.bestPrice)}`
-    }
-    lines.push('**ALTERNATIVE:**')
+  // ALTERNATIVES: Show top 10 bets so LLM can respond to "what else?" questions
+  // This enables conversational follow-ups like "can't bet that, what else?"
+  const alternatives = result.allRankedBets?.slice(1, 10) || []
+  if (alternatives.length > 0) {
+    lines.push('**ALTERNATIVES (if user asks "what else?" or can\'t bet the top pick):**')
     lines.push('')
-    lines.push(`#2: ${ruPickDisplay} (Score: ${ru.score}/100, ${ru.consensusProbability}% prob)`)
+    for (let i = 0; i < alternatives.length; i++) {
+      const alt = alternatives[i]
+      let altPickDisplay: string
+      if (alt.betType === 'total' && alt.line !== undefined) {
+        const altUnit = getTotalUnit(alt.sportName)
+        altPickDisplay = `${alt.team} ${alt.line} ${altUnit} @ ${formatOdds(alt.bestPrice)}`
+      } else if (alt.betType === 'spread' && alt.line !== undefined) {
+        altPickDisplay = `${alt.team} ${alt.line > 0 ? '+' : ''}${alt.line} @ ${formatOdds(alt.bestPrice)}`
+      } else {
+        altPickDisplay = `${alt.team} ML @ ${formatOdds(alt.bestPrice)}`
+      }
+      const sportEmoji = getSportEmoji(alt.sportName)
+      lines.push(`#${i + 2}: ${sportEmoji} ${altPickDisplay} | ${alt.sportName} | Score: ${alt.score}/100 | ${alt.eloProbability || alt.consensusProbability}% prob | ${alt.bestBook}`)
+    }
+    lines.push('')
+    lines.push('*Use these alternatives if user says they can\'t bet the top pick, wants a different sport, or asks "what else?"*')
     lines.push('')
   }
   
@@ -3055,8 +3062,11 @@ export function getFilteredBestBetWithElo(
 
 /**
  * Format a filtered best bet for deterministic response (with full Elo details)
+ * @param bet - The best bet to format
+ * @param filterDescription - Description of the filter applied (e.g., "NBA")
+ * @param alternatives - Optional list of alternative bets for "what else?" follow-ups
  */
-export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription: string = ''): string {
+export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription: string = '', alternatives: RankedBet[] = []): string {
   const lines: string[] = []
   const emoji = getSportEmoji(bet.sportName)
   
@@ -3126,6 +3136,30 @@ export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription:
   lines.push('')
   
   lines.push(`Available at ${bet.bestBook}.`)
+  
+  // ALTERNATIVES: Show top 10 bets so LLM can respond to "what else?" questions
+  // This enables conversational follow-ups like "can't bet that, what else?"
+  if (alternatives.length > 0) {
+    lines.push('')
+    lines.push('**ALTERNATIVES (if user asks "what else?" or can\'t bet the top pick):**')
+    lines.push('')
+    for (let i = 0; i < Math.min(9, alternatives.length); i++) {
+      const alt = alternatives[i]
+      let altPickDisplay: string
+      if (alt.betType === 'total' && alt.line !== undefined) {
+        const altUnit = getTotalUnit(alt.sportName)
+        altPickDisplay = `${alt.team} ${alt.line} ${altUnit} @ ${formatOdds(alt.bestPrice)}`
+      } else if (alt.betType === 'spread' && alt.line !== undefined) {
+        altPickDisplay = `${alt.team} ${alt.line > 0 ? '+' : ''}${alt.line} @ ${formatOdds(alt.bestPrice)}`
+      } else {
+        altPickDisplay = `${alt.team} ML @ ${formatOdds(alt.bestPrice)}`
+      }
+      const sportEmoji = getSportEmoji(alt.sportName)
+      lines.push(`#${i + 2}: ${sportEmoji} ${altPickDisplay} | ${alt.sportName} | Score: ${alt.score}/100 | ${alt.eloProbability || alt.consensusProbability}% prob | ${alt.bestBook}`)
+    }
+    lines.push('')
+    lines.push('*Use these alternatives if user says they can\'t bet the top pick, wants a different sport, or asks "what else?"*')
+  }
   
   return lines.join('\n')
 }

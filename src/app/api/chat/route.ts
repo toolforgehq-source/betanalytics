@@ -1727,6 +1727,7 @@ export async function POST(request: Request) {
         if (hasFilters) {
           // Use filtered sport bets for questions with filters
           let sportBets = await getCachedSportBets()
+          let allEloBetsForAlternatives: RankedBet[] = []  // Store all Elo bets for "what else?" follow-ups
           
           // FALLBACK: If cache is empty, compute sport bets on-demand from ESPN data
           if (!sportBets) {
@@ -1765,6 +1766,8 @@ export async function POST(request: Request) {
                 if (todaysGames.length > 0) {
                   console.log(`[chat] Computing sport bets from ${todaysGames.length} games today (with injury data)...`)
                   const bestBetResult = await computeBestBets(todaysGames)
+                  // Store allEloBets for alternatives in follow-up questions
+                  allEloBetsForAlternatives = bestBetResult.allEloBets || []
                   
                   // Log computeBestBets result
                   console.log(`[chat] computeBestBets result: gamesAnalyzed=${bestBetResult.gamesAnalyzed}, gamesQualified=${bestBetResult.gamesQualified}, allEloBets=${bestBetResult.allEloBets?.length || 0}`)
@@ -1803,8 +1806,24 @@ export async function POST(request: Request) {
             const result = getFilteredBestBetWithElo(sportBets, bestBetFilter.excludeSports, bestBetFilter.includeSports)
             
             if (result.bet) {
-              deterministicResponse = formatFilteredBestBetResponse(result.bet, bestBetFilter.filterDescription)
-              console.log(`[chat] Returning filtered best bet: ${result.bet.team} (${result.bet.sportName})`)
+              // Get alternatives from allEloBets for "what else?" follow-up questions
+              // Filter to same sport if sport-specific query, otherwise show all alternatives
+              let alternatives: RankedBet[] = []
+              if (allEloBetsForAlternatives.length > 0) {
+                if (bestBetFilter.includeSports.length > 0) {
+                  // Sport-specific query: show alternatives from same sport
+                  alternatives = allEloBetsForAlternatives
+                    .filter((b: RankedBet) => b.sportName === result.bet!.sportName && b !== result.bet)
+                    .slice(0, 9)
+                } else {
+                  // General query: show all alternatives
+                  alternatives = allEloBetsForAlternatives
+                    .filter((b: RankedBet) => b !== result.bet)
+                    .slice(0, 9)
+                }
+              }
+              deterministicResponse = formatFilteredBestBetResponse(result.bet, bestBetFilter.filterDescription, alternatives)
+              console.log(`[chat] Returning filtered best bet: ${result.bet.team} (${result.bet.sportName}) with ${alternatives.length} alternatives`)
             } else {
               deterministicResponse = result.message
               console.log(`[chat] No Elo-based bets available for filter: ${bestBetFilter.filterDescription}`)
