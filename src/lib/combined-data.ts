@@ -465,17 +465,46 @@ export async function formatCombinedDataForContext(): Promise<string> {
     console.log('[formatCombinedDataForContext] Computing best bet on-demand from ESPN odds...')
     
     // Convert ESPN odds to games WITH injury data from espnData
+    // CRITICAL: Use robust matching to ensure injury data is properly merged
     const allGames = espnOddsData.games.map(espnOdds => {
       // Find matching ESPN game data to get injuries
       const espnLeague = mapSportToLeague(espnOdds.league)
-      const espnGameData = espnData.games.find(eg => 
-        eg.league === espnLeague && 
-        (eg.homeTeam.name.includes(espnOdds.homeTeam.split(' ').pop() || '') || 
-         espnOdds.homeTeam.includes(eg.homeTeam.name.split(' ').pop() || ''))
-      )
+      
+      // Normalize team names for matching
+      const normalizeTeamName = (name: string) => name.toLowerCase()
+        .replace(/\s+/g, ' ')
+        .replace(/[^a-z0-9 ]/g, '')
+        .trim()
+      
+      const oddsHome = normalizeTeamName(espnOdds.homeTeam)
+      const oddsAway = normalizeTeamName(espnOdds.awayTeam)
+      
+      const espnGameData = espnData.games.find(eg => {
+        if (eg.league !== espnLeague) return false
+        
+        const espnHome = normalizeTeamName(eg.homeTeam.name)
+        const espnAway = normalizeTeamName(eg.awayTeam.name)
+        
+        // Check for exact or partial matches on BOTH teams
+        const homeMatch = oddsHome === espnHome || 
+          oddsHome.includes(espnHome) || espnHome.includes(oddsHome) ||
+          oddsHome.split(' ').some(word => espnHome.includes(word) && word.length > 3)
+        const awayMatch = oddsAway === espnAway || 
+          oddsAway.includes(espnAway) || espnAway.includes(oddsAway) ||
+          oddsAway.split(' ').some(word => espnAway.includes(word) && word.length > 3)
+        
+        return homeMatch && awayMatch
+      })
       
       if (espnGameData && espnGameData.injuries.length > 0) {
-        console.log(`[formatCombinedDataForContext] Found ${espnGameData.injuries.length} injuries for ${espnOdds.homeTeam} vs ${espnOdds.awayTeam}`)
+        console.log(`[formatCombinedDataForContext] ✅ Found ${espnGameData.injuries.length} injuries for ${espnOdds.awayTeam} @ ${espnOdds.homeTeam}`)
+        // Log key injuries (Out/Doubtful)
+        const keyInjuries = espnGameData.injuries.filter(i => i.status === 'Out' || i.status === 'Doubtful')
+        if (keyInjuries.length > 0) {
+          keyInjuries.forEach(i => console.log(`   ⚠️ KEY INJURY: ${i.player} (${i.team}): ${i.status}`))
+        }
+      } else if (!espnGameData) {
+        console.log(`[formatCombinedDataForContext] ❌ No ESPN match found for ${espnOdds.awayTeam} @ ${espnOdds.homeTeam} (league: ${espnLeague})`)
       }
       
       return convertESPNOddsToGame(espnOdds, espnGameData)

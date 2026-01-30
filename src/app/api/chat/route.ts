@@ -1114,8 +1114,22 @@ function normalizeTeamName(name: string): string {
  * This is critical for proper injury detection in bet recommendations
  */
 async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] }): Promise<EnrichedGame[]> {
+  console.log(`[convertESPNOddsToEnrichedGames] Starting merge of ${espnOddsData.games.length} ESPN odds games`)
+  
   // Fetch ESPN data with injuries
   const espnData = await getCachedESPNData()
+  console.log(`[convertESPNOddsToEnrichedGames] Fetched ESPN data: ${espnData.games.length} games`)
+  
+  // Log games with injuries from ESPN data
+  const espnGamesWithInjuries = espnData.games.filter(g => g.injuries && g.injuries.length > 0)
+  console.log(`[convertESPNOddsToEnrichedGames] ESPN data has ${espnGamesWithInjuries.length} games with injuries`)
+  for (const game of espnGamesWithInjuries) {
+    console.log(`[convertESPNOddsToEnrichedGames] ESPN game with injuries: ${game.awayTeam.name} @ ${game.homeTeam.name} (${game.injuries.length} injuries)`)
+    const keyInjuries = game.injuries.filter(i => i.status === 'Out' || i.status === 'Doubtful')
+    if (keyInjuries.length > 0) {
+      keyInjuries.forEach(i => console.log(`   ⚠️ ${i.player} (${i.team}): ${i.status}`))
+    }
+  }
   
   const sportKeyMap: Record<string, string> = {
     'NBA': 'basketball_nba',
@@ -1134,6 +1148,7 @@ async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] 
   }
   
   const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+  console.log(`[convertESPNOddsToEnrichedGames] Today's date (ET): ${todayET}`)
   
   const enrichedGames: EnrichedGame[] = espnOddsData.games
     .filter(g => {
@@ -1162,6 +1177,16 @@ async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] 
         
         return homeMatch && awayMatch
       })
+      
+      // Log matching attempt for debugging
+      if (g.league === 'NBA') {
+        console.log(`[convertESPNOddsToEnrichedGames] NBA game: ${g.awayTeam} @ ${g.homeTeam}`)
+        console.log(`   Match found: ${matchingEspnGame ? 'YES' : 'NO'}`)
+        if (matchingEspnGame) {
+          console.log(`   ESPN game: ${matchingEspnGame.awayTeam.name} @ ${matchingEspnGame.homeTeam.name}`)
+          console.log(`   Injuries: ${matchingEspnGame.injuries.length}`)
+        }
+      }
       
       const baseGame: EnrichedGame = {
         id: g.gameId,
