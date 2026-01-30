@@ -94,8 +94,8 @@ const ESPN_SPORTS = [
   { sport: 'baseball', league: 'mlb', name: 'MLB' },
 ]
 
-// Cache for ESPN data (5 minutes - injuries are critical for betting decisions)
-const ESPN_CACHE_EXPIRY_MS = 5 * 60 * 1000
+// Cache for ESPN data (15 minutes - balances freshness with API load)
+const ESPN_CACHE_EXPIRY_MS = 15 * 60 * 1000
 let espnCache: ESPNData | null = null
 let espnCacheExpiry: Date | null = null
 
@@ -1118,7 +1118,7 @@ export function formatESPNForContext(espnData: ESPNData): string {
   
   const lines: string[] = []
   lines.push(`=== REAL-TIME ROSTER, INJURY & LINEUP DATA (ESPN) ===`)
-  lines.push(`⏰ Data freshness: Updated as of ${lastUpdatedET} (refreshes every 5 minutes)`)
+  lines.push(`⏰ Data freshness: Updated as of ${lastUpdatedET} (refreshes every 15 minutes)`)
   if (espnData.error) {
     lines.push(`⚠️ Warning: ${espnData.error}`)
   }

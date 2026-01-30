@@ -1471,6 +1471,7 @@ CRITICAL RULES:
 5. When comparing options, use the Elo data to explain why one is better
 6. When asked for opinions, base them on the Elo edge and confidence scores
 7. Remember context from the conversation - "this game", "these bets", etc. refer to previously discussed items
+8. When mentioning injuries, include the timestamp from the data (e.g., "Injury data as of 2:34 PM ET")
 
 TONE GUIDELINES (IMPORTANT):
 - Sound like a professional analyst with data, NOT an excited gambler hyping picks
