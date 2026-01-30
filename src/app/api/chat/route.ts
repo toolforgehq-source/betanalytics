@@ -6,7 +6,7 @@ import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
 import { getCachedESPNOdds, getCachedESPNData, type ESPNOdds, type ESPNInjury } from "@/lib/espn"
 import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet } from "@/lib/bet-ranking"
-import type { RankedBet } from "@/lib/bet-ranking"
+import type { RankedBet, BestBetResult } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
@@ -1826,30 +1826,32 @@ If you're seeing this message persistently, please contact us at contact@betanal
             console.log(`[chat] No sport bets available for filter: ${bestBetFilter.filterDescription} - Elo cache likely empty`)
           }
         } else {
-          // Use cached best bet for general "best bet" questions without filters
-          let bestBetResult = await getCachedBestBet()
+          // CRITICAL FIX: Always compute on-demand with fresh injury data
+          // The cached best bet may have been computed before injury data was available
+          // This ensures we always have the latest injury information for recommendations
+          console.log(`[chat] Computing best bets on-demand with fresh injury data...`)
+          let bestBetResult: BestBetResult | null = null
           
-          // FALLBACK: If cache is empty, compute best bets on-demand from ESPN data
-          if (!bestBetResult) {
-            console.log(`[chat] Cache empty - computing best bets on-demand...`)
-            try {
-              const espnOdds = await getCachedESPNOdds()
-              if (espnOdds.games.length > 0) {
-                // CRITICAL: Use enriched games with injury data for proper injury detection
-                console.log(`[chat] Converting ESPN odds to enriched games with injury data...`)
-                const todaysGames = await convertESPNOddsToEnrichedGames(espnOdds)
-                
-                if (todaysGames.length > 0) {
-                  console.log(`[chat] Computing best bets from ${todaysGames.length} games today (with injury data)...`)
-                  bestBetResult = await computeBestBets(todaysGames)
-                  // Cache the result for future requests
-                  await cacheBestBet(bestBetResult)
-                  console.log(`[chat] On-demand computation complete, cached for future requests`)
-                }
+          try {
+            const espnOdds = await getCachedESPNOdds()
+            if (espnOdds.games.length > 0) {
+              // CRITICAL: Use enriched games with injury data for proper injury detection
+              console.log(`[chat] Converting ESPN odds to enriched games with injury data...`)
+              const todaysGames = await convertESPNOddsToEnrichedGames(espnOdds)
+              
+              if (todaysGames.length > 0) {
+                console.log(`[chat] Computing best bets from ${todaysGames.length} games today (with injury data)...`)
+                bestBetResult = await computeBestBets(todaysGames)
+                // Cache the result for future requests (but we'll still recompute to ensure fresh injury data)
+                await cacheBestBet(bestBetResult)
+                console.log(`[chat] On-demand computation complete, cached for future requests`)
               }
-            } catch (err) {
-              console.error('[chat] Error computing best bets on-demand:', err)
             }
+          } catch (err) {
+            console.error('[chat] Error computing best bets on-demand:', err)
+            // Fallback to cached result if on-demand computation fails
+            console.log(`[chat] Falling back to cached best bet...`)
+            bestBetResult = await getCachedBestBet()
           }
           
           if (bestBetResult) {
