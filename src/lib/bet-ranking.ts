@@ -140,6 +140,25 @@ export interface ParlayResult {
   reason: string | null
 }
 
+// Enhanced parlay result with full analysis for conversational responses
+export interface EnhancedParlayResult {
+  legs: RankedBet[]                    // The parlay legs
+  legCount: number                     // Number of legs
+  combinedProbability: number          // Combined probability (multiply individual probs)
+  parlayOdds: number                   // American odds for the parlay
+  parlayPayout: number                 // Payout per $100 bet
+  impliedProbability: number           // Implied probability from parlay odds
+  parlayEdge: number                   // Edge on the parlay (combined prob - implied prob)
+  expectedValue: number                // Expected value per $100 bet
+  calculatedAt: string
+  alternatives: {                      // Alternative parlay options
+    twoLeg?: EnhancedParlayResult
+    threeLeg?: EnhancedParlayResult
+    fourLeg?: EnhancedParlayResult
+  }
+  reason: string | null
+}
+
 export interface SportBestBets {
   [sportName: string]: RankedBet | null
 }
@@ -2790,6 +2809,273 @@ export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult 
     calculatedAt: now,
     reason: safeParlay.length < 2 ? 'Not enough bets from different games' : null
   }
+}
+
+/**
+ * Convert American odds to decimal odds
+ */
+function americanToDecimal(americanOdds: number): number {
+  if (americanOdds > 0) {
+    return (americanOdds / 100) + 1
+  } else {
+    return (100 / Math.abs(americanOdds)) + 1
+  }
+}
+
+/**
+ * Convert decimal odds to American odds
+ */
+function decimalToAmerican(decimalOdds: number): number {
+  if (decimalOdds >= 2) {
+    return Math.round((decimalOdds - 1) * 100)
+  } else {
+    return Math.round(-100 / (decimalOdds - 1))
+  }
+}
+
+/**
+ * Calculate parlay odds from individual leg odds
+ * Multiplies decimal odds together, then converts back to American
+ */
+function calculateParlayOdds(legs: RankedBet[]): number {
+  const combinedDecimal = legs.reduce((acc, leg) => acc * americanToDecimal(leg.bestPrice), 1)
+  return decimalToAmerican(combinedDecimal)
+}
+
+/**
+ * Calculate payout per $100 bet from American odds
+ */
+function calculatePayout(americanOdds: number): number {
+  if (americanOdds > 0) {
+    return americanOdds + 100  // +550 pays $650 total ($550 profit + $100 stake)
+  } else {
+    return (100 / Math.abs(americanOdds)) * 100 + 100
+  }
+}
+
+/**
+ * Build a parlay with specified number of legs from ranked bets
+ * Returns null if not enough qualifying bets available
+ */
+function buildParlayWithLegs(
+  sortedBets: RankedBet[], 
+  legCount: number, 
+  usedGameIds: Set<string> = new Set()
+): RankedBet[] | null {
+  const parlay: RankedBet[] = []
+  const localUsedGameIds = new Set(usedGameIds)
+  
+  for (const bet of sortedBets) {
+    // Skip if we already have a bet from this game (correlation check)
+    if (localUsedGameIds.has(bet.gameId)) continue
+    
+    parlay.push(bet)
+    localUsedGameIds.add(bet.gameId)
+    
+    if (parlay.length === legCount) break
+  }
+  
+  return parlay.length === legCount ? parlay : null
+}
+
+/**
+ * Create an EnhancedParlayResult from legs
+ */
+function createEnhancedParlayResult(
+  legs: RankedBet[],
+  now: string,
+  alternatives: EnhancedParlayResult['alternatives'] = {}
+): EnhancedParlayResult {
+  const getModelProb = (leg: RankedBet) => leg.eloProbability !== undefined ? leg.eloProbability : leg.consensusProbability
+  
+  // Combined probability (multiply individual probs)
+  const combinedProbability = legs.reduce((acc, leg) => acc * (getModelProb(leg) / 100), 1) * 100
+  
+  // Parlay odds from individual leg odds
+  const parlayOdds = calculateParlayOdds(legs)
+  
+  // Payout per $100 bet
+  const parlayPayout = calculatePayout(parlayOdds)
+  
+  // Implied probability from parlay odds
+  const impliedProbability = americanToImpliedProbability(parlayOdds)
+  
+  // Edge on the parlay (combined prob - implied prob)
+  const parlayEdge = combinedProbability - impliedProbability
+  
+  // Expected value per $100 bet
+  // EV = (probability * profit) - ((1 - probability) * stake)
+  const profit = parlayPayout - 100
+  const expectedValue = (combinedProbability / 100 * profit) - ((1 - combinedProbability / 100) * 100)
+  
+  return {
+    legs,
+    legCount: legs.length,
+    combinedProbability: Math.round(combinedProbability * 10) / 10,
+    parlayOdds,
+    parlayPayout: Math.round(parlayPayout),
+    impliedProbability: Math.round(impliedProbability * 10) / 10,
+    parlayEdge: Math.round(parlayEdge * 10) / 10,
+    expectedValue: Math.round(expectedValue * 10) / 10,
+    calculatedAt: now,
+    alternatives,
+    reason: null
+  }
+}
+
+/**
+ * Compute an enhanced parlay with specified number of legs
+ * Includes full analysis for conversational responses
+ * 
+ * @param allRankedBets - All ranked bets to choose from
+ * @param requestedLegs - Number of legs requested (2-6)
+ * @param includeAlternatives - Whether to include 2-leg and 4-leg alternatives
+ */
+export function computeEnhancedParlay(
+  allRankedBets: RankedBet[],
+  requestedLegs: number = 3,
+  includeAlternatives: boolean = true
+): EnhancedParlayResult | null {
+  const now = new Date().toISOString()
+  
+  // Filter to only moneyline bets WITH Elo data for parlays
+  const moneylineBets = allRankedBets.filter(bet => 
+    bet.betType === 'moneyline' && bet.eloProbability !== undefined
+  )
+  
+  if (moneylineBets.length < requestedLegs) {
+    return null
+  }
+  
+  const getModelProb = (bet: RankedBet) => bet.eloProbability!
+  
+  // Filter to value bets (reasonable odds, probability, positive edge)
+  const valueBets = moneylineBets.filter(bet => {
+    const prob = getModelProb(bet)
+    const hasReasonableOdds = bet.bestPrice >= PARLAY_MIN_ODDS
+    const hasReasonableProb = prob >= PARLAY_MIN_PROBABILITY && prob <= PARLAY_MAX_PROBABILITY
+    const hasPositiveEdge = bet.edge > 0
+    return hasReasonableOdds && hasReasonableProb && hasPositiveEdge
+  })
+  
+  // Fall back to moderate bets if not enough value bets
+  let betsToUse = valueBets
+  if (valueBets.length < requestedLegs) {
+    const moderateBets = moneylineBets.filter(bet => {
+      const prob = getModelProb(bet)
+      const hasReasonableOdds = bet.bestPrice >= PARLAY_MIN_ODDS
+      const hasReasonableProb = prob >= PARLAY_MIN_PROBABILITY && prob <= PARLAY_MAX_PROBABILITY
+      return hasReasonableOdds && hasReasonableProb
+    })
+    betsToUse = moderateBets.length >= requestedLegs ? moderateBets : moneylineBets
+  }
+  
+  // Sort by value score (prioritizes edge over raw probability)
+  const sortedBets = [...betsToUse].sort((a, b) => {
+    const aValue = calculateParlayValueScore(a)
+    const bValue = calculateParlayValueScore(b)
+    return bValue - aValue
+  })
+  
+  // Build the requested parlay
+  const mainParlay = buildParlayWithLegs(sortedBets, requestedLegs)
+  if (!mainParlay) {
+    return null
+  }
+  
+  // Build alternatives if requested
+  const alternatives: EnhancedParlayResult['alternatives'] = {}
+  
+  if (includeAlternatives) {
+    // 2-leg alternative (safer)
+    if (requestedLegs !== 2) {
+      const twoLegParlay = buildParlayWithLegs(sortedBets, 2)
+      if (twoLegParlay) {
+        alternatives.twoLeg = createEnhancedParlayResult(twoLegParlay, now)
+      }
+    }
+    
+    // 3-leg alternative
+    if (requestedLegs !== 3) {
+      const threeLegParlay = buildParlayWithLegs(sortedBets, 3)
+      if (threeLegParlay) {
+        alternatives.threeLeg = createEnhancedParlayResult(threeLegParlay, now)
+      }
+    }
+    
+    // 4-leg alternative (riskier)
+    if (requestedLegs !== 4 && sortedBets.length >= 4) {
+      const fourLegParlay = buildParlayWithLegs(sortedBets, 4)
+      if (fourLegParlay) {
+        alternatives.fourLeg = createEnhancedParlayResult(fourLegParlay, now)
+      }
+    }
+  }
+  
+  return createEnhancedParlayResult(mainParlay, now, alternatives)
+}
+
+/**
+ * Format enhanced parlay result for Claude's context
+ * Uses conversational format as specified by user
+ */
+export function formatEnhancedParlayForContext(parlay: EnhancedParlayResult): string {
+  const lines: string[] = []
+  
+  lines.push('=== PARLAY ANALYSIS ===')
+  lines.push('')
+  lines.push(`**${parlay.legCount}-Leg Parlay** | Parlay Odds: ${formatOdds(parlay.parlayOdds)} | Payout: $${parlay.parlayPayout} per $100`)
+  lines.push('')
+  
+  // Individual legs with probabilities and edges
+  for (let i = 0; i < parlay.legs.length; i++) {
+    const leg = parlay.legs[i]
+    const emoji = getSportEmoji(leg.sportName)
+    const modelProb = leg.eloProbability !== undefined ? leg.eloProbability : leg.consensusProbability
+    lines.push(`${emoji} **Leg ${i + 1}: ${leg.team} ML @ ${formatOdds(leg.bestPrice)}**`)
+    lines.push(`   ${leg.awayTeam} @ ${leg.homeTeam}`)
+    lines.push(`   Win probability: ${modelProb}% | Edge: ${leg.edge > 0 ? '+' : ''}${leg.edge}%`)
+    lines.push(`   Available at: ${leg.bestBook}`)
+    lines.push('')
+  }
+  
+  // Parlay math
+  lines.push('**PARLAY MATH:**')
+  lines.push(`- Combined probability: ${parlay.combinedProbability}% (${parlay.legs.map(l => `${l.eloProbability || l.consensusProbability}%`).join(' × ')})`)
+  lines.push(`- Parlay odds: ${formatOdds(parlay.parlayOdds)} (implied ${parlay.impliedProbability}%)`)
+  lines.push(`- Parlay edge: ${parlay.parlayEdge > 0 ? '+' : ''}${parlay.parlayEdge}%`)
+  lines.push(`- Expected value: $${parlay.expectedValue > 0 ? '+' : ''}${parlay.expectedValue} per $100 bet`)
+  lines.push('')
+  
+  // Independence note
+  lines.push('**WHY THIS WORKS:**')
+  lines.push('- Each leg has positive edge individually')
+  lines.push('- Games are independent (different matchups, no correlation)')
+  const sports = Array.from(new Set(parlay.legs.map(l => l.sportName)))
+  if (sports.length > 1) {
+    lines.push(`- Multiple sports (${sports.join(', ')}) reduces correlation risk`)
+  }
+  lines.push('')
+  
+  // Alternatives
+  if (Object.keys(parlay.alternatives).length > 0) {
+    lines.push('**ALTERNATIVES:**')
+    if (parlay.alternatives.twoLeg) {
+      const alt = parlay.alternatives.twoLeg
+      lines.push(`- 2-leg (safer): ${formatOdds(alt.parlayOdds)} odds, ${alt.combinedProbability}% prob, ${alt.parlayEdge > 0 ? '+' : ''}${alt.parlayEdge}% edge`)
+    }
+    if (parlay.alternatives.threeLeg) {
+      const alt = parlay.alternatives.threeLeg
+      lines.push(`- 3-leg: ${formatOdds(alt.parlayOdds)} odds, ${alt.combinedProbability}% prob, ${alt.parlayEdge > 0 ? '+' : ''}${alt.parlayEdge}% edge`)
+    }
+    if (parlay.alternatives.fourLeg) {
+      const alt = parlay.alternatives.fourLeg
+      lines.push(`- 4-leg (riskier): ${formatOdds(alt.parlayOdds)} odds, ${alt.combinedProbability}% prob, ${alt.parlayEdge > 0 ? '+' : ''}${alt.parlayEdge}% edge`)
+    }
+    lines.push('')
+  }
+  
+  return lines.join('\n')
 }
 
 /**
