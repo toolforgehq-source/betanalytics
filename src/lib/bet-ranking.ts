@@ -75,6 +75,16 @@ export interface RankedBet {
   // Situational factors (when available)
   situationalAdjustment?: number     // Total probability adjustment from situational factors
   situationalNotes?: string[]        // Human-readable notes about situational factors
+  situationalBreakdown?: {           // Full breakdown of all 7 situational factors
+    restDays: { value: string; adjustment: number }
+    travel: { value: string; adjustment: number }
+    recentForm: { value: string; adjustment: number }
+    weather: { value: string; adjustment: number }
+    sharpMoney: { value: string; adjustment: number }
+    motivation: { value: string; adjustment: number }
+    injuries: { value: string; adjustment: number }
+  }
+  baseEloProbability?: number        // Base Elo probability before situational adjustments
   
   // Timestamp
   calculatedAt: string
@@ -628,8 +638,109 @@ function findBestPrice(
  * Analyze a single game and return ranked bets for both teams
  */
 /**
+ * FALLBACK: Hardcoded star players for each NBA team
+ * Used when player stats data is unavailable (Redis not configured or empty)
+ * This ensures star player detection ALWAYS works for injury filtering
+ */
+const NBA_STAR_PLAYERS: Record<string, string[]> = {
+  // Western Conference
+  'nuggets': ['Nikola Jokic', 'Jamal Murray', 'Michael Porter Jr'],
+  'denver': ['Nikola Jokic', 'Jamal Murray', 'Michael Porter Jr'],
+  'lakers': ['LeBron James', 'Anthony Davis', 'Austin Reaves'],
+  'los angeles lakers': ['LeBron James', 'Anthony Davis', 'Austin Reaves'],
+  'clippers': ['Kawhi Leonard', 'Paul George', 'James Harden'],
+  'la clippers': ['Kawhi Leonard', 'Paul George', 'James Harden'],
+  'warriors': ['Stephen Curry', 'Klay Thompson', 'Draymond Green'],
+  'golden state': ['Stephen Curry', 'Klay Thompson', 'Draymond Green'],
+  'suns': ['Kevin Durant', 'Devin Booker', 'Bradley Beal'],
+  'phoenix': ['Kevin Durant', 'Devin Booker', 'Bradley Beal'],
+  'mavericks': ['Luka Doncic', 'Kyrie Irving', 'PJ Washington'],
+  'dallas': ['Luka Doncic', 'Kyrie Irving', 'PJ Washington'],
+  'grizzlies': ['Ja Morant', 'Desmond Bane', 'Jaren Jackson Jr'],
+  'memphis': ['Ja Morant', 'Desmond Bane', 'Jaren Jackson Jr'],
+  'pelicans': ['Zion Williamson', 'Brandon Ingram', 'CJ McCollum'],
+  'new orleans': ['Zion Williamson', 'Brandon Ingram', 'CJ McCollum'],
+  'timberwolves': ['Anthony Edwards', 'Karl-Anthony Towns', 'Rudy Gobert'],
+  'minnesota': ['Anthony Edwards', 'Karl-Anthony Towns', 'Rudy Gobert'],
+  'thunder': ['Shai Gilgeous-Alexander', 'Jalen Williams', 'Chet Holmgren'],
+  'oklahoma city': ['Shai Gilgeous-Alexander', 'Jalen Williams', 'Chet Holmgren'],
+  'rockets': ['Jalen Green', 'Alperen Sengun', 'Fred VanVleet'],
+  'houston': ['Jalen Green', 'Alperen Sengun', 'Fred VanVleet'],
+  'spurs': ['Victor Wembanyama', 'Devin Vassell', 'Keldon Johnson'],
+  'san antonio': ['Victor Wembanyama', 'Devin Vassell', 'Keldon Johnson'],
+  'kings': ['De\'Aaron Fox', 'Domantas Sabonis', 'Keegan Murray'],
+  'sacramento': ['De\'Aaron Fox', 'Domantas Sabonis', 'Keegan Murray'],
+  'trail blazers': ['Damian Lillard', 'Anfernee Simons', 'Jerami Grant'],
+  'portland': ['Damian Lillard', 'Anfernee Simons', 'Jerami Grant'],
+  'jazz': ['Lauri Markkanen', 'Jordan Clarkson', 'Collin Sexton'],
+  'utah': ['Lauri Markkanen', 'Jordan Clarkson', 'Collin Sexton'],
+  // Eastern Conference
+  'celtics': ['Jayson Tatum', 'Jaylen Brown', 'Kristaps Porzingis'],
+  'boston': ['Jayson Tatum', 'Jaylen Brown', 'Kristaps Porzingis'],
+  'bucks': ['Giannis Antetokounmpo', 'Damian Lillard', 'Khris Middleton'],
+  'milwaukee': ['Giannis Antetokounmpo', 'Damian Lillard', 'Khris Middleton'],
+  '76ers': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
+  'sixers': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
+  'philadelphia': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
+  'knicks': ['Jalen Brunson', 'Julius Randle', 'RJ Barrett'],
+  'new york': ['Jalen Brunson', 'Julius Randle', 'RJ Barrett'],
+  'nets': ['Mikal Bridges', 'Cameron Johnson', 'Spencer Dinwiddie'],
+  'brooklyn': ['Mikal Bridges', 'Cameron Johnson', 'Spencer Dinwiddie'],
+  'heat': ['Jimmy Butler', 'Bam Adebayo', 'Tyler Herro'],
+  'miami': ['Jimmy Butler', 'Bam Adebayo', 'Tyler Herro'],
+  'cavaliers': ['Donovan Mitchell', 'Darius Garland', 'Evan Mobley'],
+  'cleveland': ['Donovan Mitchell', 'Darius Garland', 'Evan Mobley'],
+  'bulls': ['DeMar DeRozan', 'Zach LaVine', 'Nikola Vucevic'],
+  'chicago': ['DeMar DeRozan', 'Zach LaVine', 'Nikola Vucevic'],
+  'hawks': ['Trae Young', 'Dejounte Murray', 'John Collins'],
+  'atlanta': ['Trae Young', 'Dejounte Murray', 'John Collins'],
+  'raptors': ['Pascal Siakam', 'Scottie Barnes', 'OG Anunoby'],
+  'toronto': ['Pascal Siakam', 'Scottie Barnes', 'OG Anunoby'],
+  'pacers': ['Tyrese Haliburton', 'Myles Turner', 'Buddy Hield'],
+  'indiana': ['Tyrese Haliburton', 'Myles Turner', 'Buddy Hield'],
+  'magic': ['Paolo Banchero', 'Franz Wagner', 'Jalen Suggs'],
+  'orlando': ['Paolo Banchero', 'Franz Wagner', 'Jalen Suggs'],
+  'pistons': ['Cade Cunningham', 'Jaden Ivey', 'Bojan Bogdanovic'],
+  'detroit': ['Cade Cunningham', 'Jaden Ivey', 'Bojan Bogdanovic'],
+  'wizards': ['Kyle Kuzma', 'Jordan Poole', 'Deni Avdija'],
+  'washington': ['Kyle Kuzma', 'Jordan Poole', 'Deni Avdija'],
+  'hornets': ['LaMelo Ball', 'Terry Rozier', 'Gordon Hayward'],
+  'charlotte': ['LaMelo Ball', 'Terry Rozier', 'Gordon Hayward'],
+}
+
+/**
+ * Get fallback star players for a team when player stats data is unavailable
+ */
+function getFallbackStarPlayers(teamName: string, sport: string): PlayerImportance[] {
+  // Only NBA has hardcoded fallback for now
+  if (!sport.toLowerCase().includes('nba') && !sport.toLowerCase().includes('basketball')) {
+    return []
+  }
+  
+  const teamNorm = teamName.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim()
+  
+  // Try to find matching team
+  for (const [key, players] of Object.entries(NBA_STAR_PLAYERS)) {
+    if (teamNorm.includes(key) || key.includes(teamNorm)) {
+      console.log(`[getFallbackStarPlayers] Using fallback for ${teamName}: ${players.join(', ')}`)
+      return players.map(name => ({
+        playerName: name,
+        teamName: teamName,
+        sport: sport,
+        scoringAverage: 25, // Placeholder - these are all star players
+        isTopScorer: true
+      }))
+    }
+  }
+  
+  console.log(`[getFallbackStarPlayers] No fallback found for team: ${teamName}`)
+  return []
+}
+
+/**
  * Get top 3 scorers for a team from player stats data
  * Used for injury adjustment calculations
+ * CRITICAL: Falls back to hardcoded star players when Redis data unavailable
  */
 async function getTopScorersForTeam(
   teamName: string,
@@ -637,7 +748,13 @@ async function getTopScorersForTeam(
 ): Promise<PlayerImportance[]> {
   try {
     const playerStats = await getPlayerStatsData()
-    if (!playerStats || !playerStats.players) return []
+    
+    // CRITICAL FIX: If player stats data is unavailable, use hardcoded fallback
+    // This ensures star player detection works even when Redis is not configured
+    if (!playerStats || !playerStats.players) {
+      console.log(`[getTopScorersForTeam] Player stats unavailable, using fallback for ${teamName}`)
+      return getFallbackStarPlayers(teamName, sport)
+    }
     
     // Filter players for this team and sport (players is a Record, not an array)
     const allPlayers = Object.values(playerStats.players)
@@ -647,6 +764,12 @@ async function getTopScorersForTeam(
       return (playerTeamNorm.includes(teamNorm) || teamNorm.includes(playerTeamNorm)) &&
              p.sport.toLowerCase() === sport.toLowerCase()
     })
+    
+    // If no players found in stats data, use fallback
+    if (teamPlayers.length === 0) {
+      console.log(`[getTopScorersForTeam] No players in stats for ${teamName}, using fallback`)
+      return getFallbackStarPlayers(teamName, sport)
+    }
     
     // Get scoring average based on sport
     const getScoringAverage = (player: PlayerStats): number => {
@@ -675,10 +798,17 @@ async function getTopScorersForTeam(
       .sort((a: PlayerImportance, b: PlayerImportance) => b.scoringAverage - a.scoringAverage)
       .slice(0, 3)
     
+    // If sorted players is empty after filtering, use fallback
+    if (sortedPlayers.length === 0) {
+      console.log(`[getTopScorersForTeam] No scorers found for ${teamName}, using fallback`)
+      return getFallbackStarPlayers(teamName, sport)
+    }
+    
     return sortedPlayers
   } catch (error) {
     console.error('[getTopScorersForTeam] Error:', error)
-    return []
+    // On error, use fallback instead of returning empty
+    return getFallbackStarPlayers(teamName, sport)
   }
 }
 
@@ -705,6 +835,8 @@ export async function analyzeGame(
   
   // Get Elo prediction for this game (if available)
   const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
+  console.log(`[analyzeGame] Game: ${game.awayTeam} @ ${game.homeTeam}, sport="${game.sport}", eloLeague="${eloLeague || 'NONE'}"`)
+  
   let eloResult: { 
     probability: number
     homeRating: number
@@ -884,6 +1016,59 @@ export async function analyzeGame(
       score,
       situationalAdjustment: situationalAdj.totalAdjustment !== 0 ? Math.round(situationalAdj.totalAdjustment * 1000) / 10 : undefined,
       situationalNotes: situationalAdj.notes.length > 0 ? situationalAdj.notes : undefined,
+      situationalBreakdown: {
+        restDays: {
+          // Show actual rest days info even if adjustment is 0
+          value: situationalFactors.isBackToBack ? 'Back-to-back game' : 
+                 situationalFactors.restAdvantage > 0 ? `+${situationalFactors.restAdvantage} days rest vs opponent` :
+                 situationalFactors.restAdvantage < 0 ? `${situationalFactors.restAdvantage} days rest vs opponent` : 
+                 `${situationalFactors.restDays || 3} days rest (equal)`,
+          adjustment: Math.round((situationalAdj.breakdown.backToBack + situationalAdj.breakdown.restAdvantage) * 1000) / 10
+        },
+        travel: {
+          // Fix: Show correct travel info based on whether team is home or away
+          // isHomeTeam is true if this team is the home team, false if away
+          value: isHomeTeam ? 'Home game (no travel)' :
+                 situationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${situationalFactors.timezoneChange}hr TZ change)` :
+                 situationalFactors.travelDistance === 'long' ? `Long travel (${situationalFactors.timezoneChange}hr TZ change)` :
+                 situationalFactors.travelDistance === 'medium' ? 'Medium distance travel' :
+                 situationalFactors.travelDistance === 'short' ? 'Short travel' :
+                 'Away game (travel data unavailable)',
+          adjustment: Math.round(situationalAdj.breakdown.travel * 1000) / 10
+        },
+        recentForm: {
+          // Show actual form info even if neutral
+          value: situationalFactors.formTrend === 'hot' ? 'Hot streak (winning)' :
+                 situationalFactors.formTrend === 'cold' ? 'Cold streak (losing)' : 
+                 'Recent form: neutral',
+          adjustment: Math.round(situationalAdj.breakdown.recentForm * 1000) / 10
+        },
+        weather: {
+          // Show weather info or explain why N/A
+          value: situationalFactors.weatherImpact ? `${situationalFactors.weatherImpact.level} weather impact` : 
+                 (eloLeagueForSituational === 'NFL' || eloLeagueForSituational === 'MLB' || eloLeagueForSituational?.includes('soccer')) ? 'Weather: normal conditions' : 'Indoor sport (N/A)',
+          adjustment: Math.round(situationalAdj.breakdown.weather * 1000) / 10
+        },
+        sharpMoney: {
+          // Show line movement info even if no sharp action detected
+          value: situationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
+                 situationalFactors.lineMovementDirection === 'toward' ? 'Line moving toward this team' :
+                 situationalFactors.lineMovementDirection === 'away' ? 'Line moving away from this team' : 
+                 'No significant line movement',
+          adjustment: Math.round(situationalAdj.breakdown.sharpMoney * 1000) / 10
+        },
+        motivation: {
+          // Show motivation info or explain standard game
+          value: situationalAdj.motivationAdjustment?.notes.length ? situationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
+          adjustment: Math.round(situationalAdj.breakdown.motivation * 1000) / 10
+        },
+        injuries: {
+          // Show injury info
+          value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
+          adjustment: 0
+        }
+      },
+      baseEloProbability: eloProbability ? Math.round(eloProbability * 1000) / 10 : undefined,
       calculatedAt: now
     })
   }
@@ -914,8 +1099,9 @@ export async function analyzeGame(
       )
       
       // Determine if this is for home or away team
-      const isHomeTeam = teamName.toLowerCase().includes(game.homeTeam.toLowerCase()) ||
-                         game.homeTeam.toLowerCase().includes(teamName.toLowerCase())
+      // Use exact match first, then fall back to case-insensitive match
+      const isHomeTeam = teamName === game.homeTeam || 
+                         teamName.toLowerCase() === game.homeTeam.toLowerCase()
       
       // Use effective ratings if available (injury-adjusted), otherwise use base ratings
       const homeElo = eloResult.homeEffectiveRating ?? eloResult.homeRating
@@ -1045,6 +1231,60 @@ export async function analyzeGame(
         score,
         situationalAdjustment: spreadSituationalAdj.totalAdjustment !== 0 ? Math.round(spreadSituationalAdj.totalAdjustment * 1000) / 10 : undefined,
         situationalNotes: spreadSituationalAdj.notes.length > 0 ? spreadSituationalAdj.notes : undefined,
+        // Store base Elo probability (before situational adjustments) and full breakdown
+        baseEloProbability: Math.round(baseEloCoverProb * 1000) / 10,
+        situationalBreakdown: {
+          restDays: {
+            // Show actual rest days info even if adjustment is 0
+            value: spreadSituationalFactors.isBackToBack ? 'Back-to-back game' : 
+                   spreadSituationalFactors.restAdvantage > 0 ? `+${spreadSituationalFactors.restAdvantage} days rest vs opponent` :
+                   spreadSituationalFactors.restAdvantage < 0 ? `${spreadSituationalFactors.restAdvantage} days rest vs opponent` : 
+                   `${spreadSituationalFactors.restDays || 3} days rest (equal)`,
+            adjustment: Math.round((spreadSituationalAdj.breakdown.backToBack + spreadSituationalAdj.breakdown.restAdvantage) * 1000) / 10
+          },
+          travel: {
+            // Fix: Show correct travel info based on whether team is home or away
+            // isHomeTeam is true if this team is the home team, false if away
+            value: isHomeTeam ? 'Home game (no travel)' :
+                   spreadSituationalFactors.travelDistance === 'cross_country' ? `Cross-country travel (${spreadSituationalFactors.timezoneChange}hr TZ change)` :
+                   spreadSituationalFactors.travelDistance === 'long' ? `Long travel (${spreadSituationalFactors.timezoneChange}hr TZ change)` :
+                   spreadSituationalFactors.travelDistance === 'medium' ? 'Medium distance travel' :
+                   spreadSituationalFactors.travelDistance === 'short' ? 'Short travel' :
+                   'Away game (travel data unavailable)',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.travel * 1000) / 10
+          },
+          recentForm: {
+            // Show actual form info even if neutral
+            value: spreadSituationalFactors.formTrend === 'hot' ? 'Hot streak (winning)' :
+                   spreadSituationalFactors.formTrend === 'cold' ? 'Cold streak (losing)' : 
+                   'Recent form: neutral',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.recentForm * 1000) / 10
+          },
+          weather: {
+            // Show weather info or explain why N/A
+            value: spreadSituationalFactors.weatherImpact ? `${spreadSituationalFactors.weatherImpact.level} weather impact` : 
+                   (eloLeague === 'NFL' || eloLeague === 'MLB' || eloLeague?.includes('soccer')) ? 'Weather: normal conditions' : 'Indoor sport (N/A)',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.weather * 1000) / 10
+          },
+          sharpMoney: {
+            // Show line movement info even if no sharp action detected
+            value: spreadSituationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
+                   spreadSituationalFactors.lineMovementDirection === 'toward' ? 'Line moving toward this team' :
+                   spreadSituationalFactors.lineMovementDirection === 'away' ? 'Line moving away from this team' : 
+                   'No significant line movement',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.sharpMoney * 1000) / 10
+          },
+          motivation: {
+            // Show motivation info or explain standard game
+            value: spreadSituationalAdj.motivationAdjustment?.notes.length ? spreadSituationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
+            adjustment: Math.round(spreadSituationalAdj.breakdown.motivation * 1000) / 10
+          },
+          injuries: {
+            // Show injury info
+            value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
+            adjustment: 0
+          }
+        },
         calculatedAt: now
       })
     })
@@ -1153,6 +1393,54 @@ export async function analyzeGame(
               score,
               situationalAdjustment: totalSituationalAdj.totalAdjustment !== 0 ? Math.round(totalSituationalAdj.totalAdjustment * 1000) / 10 : undefined,
               situationalNotes: totalSituationalAdj.notes.length > 0 ? totalSituationalAdj.notes : undefined,
+              // Store base Elo probability (before situational adjustments) and full breakdown
+              baseEloProbability: Math.round(baseEloOverProb * 1000) / 10,
+              situationalBreakdown: {
+                restDays: {
+                  // Show actual rest days info even if adjustment is 0
+                  value: totalSituationalFactors.isBackToBack ? 'Back-to-back game' : 
+                         totalSituationalFactors.restAdvantage > 0 ? `+${totalSituationalFactors.restAdvantage} days rest vs opponent` :
+                         totalSituationalFactors.restAdvantage < 0 ? `${totalSituationalFactors.restAdvantage} days rest vs opponent` : 
+                         `${totalSituationalFactors.restDays || 3} days rest (equal)`,
+                  adjustment: Math.round((totalSituationalAdj.breakdown.backToBack + totalSituationalAdj.breakdown.restAdvantage) * 1000) / 10
+                },
+                travel: {
+                  // For totals, travel is analyzed from home team perspective
+                  value: 'Game total bet (travel N/A)',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.travel * 1000) / 10
+                },
+                recentForm: {
+                  // Show actual form info even if neutral
+                  value: totalSituationalFactors.formTrend === 'hot' ? 'Hot streak (winning)' :
+                         totalSituationalFactors.formTrend === 'cold' ? 'Cold streak (losing)' : 
+                         'Recent form: neutral',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.recentForm * 1000) / 10
+                },
+                weather: {
+                  // Show weather info or explain why N/A
+                  value: totalSituationalFactors.weatherImpact ? `${totalSituationalFactors.weatherImpact.level} weather impact` : 
+                         (eloLeague === 'NFL' || eloLeague === 'MLB' || eloLeague?.includes('soccer')) ? 'Weather: normal conditions' : 'Indoor sport (N/A)',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.weather * 1000) / 10
+                },
+                sharpMoney: {
+                  // Show line movement info even if no sharp action detected
+                  value: totalSituationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
+                         totalSituationalFactors.lineMovementDirection === 'toward' ? 'Line moving toward this team' :
+                         totalSituationalFactors.lineMovementDirection === 'away' ? 'Line moving away from this team' : 
+                         'No significant line movement',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.sharpMoney * 1000) / 10
+                },
+                motivation: {
+                  // Show motivation info or explain standard game
+                  value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.motivation * 1000) / 10
+                },
+                injuries: {
+                  // Show injury info
+                  value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
+                  adjustment: 0
+                }
+              },
               calculatedAt: now
             })
           }
@@ -1219,6 +1507,54 @@ export async function analyzeGame(
               score,
               situationalAdjustment: totalSituationalAdj.totalAdjustment !== 0 ? Math.round(totalSituationalAdj.totalAdjustment * 1000) / 10 : undefined,
               situationalNotes: totalSituationalAdj.notes.length > 0 ? totalSituationalAdj.notes : undefined,
+              // Store base Elo probability (before situational adjustments) and full breakdown
+              baseEloProbability: Math.round(baseEloUnderProb * 1000) / 10,
+              situationalBreakdown: {
+                restDays: {
+                  // Show actual rest days info even if adjustment is 0
+                  value: totalSituationalFactors.isBackToBack ? 'Back-to-back game' : 
+                         totalSituationalFactors.restAdvantage > 0 ? `+${totalSituationalFactors.restAdvantage} days rest vs opponent` :
+                         totalSituationalFactors.restAdvantage < 0 ? `${totalSituationalFactors.restAdvantage} days rest vs opponent` : 
+                         `${totalSituationalFactors.restDays || 3} days rest (equal)`,
+                  adjustment: Math.round((totalSituationalAdj.breakdown.backToBack + totalSituationalAdj.breakdown.restAdvantage) * 1000) / 10
+                },
+                travel: {
+                  // For totals, travel is analyzed from home team perspective
+                  value: 'Game total bet (travel N/A)',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.travel * 1000) / 10
+                },
+                recentForm: {
+                  // Show actual form info even if neutral
+                  value: totalSituationalFactors.formTrend === 'hot' ? 'Hot streak (winning)' :
+                         totalSituationalFactors.formTrend === 'cold' ? 'Cold streak (losing)' : 
+                         'Recent form: neutral',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.recentForm * 1000) / 10
+                },
+                weather: {
+                  // Show weather info or explain why N/A
+                  value: totalSituationalFactors.weatherImpact ? `${totalSituationalFactors.weatherImpact.level} weather impact` : 
+                         (eloLeague === 'NFL' || eloLeague === 'MLB' || eloLeague?.includes('soccer')) ? 'Weather: normal conditions' : 'Indoor sport (N/A)',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.weather * 1000) / 10
+                },
+                sharpMoney: {
+                  // Show line movement info even if no sharp action detected
+                  value: totalSituationalFactors.sharpMoneyIndicator ? 'Sharp money detected' :
+                         totalSituationalFactors.lineMovementDirection === 'toward' ? 'Line moving toward this team' :
+                         totalSituationalFactors.lineMovementDirection === 'away' ? 'Line moving away from this team' : 
+                         'No significant line movement',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.sharpMoney * 1000) / 10
+                },
+                motivation: {
+                  // Show motivation info or explain standard game
+                  value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
+                  adjustment: Math.round(totalSituationalAdj.breakdown.motivation * 1000) / 10
+                },
+                injuries: {
+                  // Show injury info
+                  value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
+                  adjustment: 0
+                }
+              },
               calculatedAt: now
             })
           }
@@ -1568,6 +1904,8 @@ export async function computeBestBets(
   // Filter out bets where the recommended team has a star player OUT
   // This is a hard disqualifier - we don't want to recommend betting on
   // teams missing their best players (e.g., Jokic, LeBron, etc.)
+  // CRITICAL: Apply this filter to BOTH allRankedBets AND allEloBets
+  // allEloBets is used for sport-specific queries (e.g., "best NBA bet")
   const filteredRankedBets: RankedBet[] = []
   for (const bet of allRankedBets) {
     // Only check moneyline bets for star player injuries (spread/total are less affected)
@@ -1578,11 +1916,31 @@ export async function computeBestBets(
       
       const starOut = await getStarPlayerOut(bet.team, bet.sport, injuries)
       if (starOut) {
-        console.log(`[computeBestBets] DISQUALIFIED: ${bet.team} ML - star player ${starOut} is OUT`)
+        console.log(`[computeBestBets] DISQUALIFIED (ranked): ${bet.team} ML - star player ${starOut} is OUT`)
         continue // Skip this bet
       }
     }
     filteredRankedBets.push(bet)
+  }
+  
+  // CRITICAL FIX: Also filter allEloBets for star player injuries
+  // This ensures sport-specific queries (e.g., "best NBA bet today") don't recommend
+  // teams with star players OUT. Previously only allRankedBets was filtered.
+  const filteredEloBets: RankedBet[] = []
+  for (const bet of allEloBets) {
+    // Only check moneyline bets for star player injuries
+    if (bet.betType === 'moneyline') {
+      const enrichedGame = games.find(g => g.id === bet.gameId) as EnrichedGame | undefined
+      const espnInjuries = enrichedGame?.espnData?.injuries || []
+      const injuries = convertESPNInjuriesToInjuryInfo(espnInjuries)
+      
+      const starOut = await getStarPlayerOut(bet.team, bet.sport, injuries)
+      if (starOut) {
+        console.log(`[computeBestBets] DISQUALIFIED (elo): ${bet.team} ML - star player ${starOut} is OUT`)
+        continue // Skip this bet
+      }
+    }
+    filteredEloBets.push(bet)
   }
   
   // Sort ranked bets by score (desc), then by game time (asc) for stable tiebreaker
@@ -1667,8 +2025,9 @@ export async function computeBestBets(
       .slice(0, 5)
   }
   
-  // Sort allEloBets by score for sport-specific queries
-  allEloBets.sort((a, b) => {
+  // Sort filteredEloBets by score for sport-specific queries
+  // CRITICAL: Use filteredEloBets (with star player filter applied) instead of allEloBets
+  filteredEloBets.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
@@ -1677,7 +2036,7 @@ export async function computeBestBets(
     bestBet,
     runnerUp,
     allRankedBets: eloPoweredBets.slice(0, 10),  // Only Elo-powered bets
-    allEloBets,  // ALL bets with Elo data for sport-specific queries
+    allEloBets: filteredEloBets,  // Filtered bets with Elo data for sport-specific queries (star player filter applied)
     calculatedAt: now,
     gamesAnalyzed: games.length,
     gamesQualified: eloPoweredBets.length,  // Count of Elo-powered bets
@@ -1892,18 +2251,36 @@ export function formatBestBetForContext(result: BestBetResult): string {
     lines.push('')
   }
   
-  // Situational factors breakdown
-  if (bet.situationalNotes && bet.situationalNotes.length > 0) {
-    lines.push('**SITUATIONAL FACTORS:**')
+  // Situational factors breakdown - ALWAYS show all 7 factors
+  lines.push('**SITUATIONAL FACTORS:**')
+  lines.push('')
+  if (bet.situationalBreakdown) {
+    const formatAdj = (adj: number) => adj === 0 ? '0%' : `${adj > 0 ? '+' : ''}${adj.toFixed(1)}%`
+    lines.push(`- Rest days: ${bet.situationalBreakdown.restDays.value} (${formatAdj(bet.situationalBreakdown.restDays.adjustment)})`)
+    lines.push(`- Travel: ${bet.situationalBreakdown.travel.value} (${formatAdj(bet.situationalBreakdown.travel.adjustment)})`)
+    lines.push(`- Recent form: ${bet.situationalBreakdown.recentForm.value} (${formatAdj(bet.situationalBreakdown.recentForm.adjustment)})`)
+    lines.push(`- Weather: ${bet.situationalBreakdown.weather.value} (${formatAdj(bet.situationalBreakdown.weather.adjustment)})`)
+    lines.push(`- Sharp money: ${bet.situationalBreakdown.sharpMoney.value} (${formatAdj(bet.situationalBreakdown.sharpMoney.adjustment)})`)
+    lines.push(`- Motivation: ${bet.situationalBreakdown.motivation.value} (${formatAdj(bet.situationalBreakdown.motivation.adjustment)})`)
+    lines.push(`- Injuries: ${bet.situationalBreakdown.injuries.value} (${formatAdj(bet.situationalBreakdown.injuries.adjustment)})`)
     lines.push('')
+    const totalAdj = bet.situationalAdjustment ?? 0
+    lines.push(`**Total adjustment: ${totalAdj > 0 ? '+' : ''}${totalAdj.toFixed(1)}%**`)
+    if (bet.baseEloProbability !== undefined && bet.eloProbability !== undefined) {
+      lines.push(`Base Elo probability: ${bet.baseEloProbability}% -> Adjusted: ${bet.eloProbability}%`)
+    }
+  } else if (bet.situationalNotes && bet.situationalNotes.length > 0) {
+    // Fallback to old format if breakdown not available
     for (const note of bet.situationalNotes) {
       lines.push(`- ${note}`)
     }
     if (bet.situationalAdjustment !== undefined && bet.situationalAdjustment !== 0) {
       lines.push(`- Total adjustment: ${bet.situationalAdjustment > 0 ? '+' : ''}${bet.situationalAdjustment.toFixed(1)}%`)
     }
-    lines.push('')
+  } else {
+    lines.push('- No significant situational factors detected')
   }
+  lines.push('')
   
   // Value breakdown
   lines.push('**VALUE:**')
@@ -1934,21 +2311,28 @@ export function formatBestBetForContext(result: BestBetResult): string {
   lines.push(`Edge: ${edgeScore.toFixed(1)}/20 points`)
   lines.push('')
   
-  // Runner-up
-  if (result.runnerUp) {
-    const ru = result.runnerUp
-    let ruPickDisplay: string
-    if (ru.betType === 'total' && ru.line !== undefined) {
-      const ruUnit = getTotalUnit(ru.sportName)
-      ruPickDisplay = `${ru.team} ${ru.line} ${ruUnit} @ ${formatOdds(ru.bestPrice)}`
-    } else if (ru.betType === 'spread' && ru.line !== undefined) {
-      ruPickDisplay = `${ru.team} ${ru.line > 0 ? '+' : ''}${ru.line} @ ${formatOdds(ru.bestPrice)}`
-    } else {
-      ruPickDisplay = `${ru.team} ML @ ${formatOdds(ru.bestPrice)}`
-    }
-    lines.push('**ALTERNATIVE:**')
+  // ALTERNATIVES: Show top 10 bets so LLM can respond to "what else?" questions
+  // This enables conversational follow-ups like "can't bet that, what else?"
+  const alternatives = result.allRankedBets?.slice(1, 10) || []
+  if (alternatives.length > 0) {
+    lines.push('**ALTERNATIVES (if user asks "what else?" or can\'t bet the top pick):**')
     lines.push('')
-    lines.push(`#2: ${ruPickDisplay} (Score: ${ru.score}/100, ${ru.consensusProbability}% prob)`)
+    for (let i = 0; i < alternatives.length; i++) {
+      const alt = alternatives[i]
+      let altPickDisplay: string
+      if (alt.betType === 'total' && alt.line !== undefined) {
+        const altUnit = getTotalUnit(alt.sportName)
+        altPickDisplay = `${alt.team} ${alt.line} ${altUnit} @ ${formatOdds(alt.bestPrice)}`
+      } else if (alt.betType === 'spread' && alt.line !== undefined) {
+        altPickDisplay = `${alt.team} ${alt.line > 0 ? '+' : ''}${alt.line} @ ${formatOdds(alt.bestPrice)}`
+      } else {
+        altPickDisplay = `${alt.team} ML @ ${formatOdds(alt.bestPrice)}`
+      }
+      const sportEmoji = getSportEmoji(alt.sportName)
+      lines.push(`#${i + 2}: ${sportEmoji} ${altPickDisplay} | ${alt.sportName} | Score: ${alt.score}/100 | ${alt.eloProbability || alt.consensusProbability}% prob | ${alt.bestBook}`)
+    }
+    lines.push('')
+    lines.push('*Use these alternatives if user says they can\'t bet the top pick, wants a different sport, or asks "what else?"*')
     lines.push('')
   }
   
@@ -1983,11 +2367,22 @@ export async function analyzeSpecificGame(game: Game): Promise<GameAnalysisResul
   // Analyze the game to get all betting options
   const bets = await analyzeGame(game)
   
-  // Filter to only Elo-powered bets - Elo is our core differentiator
+  // Prefer Elo-powered bets, but fall back to all bets if Elo isn't available
+  // This ensures game-specific queries always return useful analysis
   const eloPoweredBets = bets.filter(bet => bet.eloProbability !== undefined)
   
+  // Use Elo bets if available, otherwise use all bets (with market consensus)
+  const betsToUse = eloPoweredBets.length > 0 ? eloPoweredBets : bets
+  
   // Sort by score to find the best bet for this game
-  const sortedBets = [...eloPoweredBets].sort((a, b) => b.score - a.score)
+  const sortedBets = [...betsToUse].sort((a, b) => b.score - a.score)
+  
+  // Log for debugging
+  if (eloPoweredBets.length === 0 && bets.length > 0) {
+    console.log(`[analyzeSpecificGame] No Elo data for ${game.awayTeam} @ ${game.homeTeam} (${game.sport}), using market consensus for ${bets.length} bets`)
+  } else if (bets.length === 0) {
+    console.log(`[analyzeSpecificGame] No bets available for ${game.awayTeam} @ ${game.homeTeam} - game may have started or no odds`)
+  }
   
   return {
     game: {
@@ -2078,18 +2473,36 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
     lines.push('')
   }
   
-  // Situational factors breakdown
-  if (bet.situationalNotes && bet.situationalNotes.length > 0) {
-    lines.push('**SITUATIONAL FACTORS:**')
+  // Situational factors breakdown - ALWAYS show all 7 factors
+  lines.push('**SITUATIONAL FACTORS:**')
+  lines.push('')
+  if (bet.situationalBreakdown) {
+    const formatAdj = (adj: number) => adj === 0 ? '0%' : `${adj > 0 ? '+' : ''}${adj.toFixed(1)}%`
+    lines.push(`- Rest days: ${bet.situationalBreakdown.restDays.value} (${formatAdj(bet.situationalBreakdown.restDays.adjustment)})`)
+    lines.push(`- Travel: ${bet.situationalBreakdown.travel.value} (${formatAdj(bet.situationalBreakdown.travel.adjustment)})`)
+    lines.push(`- Recent form: ${bet.situationalBreakdown.recentForm.value} (${formatAdj(bet.situationalBreakdown.recentForm.adjustment)})`)
+    lines.push(`- Weather: ${bet.situationalBreakdown.weather.value} (${formatAdj(bet.situationalBreakdown.weather.adjustment)})`)
+    lines.push(`- Sharp money: ${bet.situationalBreakdown.sharpMoney.value} (${formatAdj(bet.situationalBreakdown.sharpMoney.adjustment)})`)
+    lines.push(`- Motivation: ${bet.situationalBreakdown.motivation.value} (${formatAdj(bet.situationalBreakdown.motivation.adjustment)})`)
+    lines.push(`- Injuries: ${bet.situationalBreakdown.injuries.value} (${formatAdj(bet.situationalBreakdown.injuries.adjustment)})`)
     lines.push('')
+    const totalAdj = bet.situationalAdjustment ?? 0
+    lines.push(`**Total adjustment: ${totalAdj > 0 ? '+' : ''}${totalAdj.toFixed(1)}%**`)
+    if (bet.baseEloProbability !== undefined && bet.eloProbability !== undefined) {
+      lines.push(`Base Elo probability: ${bet.baseEloProbability}% -> Adjusted: ${bet.eloProbability}%`)
+    }
+  } else if (bet.situationalNotes && bet.situationalNotes.length > 0) {
+    // Fallback to old format if breakdown not available
     for (const note of bet.situationalNotes) {
       lines.push(`- ${note}`)
     }
     if (bet.situationalAdjustment !== undefined && bet.situationalAdjustment !== 0) {
       lines.push(`- Total adjustment: ${bet.situationalAdjustment > 0 ? '+' : ''}${bet.situationalAdjustment.toFixed(1)}%`)
     }
-    lines.push('')
+  } else {
+    lines.push('- No significant situational factors detected')
   }
+  lines.push('')
   
   // Value breakdown
   lines.push('**VALUE:**')
@@ -2526,6 +2939,7 @@ export function getFilteredBestBetWithElo(
   const includeNorm = includeSports.map(normalizeForFilter)
   
   // Check if a sport name matches a filter using strict matching
+  // IMPORTANT: NBA and NCAAB are different sports and must NOT match each other
   const matchesSportFilter = (sportName: string, filterName: string): boolean => {
     const sportNorm = normalizeForFilter(sportName)
     const filterNorm = normalizeForFilter(filterName)
@@ -2533,13 +2947,46 @@ export function getFilteredBestBetWithElo(
     // Direct match
     if (sportNorm === filterNorm) return true
     
+    // STRICT MATCHING: NBA and NCAAB must be kept separate
+    // If filter is specifically 'nba', only match NBA (not NCAAB)
+    // If filter is specifically 'ncaab', only match NCAAB (not NBA)
+    if (filterNorm === 'nba') {
+      // Only match if sport is exactly NBA or basketball_nba
+      return sportNorm === 'nba' || sportNorm === 'basketballnba' || sportNorm === 'basketball_nba'
+    }
+    if (filterNorm === 'ncaab') {
+      // Only match if sport is exactly NCAAB or basketball_ncaab
+      return sportNorm === 'ncaab' || sportNorm === 'basketballncaab' || sportNorm === 'basketball_ncaab'
+    }
+    if (filterNorm === 'nfl') {
+      // Only match if sport is exactly NFL or americanfootball_nfl
+      return sportNorm === 'nfl' || sportNorm === 'americanfootballnfl' || sportNorm === 'americanfootball_nfl'
+    }
+    if (filterNorm === 'ncaaf') {
+      // Only match if sport is exactly NCAAF or americanfootball_ncaaf
+      return sportNorm === 'ncaaf' || sportNorm === 'americanfootballncaaf' || sportNorm === 'americanfootball_ncaaf'
+    }
+    
+    // For generic terms like 'basketball' or 'football', allow both pro and college
+    if (filterNorm === 'basketball') {
+      return sportNorm.includes('basketball') || sportNorm === 'nba' || sportNorm === 'ncaab'
+    }
+    if (filterNorm === 'football') {
+      return sportNorm.includes('football') || sportNorm === 'nfl' || sportNorm === 'ncaaf'
+    }
+    
     // Check if the filter maps to known variations
     const filterVariations = sportNameMap[filterNorm] || [filterNorm]
     for (const variation of filterVariations) {
       if (sportNorm === variation) return true
-      // Also check if sportNorm contains the variation as a complete word
-      // e.g., "icehockey_nhl" should match "nhl"
-      if (sportNorm.includes(variation) && variation.length >= 3) return true
+      // Only use substring matching for non-ambiguous cases (not nba/ncaab or nfl/ncaaf)
+      // e.g., "icehockey_nhl" should match "nhl" but "ncaab" should NOT match "nba"
+      if (sportNorm.includes(variation) && variation.length >= 3) {
+        // Exclude cases where substring matching would cause NBA/NCAAB or NFL/NCAAF confusion
+        if (variation === 'nba' && sportNorm.includes('ncaab')) continue
+        if (variation === 'nfl' && sportNorm.includes('ncaaf')) continue
+        return true
+      }
     }
     
     // Check reverse - if sportNorm maps to known variations that include filterNorm
@@ -2615,8 +3062,11 @@ export function getFilteredBestBetWithElo(
 
 /**
  * Format a filtered best bet for deterministic response (with full Elo details)
+ * @param bet - The best bet to format
+ * @param filterDescription - Description of the filter applied (e.g., "NBA")
+ * @param alternatives - Optional list of alternative bets for "what else?" follow-ups
  */
-export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription: string = ''): string {
+export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription: string = '', alternatives: RankedBet[] = []): string {
   const lines: string[] = []
   const emoji = getSportEmoji(bet.sportName)
   
@@ -2633,7 +3083,9 @@ export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription:
     pickDisplay = `${bet.team} ML @ ${formatOdds(bet.bestPrice)}`
   }
   
-  lines.push(`${emoji} BEST BET${filterDescription ? ` (${filterDescription})` : ''}`)
+  // Format header: "BEST NHL BET" instead of "BEST BET (NHL)"
+  const headerText = filterDescription ? `BEST ${filterDescription.toUpperCase()} BET` : 'BEST BET'
+  lines.push(`${emoji} ${headerText}`)
   lines.push('')
   lines.push(`**${pickDisplay}**`)
   lines.push(`${bet.awayTeam} @ ${bet.homeTeam} | ${bet.sportName} | ${formatTime(bet.commenceTime)}`)
@@ -2684,6 +3136,30 @@ export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription:
   lines.push('')
   
   lines.push(`Available at ${bet.bestBook}.`)
+  
+  // ALTERNATIVES: Show top 10 bets so LLM can respond to "what else?" questions
+  // This enables conversational follow-ups like "can't bet that, what else?"
+  if (alternatives.length > 0) {
+    lines.push('')
+    lines.push('**ALTERNATIVES (if user asks "what else?" or can\'t bet the top pick):**')
+    lines.push('')
+    for (let i = 0; i < Math.min(9, alternatives.length); i++) {
+      const alt = alternatives[i]
+      let altPickDisplay: string
+      if (alt.betType === 'total' && alt.line !== undefined) {
+        const altUnit = getTotalUnit(alt.sportName)
+        altPickDisplay = `${alt.team} ${alt.line} ${altUnit} @ ${formatOdds(alt.bestPrice)}`
+      } else if (alt.betType === 'spread' && alt.line !== undefined) {
+        altPickDisplay = `${alt.team} ${alt.line > 0 ? '+' : ''}${alt.line} @ ${formatOdds(alt.bestPrice)}`
+      } else {
+        altPickDisplay = `${alt.team} ML @ ${formatOdds(alt.bestPrice)}`
+      }
+      const sportEmoji = getSportEmoji(alt.sportName)
+      lines.push(`#${i + 2}: ${sportEmoji} ${altPickDisplay} | ${alt.sportName} | Score: ${alt.score}/100 | ${alt.eloProbability || alt.consensusProbability}% prob | ${alt.bestBook}`)
+    }
+    lines.push('')
+    lines.push('*Use these alternatives if user says they can\'t bet the top pick, wants a different sport, or asks "what else?"*')
+  }
   
   return lines.join('\n')
 }

@@ -102,7 +102,11 @@ function matchGames(oddsGame: Game, espnGame: ESPNGameData): boolean {
  * Since ESPN only provides one source (typically DraftKings), we create entries for multiple
  * bookmakers with the same odds. This is valid because ESPN's odds represent the market consensus.
  */
-function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
+/**
+ * Convert ESPN odds to EnrichedGame format for best bet computation
+ * Now accepts optional ESPN game data to include injuries
+ */
+function convertESPNOddsToGame(espnOdds: ESPNOdds, espnGameData?: ESPNGameData): EnrichedGame {
   const sportKeyMap: Record<string, string> = {
     'NBA': 'basketball_nba',
     'NFL': 'americanfootball_nfl',
@@ -168,7 +172,8 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
     ]
   })) : []
   
-  return {
+  // Build the enriched game with espnData if available
+  const enrichedGame: EnrichedGame = {
     id: espnOdds.gameId,
     sport: sportKey,
     sportName: espnOdds.league,
@@ -179,6 +184,20 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
     totals,
     moneylines
   }
+  
+  // Add espnData with injuries if ESPN game data is provided
+  if (espnGameData) {
+    enrichedGame.espnData = {
+      homeRecord: espnGameData.homeTeam.record,
+      awayRecord: espnGameData.awayTeam.record,
+      injuries: espnGameData.injuries,
+      probables: espnGameData.probables,
+      venue: espnGameData.venue,
+      broadcast: espnGameData.broadcast,
+    }
+  }
+  
+  return enrichedGame
 }
 
 /**
@@ -442,11 +461,63 @@ export async function formatCombinedDataForContext(): Promise<string> {
     console.log('[formatCombinedDataForContext] Using cached best bet')
   } else if (espnOddsData.games.length > 0) {
     // Compute on-demand from ESPN odds - FILTER TO TODAY'S GAMES ONLY (ET timezone)
+    // CRITICAL: Merge injury data from espnData into games for proper injury detection
     console.log('[formatCombinedDataForContext] Computing best bet on-demand from ESPN odds...')
-    const allGames = espnOddsData.games.map(convertESPNOddsToGame)
+    
+    // Convert ESPN odds to games WITH injury data from espnData
+    // CRITICAL: Use robust matching to ensure injury data is properly merged
+    const allGames = espnOddsData.games.map(espnOdds => {
+      // Find matching ESPN game data to get injuries
+      const espnLeague = mapSportToLeague(espnOdds.league)
+      
+      // Normalize team names for matching
+      const normalizeTeamName = (name: string) => name.toLowerCase()
+        .replace(/\s+/g, ' ')
+        .replace(/[^a-z0-9 ]/g, '')
+        .trim()
+      
+      const oddsHome = normalizeTeamName(espnOdds.homeTeam)
+      const oddsAway = normalizeTeamName(espnOdds.awayTeam)
+      
+      const espnGameData = espnData.games.find(eg => {
+        if (eg.league !== espnLeague) return false
+        
+        const espnHome = normalizeTeamName(eg.homeTeam.name)
+        const espnAway = normalizeTeamName(eg.awayTeam.name)
+        
+        // Check for exact or partial matches on BOTH teams
+        const homeMatch = oddsHome === espnHome || 
+          oddsHome.includes(espnHome) || espnHome.includes(oddsHome) ||
+          oddsHome.split(' ').some(word => espnHome.includes(word) && word.length > 3)
+        const awayMatch = oddsAway === espnAway || 
+          oddsAway.includes(espnAway) || espnAway.includes(oddsAway) ||
+          oddsAway.split(' ').some(word => espnAway.includes(word) && word.length > 3)
+        
+        return homeMatch && awayMatch
+      })
+      
+      if (espnGameData && espnGameData.injuries.length > 0) {
+        console.log(`[formatCombinedDataForContext] ✅ Found ${espnGameData.injuries.length} injuries for ${espnOdds.awayTeam} @ ${espnOdds.homeTeam}`)
+        // Log key injuries (Out/Doubtful)
+        const keyInjuries = espnGameData.injuries.filter(i => i.status === 'Out' || i.status === 'Doubtful')
+        if (keyInjuries.length > 0) {
+          keyInjuries.forEach(i => console.log(`   ⚠️ KEY INJURY: ${i.player} (${i.team}): ${i.status}`))
+        }
+      } else if (!espnGameData) {
+        console.log(`[formatCombinedDataForContext] ❌ No ESPN match found for ${espnOdds.awayTeam} @ ${espnOdds.homeTeam} (league: ${espnLeague})`)
+      }
+      
+      return convertESPNOddsToGame(espnOdds, espnGameData)
+    })
+    
     // Filter to today's games only so "best bet today" returns a game happening TODAY
     const todaysGames = allGames.filter(game => isGameToday(game.commenceTime))
     console.log(`[formatCombinedDataForContext] Filtered to ${todaysGames.length} games today (ET) out of ${allGames.length} total`)
+    
+    // Log injury data status
+    const gamesWithInjuries = todaysGames.filter(g => g.espnData?.injuries && g.espnData.injuries.length > 0).length
+    console.log(`[formatCombinedDataForContext] ${gamesWithInjuries} of ${todaysGames.length} games have injury data`)
+    
     bestBetResult = await computeBestBets(todaysGames)
     console.log(`[formatCombinedDataForContext] Computed: ${bestBetResult.gamesAnalyzed} games, ${bestBetResult.gamesQualified} qualified`)
   }

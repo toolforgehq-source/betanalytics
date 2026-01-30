@@ -754,6 +754,7 @@ async function fetchTeamRoster(sport: string, league: string, teamId: string, te
 async function fetchGameInjuries(sport: string, league: string, eventId: string): Promise<ESPNInjury[]> {
   try {
     const url = `https://site.web.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${eventId}`
+    console.log(`[fetchGameInjuries] Fetching injuries from: ${url}`)
     
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
@@ -761,6 +762,7 @@ async function fetchGameInjuries(sport: string, league: string, eventId: string)
     })
     
     if (!response.ok) {
+      console.log(`[fetchGameInjuries] ESPN API returned ${response.status} for event ${eventId}`)
       return []
     }
     
@@ -770,34 +772,56 @@ async function fetchGameInjuries(sport: string, league: string, eventId: string)
     
     // Extract injuries from the summary endpoint
     if (data.injuries && Array.isArray(data.injuries)) {
+      console.log(`[fetchGameInjuries] Found ${data.injuries.length} team injury lists for event ${eventId}`)
       for (const teamInjuries of data.injuries) {
         const teamName = teamInjuries.team?.displayName || 'Unknown'
         if (teamInjuries.injuries && Array.isArray(teamInjuries.injuries)) {
+          console.log(`[fetchGameInjuries] ${teamName}: ${teamInjuries.injuries.length} injuries`)
           for (const injury of teamInjuries.injuries) {
-            injuries.push({
+            const injuryRecord = {
               team: teamName,
               player: injury.athlete?.displayName || injury.athlete?.fullName || 'Unknown',
               status: injury.status || 'Unknown',
               details: injury.type?.description || injury.details?.detail || ''
-            })
+            }
+            injuries.push(injuryRecord)
+            // Log star player injuries (for debugging Jokic case)
+            if (injury.status === 'Out' || injury.status === 'Doubtful') {
+              console.log(`[fetchGameInjuries] ⚠️ KEY INJURY: ${injuryRecord.player} (${injuryRecord.team}) - ${injuryRecord.status}`)
+            }
           }
         }
       }
+    } else {
+      console.log(`[fetchGameInjuries] No injuries array in response for event ${eventId}`)
     }
     
+    console.log(`[fetchGameInjuries] Total injuries found for event ${eventId}: ${injuries.length}`)
     return injuries
   } catch (error) {
-    console.error(`Failed to fetch injuries for event ${eventId}:`, error)
+    console.error(`[fetchGameInjuries] Failed to fetch injuries for event ${eventId}:`, error)
     return []
   }
 }
 
 /**
  * Fetch scoreboard data for a specific sport/league from ESPN
+ * CRITICAL: Must pass today's date to get TODAY's games, not yesterday's
  */
 async function fetchESPNScoreboard(sport: string, league: string, leagueName: string): Promise<ESPNGameData[]> {
   try {
-    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard`
+    // Get today's date in YYYYMMDD format for ESPN API
+    // Use ET timezone since that's what ESPN uses for game scheduling
+    const today = new Date()
+    const etDate = new Date(today.toLocaleString('en-US', { timeZone: 'America/New_York' }))
+    const dateStr = etDate.getFullYear().toString() + 
+      (etDate.getMonth() + 1).toString().padStart(2, '0') + 
+      etDate.getDate().toString().padStart(2, '0')
+    
+    // CRITICAL: Pass dates parameter to get TODAY's games
+    // Without this, ESPN returns yesterday's games (all "Final")
+    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard?dates=${dateStr}`
+    console.log(`[fetchESPNScoreboard] Fetching ${leagueName} games for date ${dateStr}: ${url}`)
     
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
@@ -983,17 +1007,25 @@ export async function fetchAllESPNData(): Promise<ESPNData> {
   
   // Fetch injuries from summary endpoint for upcoming games
   // The scoreboard endpoint doesn't include injuries, but the summary endpoint does
-  console.log(`🏥 Fetching injuries for ${upcomingGames.length} upcoming games...`)
+  console.log(`🏥 [fetchAllESPNData] Fetching injuries for ${upcomingGames.length} upcoming games...`)
+  
+  // Log which games we're fetching injuries for
+  for (const game of upcomingGames) {
+    console.log(`🏥 [fetchAllESPNData] Will fetch injuries for: ${game.awayTeam.name} @ ${game.homeTeam.name} (ID: ${game.id}, League: ${game.league})`)
+  }
   
   const INJURY_BATCH_SIZE = 5
   for (let i = 0; i < upcomingGames.length; i += INJURY_BATCH_SIZE) {
     const batch = upcomingGames.slice(i, i + INJURY_BATCH_SIZE)
     const injuryPromises = batch.map(async (game) => {
       const sportConfig = ESPN_SPORTS.find(s => s.name === game.league)
-      if (!sportConfig) return { gameId: game.id, injuries: [] }
+      if (!sportConfig) {
+        console.log(`🏥 [fetchAllESPNData] No sport config found for league: ${game.league}`)
+        return { gameId: game.id, gameName: `${game.awayTeam.name} @ ${game.homeTeam.name}`, injuries: [] }
+      }
       
       const injuries = await fetchGameInjuries(sportConfig.sport, sportConfig.league, game.id)
-      return { gameId: game.id, injuries }
+      return { gameId: game.id, gameName: `${game.awayTeam.name} @ ${game.homeTeam.name}`, injuries }
     })
     
     const injuryResults = await Promise.all(injuryPromises)
@@ -1003,12 +1035,21 @@ export async function fetchAllESPNData(): Promise<ESPNData> {
       const gameIndex = allGames.findIndex(g => g.id === result.gameId)
       if (gameIndex >= 0 && result.injuries.length > 0) {
         allGames[gameIndex].injuries = result.injuries
+        console.log(`🏥 [fetchAllESPNData] ✅ Attached ${result.injuries.length} injuries to ${result.gameName}`)
+        // Log key injuries (Out/Doubtful)
+        const keyInjuries = result.injuries.filter(i => i.status === 'Out' || i.status === 'Doubtful')
+        if (keyInjuries.length > 0) {
+          console.log(`🏥 [fetchAllESPNData] ⚠️ KEY INJURIES for ${result.gameName}:`)
+          keyInjuries.forEach(i => console.log(`   - ${i.player} (${i.team}): ${i.status}`))
+        }
+      } else if (result.injuries.length === 0) {
+        console.log(`🏥 [fetchAllESPNData] No injuries found for ${result.gameName}`)
       }
     }
   }
   
   const gamesWithInjuries = allGames.filter(g => g.injuries.length > 0).length
-  console.log(`🏥 Attached injuries to ${gamesWithInjuries} games`)
+  console.log(`🏥 [fetchAllESPNData] SUMMARY: Attached injuries to ${gamesWithInjuries}/${allGames.length} games`)
   
   return {
     games: allGames,
@@ -1025,9 +1066,12 @@ export async function getCachedESPNData(): Promise<ESPNData> {
   
   // Check if cache is still valid
   if (espnCache && espnCacheExpiry && espnCacheExpiry > now) {
-    console.log('📦 Serving cached ESPN data')
+    const gamesWithInjuries = espnCache.games.filter(g => g.injuries && g.injuries.length > 0).length
+    console.log(`📦 [getCachedESPNData] Serving cached ESPN data: ${espnCache.games.length} games, ${gamesWithInjuries} with injuries`)
     return espnCache
   }
+  
+  console.log(`📦 [getCachedESPNData] Cache miss or expired, fetching fresh data...`)
   
   // Fetch fresh data
   try {
