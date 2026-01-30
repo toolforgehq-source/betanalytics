@@ -6,8 +6,9 @@ let stripeClient: Stripe | null = null
 
 try {
   if (process.env.STRIPE_SECRET_KEY) {
+    // Use type assertion to handle API version mismatch between local and Vercel environments
     stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY, {
-      apiVersion: '2026-01-28.clover',
+      apiVersion: '2025-12-15.clover' as Stripe.LatestApiVersion,
       typescript: true,
     })
   } else {
