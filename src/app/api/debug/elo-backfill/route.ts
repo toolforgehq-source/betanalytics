@@ -86,9 +86,11 @@ export async function GET(request: Request) {
     endDate.setDate(endDate.getDate() - 1) // Yesterday
     
     if (fullBackfill) {
-      // Full backfill from season start (October 2025)
-      startDate = new Date('2025-10-01')
-      console.log(`[Elo Debug] Running full backfill from season start${leagueParam ? ` for ${leagueParam}` : ''}...`)
+      // Full backfill from season start
+      // Soccer seasons start in August, other sports in October
+      const isSoccerLeague = leagueParam && leagueParam.startsWith('soccer_')
+      startDate = isSoccerLeague ? new Date('2025-08-01') : new Date('2025-10-01')
+      console.log(`[Elo Debug] Running full backfill from ${isSoccerLeague ? 'August' : 'October'} 2025${leagueParam ? ` for ${leagueParam}` : ''}...`)
     } else {
       // Backfill last N days (default 7)
       const days = parseInt(daysParam || '7', 10)
