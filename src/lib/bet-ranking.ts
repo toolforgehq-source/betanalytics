@@ -1568,9 +1568,12 @@ export async function analyzeGame(
 
 /**
  * Analyze a single game with Elo but WITHOUT strict filters
- * Returns ALL moneyline bets with Elo data for sport-specific queries
+ * Returns ALL bets (moneylines, spreads, totals) with Elo data for sport-specific queries
  * This ensures users can ask "best NHL bet" and get Elo-based recommendations
- * even if no NHL bets pass the strict filters for "best bet of the day"
+ * even if no bets pass the strict filters for "best bet of the day"
+ * 
+ * IMPORTANT: This function now analyzes ALL bet types (moneylines, spreads, totals)
+ * to ensure sport-specific queries return the truly best bet, not just the best moneyline.
  */
 async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Promise<RankedBet[]> {
   const rankedBets: RankedBet[] = []
@@ -1595,6 +1598,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
     homeRating: number
     awayRating: number
     confidence: string
+    homeEffectiveRating?: number
+    awayEffectiveRating?: number
   } | null = null
   
   if (eloLeague) {
@@ -1619,7 +1624,9 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
             probability: injuryResult.probability,
             homeRating: injuryResult.homeRating,
             awayRating: injuryResult.awayRating,
-            confidence: injuryResult.confidence
+            confidence: injuryResult.confidence,
+            homeEffectiveRating: injuryResult.homeEffectiveRating,
+            awayEffectiveRating: injuryResult.awayEffectiveRating
           }
         }
       } else {
@@ -1650,6 +1657,9 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
     console.log(`[analyzeGameForSportQuery] Using Elo with very_low confidence for ${game.homeTeam} vs ${game.awayTeam} (${game.sportName})`)
   }
   
+  // ============================================
+  // MONEYLINE ANALYSIS
+  // ============================================
   // Analyze both teams - NO strict filters, just basic requirements
   for (const team of [game.homeTeam, game.awayTeam]) {
     // First try to get best price - this is required
@@ -1709,6 +1719,252 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
       })),
       score,
       calculatedAt: now
+    })
+  }
+  
+  // ============================================
+  // SPREAD ANALYSIS - uses Elo-based cover probability
+  // ============================================
+  if (game.spreads && game.spreads.length > 0 && eloResult) {
+    // Group spreads by team and line
+    const spreadLines = new Map<string, { outcome: { name: string; price: number; point: number }; book: string }[]>()
+    
+    for (const spread of game.spreads) {
+      for (const outcome of spread.outcomes) {
+        if (outcome.point !== undefined) {
+          const key = `${outcome.name}|${outcome.point}`
+          if (!spreadLines.has(key)) spreadLines.set(key, [])
+          spreadLines.get(key)!.push({ outcome: { ...outcome, point: outcome.point }, book: spread.bookmaker })
+        }
+      }
+    }
+    
+    // Evaluate each unique spread line
+    spreadLines.forEach((entries, key) => {
+      const [teamName, pointStr] = key.split('|')
+      const point = parseFloat(pointStr)
+      
+      // Find best price across all books
+      const bestEntry = entries.reduce((best, curr) => 
+        curr.outcome.price > best.outcome.price ? curr : best
+      )
+      
+      // Only filter out extremely bad odds (worse than -500)
+      if (bestEntry.outcome.price < -500) return
+      
+      // Determine if this is for home or away team
+      const isHomeTeam = teamName === game.homeTeam || 
+                         teamName.toLowerCase() === game.homeTeam.toLowerCase()
+      
+      // Use effective ratings if available (injury-adjusted), otherwise use base ratings
+      const homeElo = eloResult.homeEffectiveRating ?? eloResult.homeRating
+      const awayElo = eloResult.awayEffectiveRating ?? eloResult.awayRating
+      
+      // Calculate Elo-based spread cover probability
+      const spreadFromHomePerspective = isHomeTeam ? point : -point
+      const spreadResult = calculateSpreadCoverProbability(
+        homeElo,
+        awayElo,
+        spreadFromHomePerspective,
+        eloLeague,
+        isHomeTeam
+      )
+      
+      const eloCoverProb = spreadResult.probability
+      
+      // Calculate implied probability from best price
+      const impliedProb = americanToImpliedProbability(bestEntry.outcome.price)
+      
+      // Edge is Elo probability - implied probability (our model vs market)
+      const edge = eloCoverProb - impliedProb
+      
+      // Calculate EV and ROI using Elo probability
+      const ev = calculateExpectedValue(bestEntry.outcome.price, eloCoverProb)
+      const roi = calculateROI(ev)
+      
+      // Calculate score
+      const score = calculateBetScore(eloCoverProb, edge, roi)
+      
+      // Collect all book prices for this spread
+      const allBookPrices = entries.map(e => ({
+        book: e.book,
+        price: e.outcome.price,
+        impliedProb: Math.round(americanToImpliedProbability(e.outcome.price) * 1000) / 10
+      }))
+      
+      rankedBets.push({
+        gameId: game.id,
+        sport: game.sport,
+        sportName: game.sportName,
+        homeTeam: game.homeTeam,
+        awayTeam: game.awayTeam,
+        commenceTime: game.commenceTime,
+        team: teamName,
+        betType: 'spread',
+        line: point,
+        consensusProbability: Math.round(eloCoverProb * 1000) / 10,
+        bestPrice: bestEntry.outcome.price,
+        bestBook: bestEntry.book,
+        impliedProbability: Math.round(impliedProb * 1000) / 10,
+        edge: Math.round(edge * 1000) / 10,
+        eloProbability: Math.round(eloCoverProb * 1000) / 10,
+        eloConfidence: spreadResult.confidence,
+        homeElo: homeElo,
+        awayElo: awayElo,
+        expectedValue: Math.round(ev * 100) / 100,
+        roi: Math.round(roi * 100) / 100,
+        allBookPrices,
+        score,
+        calculatedAt: now
+      })
+    })
+  }
+  
+  // ============================================
+  // TOTAL (OVER/UNDER) ANALYSIS - uses Elo-based total probability
+  // ============================================
+  if (game.totals && game.totals.length > 0 && eloResult) {
+    // Group totals by line value
+    const totalLines = new Map<number, { outcome: { name: string; price: number; point: number }; book: string }[]>()
+    
+    for (const total of game.totals) {
+      for (const outcome of total.outcomes) {
+        if (outcome.point !== undefined) {
+          const line = outcome.point
+          if (!totalLines.has(line)) totalLines.set(line, [])
+          totalLines.get(line)!.push({ 
+            outcome: { name: outcome.name, price: outcome.price, point: line }, 
+            book: total.bookmaker 
+          })
+        }
+      }
+    }
+    
+    // Use effective ratings if available (injury-adjusted), otherwise use base ratings
+    const homeElo = eloResult.homeEffectiveRating ?? eloResult.homeRating
+    const awayElo = eloResult.awayEffectiveRating ?? eloResult.awayRating
+    
+    // Evaluate each unique total line
+    totalLines.forEach((entries, line) => {
+      // Separate over and under entries
+      const overEntries = entries.filter(e => e.outcome.name.toLowerCase() === 'over')
+      const underEntries = entries.filter(e => e.outcome.name.toLowerCase() === 'under')
+      
+      // Analyze OVER bets
+      if (overEntries.length > 0) {
+        const bestOverEntry = overEntries.reduce((best, curr) => 
+          curr.outcome.price > best.outcome.price ? curr : best
+        )
+        
+        // Only filter out extremely bad odds (worse than -500)
+        if (bestOverEntry.outcome.price >= -500) {
+          // Calculate Elo-based over probability
+          const overResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, true)
+          const eloOverProb = overResult.probability
+          
+          // Calculate implied probability from best price
+          const impliedProb = americanToImpliedProbability(bestOverEntry.outcome.price)
+          
+          // Edge is Elo probability - implied probability
+          const edge = eloOverProb - impliedProb
+          
+          // Calculate EV and ROI
+          const ev = calculateExpectedValue(bestOverEntry.outcome.price, eloOverProb)
+          const roi = calculateROI(ev)
+          
+          const score = calculateBetScore(eloOverProb, edge, roi)
+          
+          const allBookPrices = overEntries.map(e => ({
+            book: e.book,
+            price: e.outcome.price,
+            impliedProb: Math.round(americanToImpliedProbability(e.outcome.price) * 1000) / 10
+          }))
+          
+          rankedBets.push({
+            gameId: game.id,
+            sport: game.sport,
+            sportName: game.sportName,
+            homeTeam: game.homeTeam,
+            awayTeam: game.awayTeam,
+            commenceTime: game.commenceTime,
+            team: 'Over',
+            betType: 'total',
+            line: line,
+            consensusProbability: Math.round(eloOverProb * 1000) / 10,
+            bestPrice: bestOverEntry.outcome.price,
+            bestBook: bestOverEntry.book,
+            impliedProbability: Math.round(impliedProb * 1000) / 10,
+            edge: Math.round(edge * 1000) / 10,
+            eloProbability: Math.round(eloOverProb * 1000) / 10,
+            eloConfidence: overResult.confidence,
+            homeElo: eloResult.homeRating,
+            awayElo: eloResult.awayRating,
+            expectedValue: Math.round(ev * 100) / 100,
+            roi: Math.round(roi * 100) / 100,
+            allBookPrices,
+            score,
+            calculatedAt: now
+          })
+        }
+      }
+      
+      // Analyze UNDER bets
+      if (underEntries.length > 0) {
+        const bestUnderEntry = underEntries.reduce((best, curr) => 
+          curr.outcome.price > best.outcome.price ? curr : best
+        )
+        
+        // Only filter out extremely bad odds (worse than -500)
+        if (bestUnderEntry.outcome.price >= -500) {
+          // Calculate Elo-based under probability
+          const underResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, false)
+          const eloUnderProb = underResult.probability
+          
+          // Calculate implied probability from best price
+          const impliedProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
+          
+          // Edge is Elo probability - implied probability
+          const edge = eloUnderProb - impliedProb
+          
+          // Calculate EV and ROI
+          const ev = calculateExpectedValue(bestUnderEntry.outcome.price, eloUnderProb)
+          const roi = calculateROI(ev)
+          
+          const score = calculateBetScore(eloUnderProb, edge, roi)
+          
+          const allBookPrices = underEntries.map(e => ({
+            book: e.book,
+            price: e.outcome.price,
+            impliedProb: Math.round(americanToImpliedProbability(e.outcome.price) * 1000) / 10
+          }))
+          
+          rankedBets.push({
+            gameId: game.id,
+            sport: game.sport,
+            sportName: game.sportName,
+            homeTeam: game.homeTeam,
+            awayTeam: game.awayTeam,
+            commenceTime: game.commenceTime,
+            team: 'Under',
+            betType: 'total',
+            line: line,
+            consensusProbability: Math.round(eloUnderProb * 1000) / 10,
+            bestPrice: bestUnderEntry.outcome.price,
+            bestBook: bestUnderEntry.book,
+            impliedProbability: Math.round(impliedProb * 1000) / 10,
+            edge: Math.round(edge * 1000) / 10,
+            eloProbability: Math.round(eloUnderProb * 1000) / 10,
+            eloConfidence: underResult.confidence,
+            homeElo: eloResult.homeRating,
+            awayElo: eloResult.awayRating,
+            expectedValue: Math.round(ev * 100) / 100,
+            roi: Math.round(roi * 100) / 100,
+            allBookPrices,
+            score,
+            calculatedAt: now
+          })
+        }
+      }
     })
   }
   
@@ -2360,12 +2616,32 @@ export interface GameAnalysisResult {
 /**
  * Analyze a specific game and return all betting options with full analysis
  * This is used for on-demand analysis when a user asks about a specific game
+ * 
+ * IMPORTANT: Now accepts optional injuries parameter to ensure injury-adjusted
+ * Elo ratings are used when available. Previously this function called analyzeGame
+ * without injuries, resulting in "dumb" analysis that ignored injury data.
  */
-export async function analyzeSpecificGame(game: Game): Promise<GameAnalysisResult> {
+export async function analyzeSpecificGame(
+  game: Game,
+  injuries?: InjuryInfo[]
+): Promise<GameAnalysisResult> {
   const now = new Date().toISOString()
   
+  // Extract injury data from enriched game if not provided
+  // This ensures we use injury data when available even if caller doesn't pass it
+  let injuriesToUse = injuries
+  if (!injuriesToUse) {
+    const enrichedGame = game as EnrichedGame
+    const espnInjuries = enrichedGame.espnData?.injuries || []
+    if (espnInjuries.length > 0) {
+      injuriesToUse = convertESPNInjuriesToInjuryInfo(espnInjuries)
+      console.log(`[analyzeSpecificGame] Extracted ${injuriesToUse.length} injuries from enriched game data`)
+    }
+  }
+  
   // Analyze the game to get all betting options
-  const bets = await analyzeGame(game)
+  // Pass injuries to ensure injury-adjusted Elo ratings are used
+  const bets = await analyzeGame(game, injuriesToUse)
   
   // Prefer Elo-powered bets, but fall back to all bets if Elo isn't available
   // This ensures game-specific queries always return useful analysis
