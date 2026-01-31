@@ -198,6 +198,126 @@ const TEAM_TIMEZONES: Record<string, number> = {
   'Tampa Bay Buccaneers': -5, 'Arizona Cardinals': -7, 'San Francisco 49ers': -8, 'Seattle Seahawks': -8,
 }
 
+// Team coordinates (lat, lng) for actual travel distance calculation
+// Used to calculate miles traveled for enhanced situational factors
+const TEAM_COORDINATES: Record<string, { lat: number; lng: number; city: string }> = {
+  // NBA Teams
+  'Boston Celtics': { lat: 42.3662, lng: -71.0621, city: 'Boston' },
+  'Brooklyn Nets': { lat: 40.6826, lng: -73.9754, city: 'Brooklyn' },
+  'New York Knicks': { lat: 40.7505, lng: -73.9934, city: 'New York' },
+  'Philadelphia 76ers': { lat: 39.9012, lng: -75.1720, city: 'Philadelphia' },
+  'Toronto Raptors': { lat: 43.6435, lng: -79.3791, city: 'Toronto' },
+  'Chicago Bulls': { lat: 41.8807, lng: -87.6742, city: 'Chicago' },
+  'Cleveland Cavaliers': { lat: 41.4965, lng: -81.6882, city: 'Cleveland' },
+  'Detroit Pistons': { lat: 42.3410, lng: -83.0550, city: 'Detroit' },
+  'Indiana Pacers': { lat: 39.7640, lng: -86.1555, city: 'Indianapolis' },
+  'Milwaukee Bucks': { lat: 43.0451, lng: -87.9174, city: 'Milwaukee' },
+  'Atlanta Hawks': { lat: 33.7573, lng: -84.3963, city: 'Atlanta' },
+  'Charlotte Hornets': { lat: 35.2251, lng: -80.8392, city: 'Charlotte' },
+  'Miami Heat': { lat: 25.7814, lng: -80.1870, city: 'Miami' },
+  'Orlando Magic': { lat: 28.5392, lng: -81.3839, city: 'Orlando' },
+  'Washington Wizards': { lat: 38.8981, lng: -77.0209, city: 'Washington DC' },
+  'Denver Nuggets': { lat: 39.7487, lng: -105.0077, city: 'Denver' },
+  'Minnesota Timberwolves': { lat: 44.9795, lng: -93.2761, city: 'Minneapolis' },
+  'Oklahoma City Thunder': { lat: 35.4634, lng: -97.5151, city: 'Oklahoma City' },
+  'Portland Trail Blazers': { lat: 45.5316, lng: -122.6668, city: 'Portland' },
+  'Utah Jazz': { lat: 40.7683, lng: -111.9011, city: 'Salt Lake City' },
+  'Golden State Warriors': { lat: 37.7680, lng: -122.3877, city: 'San Francisco' },
+  'LA Clippers': { lat: 34.0430, lng: -118.2673, city: 'Los Angeles' },
+  'Los Angeles Lakers': { lat: 34.0430, lng: -118.2673, city: 'Los Angeles' },
+  'Phoenix Suns': { lat: 33.4457, lng: -112.0712, city: 'Phoenix' },
+  'Sacramento Kings': { lat: 38.5802, lng: -121.4997, city: 'Sacramento' },
+  'Dallas Mavericks': { lat: 32.7905, lng: -96.8103, city: 'Dallas' },
+  'Houston Rockets': { lat: 29.7508, lng: -95.3621, city: 'Houston' },
+  'Memphis Grizzlies': { lat: 35.1382, lng: -90.0505, city: 'Memphis' },
+  'New Orleans Pelicans': { lat: 29.9490, lng: -90.0821, city: 'New Orleans' },
+  'San Antonio Spurs': { lat: 29.4270, lng: -98.4375, city: 'San Antonio' },
+  // NHL Teams
+  'Boston Bruins': { lat: 42.3662, lng: -71.0621, city: 'Boston' },
+  'Buffalo Sabres': { lat: 42.8750, lng: -78.8764, city: 'Buffalo' },
+  'Detroit Red Wings': { lat: 42.3410, lng: -83.0550, city: 'Detroit' },
+  'Florida Panthers': { lat: 26.1584, lng: -80.3256, city: 'Sunrise' },
+  'Montreal Canadiens': { lat: 45.4961, lng: -73.5693, city: 'Montreal' },
+  'Ottawa Senators': { lat: 45.2969, lng: -75.9269, city: 'Ottawa' },
+  'Tampa Bay Lightning': { lat: 27.9425, lng: -82.4519, city: 'Tampa' },
+  'Toronto Maple Leafs': { lat: 43.6435, lng: -79.3791, city: 'Toronto' },
+  'Carolina Hurricanes': { lat: 35.8033, lng: -78.7220, city: 'Raleigh' },
+  'Columbus Blue Jackets': { lat: 39.9692, lng: -83.0061, city: 'Columbus' },
+  'New Jersey Devils': { lat: 40.7334, lng: -74.1712, city: 'Newark' },
+  'New York Islanders': { lat: 40.6826, lng: -73.9754, city: 'Brooklyn' },
+  'New York Rangers': { lat: 40.7505, lng: -73.9934, city: 'New York' },
+  'Philadelphia Flyers': { lat: 39.9012, lng: -75.1720, city: 'Philadelphia' },
+  'Pittsburgh Penguins': { lat: 40.4395, lng: -79.9892, city: 'Pittsburgh' },
+  'Washington Capitals': { lat: 38.8981, lng: -77.0209, city: 'Washington DC' },
+  'Arizona Coyotes': { lat: 33.5319, lng: -112.2612, city: 'Tempe' },
+  'Chicago Blackhawks': { lat: 41.8807, lng: -87.6742, city: 'Chicago' },
+  'Colorado Avalanche': { lat: 39.7487, lng: -105.0077, city: 'Denver' },
+  'Dallas Stars': { lat: 32.7905, lng: -96.8103, city: 'Dallas' },
+  'Minnesota Wild': { lat: 44.9448, lng: -93.1010, city: 'St. Paul' },
+  'Nashville Predators': { lat: 36.1591, lng: -86.7785, city: 'Nashville' },
+  'St. Louis Blues': { lat: 38.6268, lng: -90.2027, city: 'St. Louis' },
+  'Winnipeg Jets': { lat: 49.8925, lng: -97.1436, city: 'Winnipeg' },
+  'Anaheim Ducks': { lat: 33.8078, lng: -117.8765, city: 'Anaheim' },
+  'Calgary Flames': { lat: 51.0374, lng: -114.0519, city: 'Calgary' },
+  'Edmonton Oilers': { lat: 53.5469, lng: -113.4979, city: 'Edmonton' },
+  'Los Angeles Kings': { lat: 34.0430, lng: -118.2673, city: 'Los Angeles' },
+  'San Jose Sharks': { lat: 37.3328, lng: -121.9013, city: 'San Jose' },
+  'Seattle Kraken': { lat: 47.6221, lng: -122.3540, city: 'Seattle' },
+  'Vancouver Canucks': { lat: 49.2778, lng: -123.1089, city: 'Vancouver' },
+  'Vegas Golden Knights': { lat: 36.1029, lng: -115.1785, city: 'Las Vegas' },
+}
+
+/**
+ * Calculate distance between two coordinates in miles using Haversine formula
+ */
+function calculateDistanceMiles(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 3959 // Earth's radius in miles
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng / 2) * Math.sin(dLng / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return Math.round(R * c)
+}
+
+/**
+ * Get team coordinates by fuzzy matching team name
+ */
+function getTeamCoordinates(teamName: string): { lat: number; lng: number; city: string } | null {
+  const normalized = normalizeTeamName(teamName)
+  
+  for (const [team, coords] of Object.entries(TEAM_COORDINATES)) {
+    if (normalizeTeamName(team).includes(normalized) || normalized.includes(normalizeTeamName(team))) {
+      return coords
+    }
+  }
+  
+  // Try partial match on city or team nickname
+  for (const [team, coords] of Object.entries(TEAM_COORDINATES)) {
+    const teamParts = normalizeTeamName(team).split(' ')
+    if (teamParts.some(part => normalized.includes(part) && part.length > 3)) {
+      return coords
+    }
+  }
+  
+  return null
+}
+
+/**
+ * Calculate actual travel distance in miles between two teams
+ */
+export function calculateTravelDistanceMiles(awayTeam: string, homeTeam: string): number | null {
+  const awayCoords = getTeamCoordinates(awayTeam)
+  const homeCoords = getTeamCoordinates(homeTeam)
+  
+  if (!awayCoords || !homeCoords) {
+    return null
+  }
+  
+  return calculateDistanceMiles(awayCoords.lat, awayCoords.lng, homeCoords.lat, homeCoords.lng)
+}
+
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
@@ -615,4 +735,202 @@ export function getSituationalSummary(
   }
   
   return factors.join(' | ')
+}
+
+/**
+ * Enhanced situational factors interface with detailed data
+ */
+export interface EnhancedSituationalData {
+  homeTeam: string
+  awayTeam: string
+  // Rest data
+  homeRestDays: number | null
+  awayRestDays: number | null
+  homeLastOpponent: string | null
+  awayLastOpponent: string | null
+  homeIsBackToBack: boolean
+  awayIsBackToBack: boolean
+  // Travel data
+  travelDistanceMiles: number | null
+  timezoneChange: number
+  // Recent form
+  homeLast10: { wins: number; losses: number } | null
+  awayLast10: { wins: number; losses: number } | null
+  homeStreak: string | null  // e.g., "W4" or "L2"
+  awayStreak: string | null
+  // Adjustments
+  restAdjustment: number  // Positive favors home
+  travelAdjustment: number  // Positive favors home (away team traveled)
+  formAdjustment: number  // Positive favors home
+  totalAdjustment: number
+}
+
+/**
+ * Format enhanced situational factors in simplified bullet format
+ * Example: "- Rest: Lakers back-to-back (played DEN Wed), Wizards 3 days rest (+2% WAS)"
+ */
+export function formatEnhancedSituationalFactors(data: EnhancedSituationalData): string {
+  const lines: string[] = []
+  
+  // Rest factor
+  const restLine = formatRestFactor(data)
+  if (restLine) {
+    lines.push(restLine)
+  }
+  
+  // Travel factor
+  const travelLine = formatTravelFactor(data)
+  if (travelLine) {
+    lines.push(travelLine)
+  }
+  
+  // Recent form factor
+  const formLine = formatFormFactor(data)
+  if (formLine) {
+    lines.push(formLine)
+  }
+  
+  if (lines.length === 0) {
+    return '- Situational factors: No significant edges detected'
+  }
+  
+  return lines.join('\n')
+}
+
+function formatRestFactor(data: EnhancedSituationalData): string | null {
+  const parts: string[] = []
+  
+  // Home team rest
+  if (data.homeIsBackToBack) {
+    const opponent = data.homeLastOpponent ? ` (played ${data.homeLastOpponent})` : ''
+    parts.push(`${getShortName(data.homeTeam)} back-to-back${opponent}`)
+  } else if (data.homeRestDays !== null) {
+    parts.push(`${getShortName(data.homeTeam)} ${data.homeRestDays} days rest`)
+  }
+  
+  // Away team rest
+  if (data.awayIsBackToBack) {
+    const opponent = data.awayLastOpponent ? ` (played ${data.awayLastOpponent})` : ''
+    parts.push(`${getShortName(data.awayTeam)} back-to-back${opponent}`)
+  } else if (data.awayRestDays !== null) {
+    parts.push(`${getShortName(data.awayTeam)} ${data.awayRestDays} days rest`)
+  }
+  
+  if (parts.length === 0) {
+    return null
+  }
+  
+  // Add adjustment
+  const adjPct = Math.abs(data.restAdjustment * 100).toFixed(0)
+  let adjText = ''
+  if (data.restAdjustment > 0.005) {
+    adjText = ` (+${adjPct}% ${getShortName(data.homeTeam)})`
+  } else if (data.restAdjustment < -0.005) {
+    adjText = ` (+${adjPct}% ${getShortName(data.awayTeam)})`
+  }
+  
+  return `- Rest: ${parts.join(', ')}${adjText}`
+}
+
+function formatTravelFactor(data: EnhancedSituationalData): string | null {
+  if (!data.travelDistanceMiles || data.travelDistanceMiles < 500) {
+    return null
+  }
+  
+  const miles = data.travelDistanceMiles.toLocaleString()
+  let tzText = ''
+  if (data.timezoneChange > 0) {
+    tzText = `, ${data.timezoneChange}hr timezone change`
+  }
+  
+  // Add adjustment
+  const adjPct = Math.abs(data.travelAdjustment * 100).toFixed(0)
+  let adjText = ''
+  if (data.travelAdjustment > 0.005) {
+    adjText = ` (+${adjPct}% ${getShortName(data.homeTeam)})`
+  }
+  
+  return `- Travel: ${getShortName(data.awayTeam)} traveled ${miles} miles${tzText}${adjText}`
+}
+
+function formatFormFactor(data: EnhancedSituationalData): string | null {
+  const parts: string[] = []
+  
+  // Home team form
+  if (data.homeLast10) {
+    const record = `${data.homeLast10.wins}-${data.homeLast10.losses}`
+    const streak = data.homeStreak ? `, ${data.homeStreak}` : ''
+    parts.push(`${getShortName(data.homeTeam)} ${record} L10${streak}`)
+  }
+  
+  // Away team form
+  if (data.awayLast10) {
+    const record = `${data.awayLast10.wins}-${data.awayLast10.losses}`
+    const streak = data.awayStreak ? `, ${data.awayStreak}` : ''
+    parts.push(`${getShortName(data.awayTeam)} ${record} L10${streak}`)
+  }
+  
+  if (parts.length === 0) {
+    return null
+  }
+  
+  // Add adjustment
+  const adjPct = Math.abs(data.formAdjustment * 100).toFixed(0)
+  let adjText = ''
+  if (data.formAdjustment > 0.005) {
+    adjText = ` (+${adjPct}% ${getShortName(data.homeTeam)})`
+  } else if (data.formAdjustment < -0.005) {
+    adjText = ` (+${adjPct}% ${getShortName(data.awayTeam)})`
+  }
+  
+  return `- Form: ${parts.join(', ')}${adjText}`
+}
+
+/**
+ * Get short team name (last word of team name)
+ * e.g., "Los Angeles Lakers" -> "Lakers"
+ */
+function getShortName(teamName: string): string {
+  const parts = teamName.split(' ')
+  return parts[parts.length - 1]
+}
+
+/**
+ * Build enhanced situational data from factors and adjustments
+ */
+export function buildEnhancedSituationalData(
+  homeTeam: string,
+  awayTeam: string,
+  homeFactors: SituationalFactors,
+  awayFactors: SituationalFactors,
+  homeAdjustment: SituationalAdjustment,
+  awayAdjustment: SituationalAdjustment
+): EnhancedSituationalData {
+  // Calculate travel distance in miles
+  const travelMiles = calculateTravelDistanceMiles(awayTeam, homeTeam)
+  
+  return {
+    homeTeam,
+    awayTeam,
+    // Rest data
+    homeRestDays: homeFactors.restDays,
+    awayRestDays: awayFactors.restDays,
+    homeLastOpponent: null,  // Would need to be passed in from ESPN data
+    awayLastOpponent: null,
+    homeIsBackToBack: homeFactors.isBackToBack,
+    awayIsBackToBack: awayFactors.isBackToBack,
+    // Travel data
+    travelDistanceMiles: travelMiles,
+    timezoneChange: awayFactors.timezoneChange,
+    // Recent form
+    homeLast10: homeFactors.last10Record,
+    awayLast10: awayFactors.last10Record,
+    homeStreak: null,  // Would need to be calculated from recent games
+    awayStreak: null,
+    // Adjustments (from home team's perspective)
+    restAdjustment: homeAdjustment.breakdown.restAdvantage + homeAdjustment.breakdown.backToBack,
+    travelAdjustment: -awayAdjustment.breakdown.travel,  // Away team's travel penalty benefits home
+    formAdjustment: homeAdjustment.breakdown.recentForm - awayAdjustment.breakdown.recentForm,
+    totalAdjustment: homeAdjustment.totalAdjustment - awayAdjustment.totalAdjustment,
+  }
 }

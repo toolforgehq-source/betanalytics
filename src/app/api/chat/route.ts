@@ -5,7 +5,7 @@ import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
 import { getCachedESPNOdds, getCachedESPNData, type ESPNOdds, type ESPNInjury } from "@/lib/espn"
-import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet } from "@/lib/bet-ranking"
+import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext } from "@/lib/bet-ranking"
 import type { RankedBet, BestBetResult } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 
@@ -1076,8 +1076,9 @@ function detectBestBetQuestion(userMessage: string): { excludeSports: string[]; 
 
 /**
  * Detect if the user is asking for a parlay recommendation
+ * Returns the number of legs requested (default 3) or null if not a parlay question
  */
-function detectParlayQuestion(userMessage: string): boolean {
+function detectParlayQuestion(userMessage: string): { isParlay: boolean; legCount: number } | null {
   const normalizedMessage = userMessage.toLowerCase()
   
   const parlayPatterns = [
@@ -1087,7 +1088,32 @@ function detectParlayQuestion(userMessage: string): boolean {
     /\baccumulator\b/i,
   ]
   
-  return parlayPatterns.some(pattern => pattern.test(normalizedMessage))
+  const isParlay = parlayPatterns.some(pattern => pattern.test(normalizedMessage))
+  if (!isParlay) return null
+  
+  // Extract number of legs if specified
+  const legPatterns = [
+    /(\d+)[- ]?leg/i,           // "3-leg", "3 leg"
+    /(\d+)[- ]?team/i,          // "3-team"
+    /(\d+)[- ]?pick/i,          // "3-pick"
+    /build\s+(?:me\s+)?a?\s*(\d+)/i,  // "build me a 3"
+    /give\s+(?:me\s+)?a?\s*(\d+)/i,   // "give me a 3"
+    /show\s+(?:me\s+)?a?\s*(\d+)/i,   // "show me a 3"
+  ]
+  
+  for (const pattern of legPatterns) {
+    const match = normalizedMessage.match(pattern)
+    if (match && match[1]) {
+      const legCount = parseInt(match[1], 10)
+      // Limit to 2-6 legs for reasonable parlays
+      if (legCount >= 2 && legCount <= 6) {
+        return { isParlay: true, legCount }
+      }
+    }
+  }
+  
+  // Default to 3 legs if no specific count requested
+  return { isParlay: true, legCount: 3 }
 }
 
 // Extended Game type with ESPN data for injury support
@@ -1471,6 +1497,7 @@ CRITICAL RULES:
 5. When comparing options, use the Elo data to explain why one is better
 6. When asked for opinions, base them on the Elo edge and confidence scores
 7. Remember context from the conversation - "this game", "these bets", etc. refer to previously discussed items
+8. When mentioning injuries, include the timestamp from the data (e.g., "Injury data as of 2:34 PM ET")
 
 TONE GUIDELINES (IMPORTANT):
 - Sound like a professional analyst with data, NOT an excited gambler hyping picks
@@ -1669,20 +1696,77 @@ export async function POST(request: Request) {
     }
     
     // Check for parlay questions
-    const isParlayQuestion = detectParlayQuestion(userMessageContent)
-    if (isParlayQuestion) {
-      console.log(`[chat] Detected parlay question`)
+    const parlayDetection = detectParlayQuestion(userMessageContent)
+    if (parlayDetection) {
+      const { legCount } = parlayDetection
+      console.log(`[chat] Detected parlay question - ${legCount} legs requested`)
       try {
+        // First try to compute enhanced parlay on-demand with requested leg count
+        const espnOdds = await getCachedESPNOdds()
+        
+        if (espnOdds.games.length > 0) {
+          // Convert ESPN odds to enriched games for parlay computation
+          const enrichedGames = await convertESPNOddsToEnrichedGames(espnOdds)
+          const bestBetResult = await computeBestBets(enrichedGames)
+          
+          if (bestBetResult.allEloBets && bestBetResult.allEloBets.length >= legCount) {
+            // Compute enhanced parlay with requested leg count
+            const enhancedParlay = computeEnhancedParlay(bestBetResult.allEloBets, legCount, true)
+            
+            if (enhancedParlay) {
+              const eloAnalysisData = formatEnhancedParlayForContext(enhancedParlay)
+              console.log(`[chat] Generating conversational response for ${legCount}-leg parlay with ${enhancedParlay.legs.length} legs`)
+              
+              // Generate conversational response using Elo data as source of truth
+              const conversationalResponse = await generateConversationalResponse(
+                anthropic,
+                eloAnalysisData,
+                userMessageContent,
+                conversationHistory
+              )
+              
+              // Save messages to database
+              await db.messages.create({
+                conversationId: conversation.id,
+                role: 'user',
+                content: userMessage.content,
+              })
+              
+              await db.messages.create({
+                conversationId: conversation.id,
+                role: 'assistant',
+                content: conversationalResponse,
+              })
+              
+              await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+              
+              // Update question count for non-subscribers
+              if (!subStatus.isSubscribed) {
+                const user = await db.users.findById(session.user.id)
+                if (user) {
+                  await db.users.update(session.user.id, { 
+                    questionCount: (user.questionCount || 0) + 1
+                  })
+                }
+              }
+              
+              // Return conversational response
+              return NextResponse.json({ 
+                message: conversationalResponse,
+                questionsRemaining: subStatus.isSubscribed 
+                  ? -1 
+                  : Math.max(0, subStatus.questionsRemaining - 1)
+              })
+            }
+          }
+        }
+        
+        // Fallback to cached parlay if enhanced parlay computation fails
         const parlay = await getCachedParlay()
         if (parlay && parlay.safeParlay && parlay.safeParlay.length > 0) {
-          // ALWAYS use cached parlay - it's computed with proper moneyline-only filtering
-          // and value-based selection. Falling through to LLM causes:
-          // 1. Mixed bet types (totals in parlays)
-          // 2. Unrealistic probabilities (LLM hallucination)
-          // 3. OVER/UNDER contradictions
           const hasEloData = parlay.safeParlay.some(leg => leg.eloProbability != null)
           const eloAnalysisData = formatParlayForContext(parlay)
-          console.log(`[chat] Generating conversational response for parlay with ${parlay.safeParlay.length} legs (Elo data: ${hasEloData})`)
+          console.log(`[chat] Fallback: Using cached parlay with ${parlay.safeParlay.length} legs (Elo data: ${hasEloData})`)
           
           // Generate conversational response using Elo data as source of truth
           const conversationalResponse = await generateConversationalResponse(
