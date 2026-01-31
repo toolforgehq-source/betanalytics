@@ -8,6 +8,7 @@ import { getCachedESPNOdds, getCachedESPNData, type ESPNOdds, type ESPNInjury } 
 import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext } from "@/lib/bet-ranking"
 import type { RankedBet, BestBetResult } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
+import { storePick, getAllPicks } from "@/lib/pick-tracking"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
 
@@ -1648,6 +1649,44 @@ export async function POST(request: Request) {
         const eloAnalysisData = formatGameAnalysisForContext(gameAnalysis)
         console.log(`[chat] Game analysis complete: ${gameAnalysis.bets.length} betting options found`)
         
+        // Track the best bet from game analysis for outcome tracking
+        if (gameAnalysis.bets.length > 0) {
+          try {
+            const bestBet = gameAnalysis.bets[0] // First bet is the best one (sorted by score)
+            const existingPicks = await getAllPicks()
+            const alreadyTracked = existingPicks.some(p => 
+              p.gameId === detectedGame.id && 
+              p.team === bestBet.team &&
+              p.betType === bestBet.betType &&
+              p.pickType === 'game_specific' &&
+              p.status === 'pending'
+            )
+            
+            if (!alreadyTracked) {
+              await storePick({
+                gameId: detectedGame.id,
+                sport: detectedGame.sport,
+                sportName: detectedGame.sportName,
+                homeTeam: gameAnalysis.game.homeTeam,
+                awayTeam: gameAnalysis.game.awayTeam,
+                gameTime: detectedGame.commenceTime,
+                pickType: 'game_specific',
+                team: bestBet.team,
+                betType: bestBet.betType,
+                line: bestBet.line,
+                odds: bestBet.bestPrice,
+                consensusProbability: bestBet.eloProbability ? bestBet.eloProbability * 100 : 0,
+                impliedProbability: bestBet.impliedProbability,
+                edge: bestBet.edge,
+                bestBook: bestBet.bestBook
+              })
+              console.log(`[chat] Tracked game analysis recommendation: ${bestBet.team} ${bestBet.betType}`)
+            }
+          } catch (trackErr) {
+            console.error('[chat] Error tracking game analysis bet:', trackErr)
+          }
+        }
+        
         // Generate conversational response using Elo data as source of truth
         console.log(`[chat] Generating conversational response for game analysis`)
         const conversationalResponse = await generateConversationalResponse(
@@ -1714,6 +1753,43 @@ export async function POST(request: Request) {
             const enhancedParlay = computeEnhancedParlay(bestBetResult.allEloBets, legCount, true)
             
             if (enhancedParlay) {
+              // Track each parlay leg for outcome tracking
+              try {
+                const existingPicks = await getAllPicks()
+                for (const leg of enhancedParlay.legs) {
+                  const alreadyTracked = existingPicks.some(p => 
+                    p.gameId === leg.gameId && 
+                    p.team === leg.team &&
+                    p.betType === leg.betType &&
+                    p.pickType === 'parlay_leg' &&
+                    p.status === 'pending'
+                  )
+                  
+                  if (!alreadyTracked) {
+                    await storePick({
+                      gameId: leg.gameId,
+                      sport: leg.sport,
+                      sportName: leg.sportName,
+                      homeTeam: leg.homeTeam,
+                      awayTeam: leg.awayTeam,
+                      gameTime: leg.commenceTime,
+                      pickType: 'parlay_leg',
+                      team: leg.team,
+                      betType: leg.betType,
+                      line: leg.line,
+                      odds: leg.bestPrice,
+                      consensusProbability: leg.consensusProbability,
+                      impliedProbability: leg.impliedProbability,
+                      edge: leg.edge,
+                      bestBook: leg.bestBook
+                    })
+                    console.log(`[chat] Tracked parlay leg: ${leg.team} ${leg.betType}`)
+                  }
+                }
+              } catch (trackErr) {
+                console.error('[chat] Error tracking parlay legs:', trackErr)
+              }
+              
               const eloAnalysisData = formatEnhancedParlayForContext(enhancedParlay)
               console.log(`[chat] Generating conversational response for ${legCount}-leg parlay with ${enhancedParlay.legs.length} legs`)
               
@@ -1906,6 +1982,42 @@ export async function POST(request: Request) {
             const result = getFilteredBestBetWithElo(sportBets, bestBetFilter.excludeSports, bestBetFilter.includeSports)
             
             if (result.bet) {
+              // Track this recommendation for outcome tracking
+              // Only track if we haven't already tracked this exact bet today
+              try {
+                const existingPicks = await getAllPicks()
+                const alreadyTracked = existingPicks.some(p => 
+                  p.gameId === result.bet!.gameId && 
+                  p.team === result.bet!.team &&
+                  p.betType === result.bet!.betType &&
+                  p.pickType === 'best_bet' &&
+                  p.status === 'pending'
+                )
+                
+                if (!alreadyTracked) {
+                  await storePick({
+                    gameId: result.bet.gameId,
+                    sport: result.bet.sport,
+                    sportName: result.bet.sportName,
+                    homeTeam: result.bet.homeTeam,
+                    awayTeam: result.bet.awayTeam,
+                    gameTime: result.bet.commenceTime,
+                    pickType: 'best_bet',
+                    team: result.bet.team,
+                    betType: result.bet.betType,
+                    line: result.bet.line,
+                    odds: result.bet.bestPrice,
+                    consensusProbability: result.bet.consensusProbability,
+                    impliedProbability: result.bet.impliedProbability,
+                    edge: result.bet.edge,
+                    bestBook: result.bet.bestBook
+                  })
+                  console.log(`[chat] Tracked sport-specific recommendation: ${result.bet.team} ${result.bet.betType}`)
+                }
+              } catch (trackErr) {
+                console.error('[chat] Error tracking sport-specific bet:', trackErr)
+              }
+              
               // Get alternatives from allEloBets for "what else?" follow-up questions
               // Filter to same sport if sport-specific query, otherwise show all alternatives
               let alternatives: RankedBet[] = []

@@ -451,6 +451,81 @@ function gradeMoneylinePick(
 }
 
 /**
+ * Determine if a spread pick won based on final scores
+ * Example: If we picked Lakers -3.5 and they won by 5, we won
+ * Example: If we picked Lakers -3.5 and they won by 3, we lost
+ */
+function gradeSpreadPick(
+  pick: StoredPick,
+  homeScore: number,
+  awayScore: number
+): 'won' | 'lost' | 'push' {
+  if (pick.line === undefined || pick.line === null) {
+    // Can't grade without the spread line
+    return 'push'
+  }
+  
+  const pickedTeam = pick.team
+  const isHome = pickedTeam === pick.homeTeam
+  const spread = pick.line // Negative for favorites, positive for underdogs
+  
+  // Calculate the margin from the picked team's perspective
+  // If we picked home team: margin = homeScore - awayScore
+  // If we picked away team: margin = awayScore - homeScore
+  const margin = isHome ? (homeScore - awayScore) : (awayScore - homeScore)
+  
+  // Add the spread to the margin
+  // Example: Lakers -3.5 (spread = -3.5), won by 5 (margin = 5)
+  // Adjusted margin = 5 + (-3.5) = 1.5 > 0, so we won
+  const adjustedMargin = margin + spread
+  
+  if (adjustedMargin > 0) {
+    return 'won'
+  } else if (adjustedMargin < 0) {
+    return 'lost'
+  } else {
+    return 'push'
+  }
+}
+
+/**
+ * Determine if a total (over/under) pick won based on final scores
+ * Example: If we picked Over 220.5 and total was 225, we won
+ * Example: If we picked Under 220.5 and total was 225, we lost
+ */
+function gradeTotalPick(
+  pick: StoredPick,
+  homeScore: number,
+  awayScore: number
+): 'won' | 'lost' | 'push' {
+  if (pick.line === undefined || pick.line === null) {
+    // Can't grade without the total line
+    return 'push'
+  }
+  
+  const totalLine = pick.line
+  const actualTotal = homeScore + awayScore
+  
+  // Determine if this is an Over or Under pick
+  // The team field for totals is typically "Over" or "Under"
+  const isOver = pick.team.toLowerCase().includes('over')
+  const isUnder = pick.team.toLowerCase().includes('under')
+  
+  if (!isOver && !isUnder) {
+    // Can't determine if Over or Under
+    return 'push'
+  }
+  
+  if (actualTotal > totalLine) {
+    return isOver ? 'won' : 'lost'
+  } else if (actualTotal < totalLine) {
+    return isUnder ? 'won' : 'lost'
+  } else {
+    return 'push'
+  }
+}
+
+/**
  * Auto-grade all pending picks using scores from The Odds API
  * Returns the number of picks graded
  */
@@ -545,14 +620,22 @@ export async function autoGradePicks(): Promise<{
       // Grade based on bet type
       let gradeResult: 'won' | 'lost' | 'push'
       let actualResult: string
+      const scoreDisplay = `${gameScore.away_team} ${awayScore} - ${gameScore.home_team} ${homeScore}`
       
       if (pick.betType === 'moneyline') {
         gradeResult = gradeMoneylinePick(pick, homeScore, awayScore)
-        actualResult = `${gameScore.away_team} ${awayScore} - ${gameScore.home_team} ${homeScore}`
+        actualResult = scoreDisplay
+      } else if (pick.betType === 'spread') {
+        gradeResult = gradeSpreadPick(pick, homeScore, awayScore)
+        const margin = homeScore - awayScore
+        actualResult = `${scoreDisplay} (margin: ${margin > 0 ? '+' : ''}${margin}, line: ${pick.line})`
+      } else if (pick.betType === 'total') {
+        gradeResult = gradeTotalPick(pick, homeScore, awayScore)
+        const total = homeScore + awayScore
+        actualResult = `${scoreDisplay} (total: ${total}, line: ${pick.line})`
       } else {
-        // For now, only grade moneyline bets
-        // Spread and total grading would require storing the line at time of pick
-        result.details.push(`Skipping ${pick.betType} bet for ${pick.gameId} (only moneyline auto-grading supported)`)
+        // Unknown bet type (e.g., prop) - skip for now
+        result.details.push(`Skipping ${pick.betType} bet for ${pick.gameId} (unsupported bet type)`)
         continue
       }
       
