@@ -1,20 +1,27 @@
+import { auth } from "@/auth"
 import Link from 'next/link'
 import Image from 'next/image'
 import { ArrowLeft, CheckCircle } from 'lucide-react'
 import Footer from '@/components/Footer'
+import MobileNav from '@/components/MobileNav'
 
 export const metadata = {
   title: 'Elo Rating Methodology | How Our Sports Betting AI Works - BetAnalytics.ai',
   description: 'Learn how our Elo rating system calculates sports betting probabilities. Understand injury adjustments, recency weighting, and edge detection methodology.',
 }
 
-export default function MethodologyPage() {
+export const dynamic = "force-dynamic"
+
+export default async function MethodologyPage() {
+  const session = await auth()
+  const isLoggedIn = !!session?.user
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white">
       <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-3">
+            <Link href={isLoggedIn ? "/chat" : "/"} className="flex items-center gap-3">
               <Image
                 src="/logo.png"
                 alt="BetAnalytics.ai Logo"
@@ -29,26 +36,43 @@ export default function MethodologyPage() {
               </div>
             </Link>
             
-            <div className="flex items-center gap-4">
-              <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
-                Sign In
-              </Link>
-              <Link 
-                href="/signup" 
-                className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
-              >
-                Start Free Trial
-              </Link>
-            </div>
+            {isLoggedIn ? (
+              <div className="flex items-center gap-4">
+                <Link href="/chat" className="text-slate-300 hover:text-white transition-colors">
+                  Back to Chat
+                </Link>
+                <Link 
+                  href="/account" 
+                  className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
+                >
+                  My Account
+                </Link>
+              </div>
+            ) : (
+              <>
+                <div className="hidden md:flex items-center gap-4">
+                  <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
+                    Sign In
+                  </Link>
+                  <Link 
+                    href="/signup" 
+                    className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
+                  >
+                    Start Free Trial
+                  </Link>
+                </div>
+                <MobileNav />
+              </>
+            )}
           </div>
         </div>
       </header>
 
       <main className="py-12 px-4">
         <div className="container mx-auto max-w-4xl">
-          <Link href="/" className="inline-flex items-center gap-2 text-cyan-400 hover:text-cyan-300 mb-8">
+          <Link href={isLoggedIn ? "/chat" : "/"} className="inline-flex items-center gap-2 text-cyan-400 hover:text-cyan-300 mb-8">
             <ArrowLeft className="w-4 h-4" />
-            Back to Home
+            {isLoggedIn ? "Back to Chat" : "Back to Home"}
           </Link>
           
           <h1 className="text-4xl font-bold mb-6">
