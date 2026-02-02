@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import { TrendingUp, Activity, Shield, BarChart3, CheckCircle, Clock, Target, Zap, ChevronDown } from 'lucide-react'
+import Image from 'next/image'
+import { Activity, Shield, BarChart3, CheckCircle, Clock, Target, Zap, ChevronDown, TrendingUp } from 'lucide-react'
 import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
 
@@ -15,9 +16,12 @@ export default function HomePage() {
               <div className="container mx-auto px-4 py-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-400 rounded-lg flex items-center justify-center">
-                      <TrendingUp className="w-6 h-6 text-white" />
-                    </div>
+                    <Image
+                      src="/logo.png"
+                      alt="BetAnalytics.ai Logo"
+                      width={48}
+                      height={48}
+                    />
                     <div>
                       <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
                         BetAnalytics.ai
