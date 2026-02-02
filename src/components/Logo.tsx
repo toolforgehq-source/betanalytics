@@ -9,9 +9,9 @@ interface LogoProps {
 
 export default function Logo({ size = 'md', showTagline = true }: LogoProps) {
   const sizes = {
-    sm: { icon: 56, text: 'text-xl', tagline: 'text-xs' },
-    md: { icon: 64, text: 'text-2xl', tagline: 'text-sm' },
-    lg: { icon: 80, text: 'text-4xl', tagline: 'text-lg' },
+    sm: { icon: 80, text: 'text-2xl', tagline: 'text-sm' },
+    md: { icon: 100, text: 'text-3xl', tagline: 'text-base' },
+    lg: { icon: 120, text: 'text-4xl', tagline: 'text-lg' },
   }
 
   const s = sizes[size]

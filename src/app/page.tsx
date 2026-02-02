@@ -15,19 +15,19 @@ export default function HomePage() {
             <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm relative">
               <div className="container mx-auto px-4 py-4">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-4">
                     <Image
                       src="/logo.png"
                       alt="BetAnalytics.ai Logo"
-                      width={64}
-                      height={64}
+                      width={100}
+                      height={100}
                       className="rounded-lg"
                     />
                     <div>
-                      <span className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
+                      <span className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
                         BetAnalytics.ai
                       </span>
-                      <p className="text-sm text-slate-400">Elo-Powered Sports Betting Intelligence</p>
+                      <p className="text-base text-slate-400">Elo-Powered Sports Betting Intelligence</p>
                     </div>
                   </div>
             
