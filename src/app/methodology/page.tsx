@@ -37,13 +37,13 @@ export default async function MethodologyPage() {
             </Link>
             
             {isLoggedIn ? (
-              <div className="flex items-center gap-4">
-                <Link href="/chat" className="text-slate-300 hover:text-white transition-colors">
+              <div className="flex items-center gap-2 md:gap-4">
+                <Link href="/chat" className="text-slate-300 hover:text-white transition-colors text-sm md:text-base">
                   Back to Chat
                 </Link>
                 <Link 
                   href="/account" 
-                  className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
+                  className="hidden md:block px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
                 >
                   My Account
                 </Link>
