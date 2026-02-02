@@ -110,6 +110,13 @@ export default function ChatPageClient({
             
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-2">
+              <Link
+                href="/methodology"
+                className="flex items-center gap-2 px-4 py-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <BookOpen className="w-4 h-4" />
+                Methodology
+              </Link>
               <button
                 onClick={() => setShowHedgeCalculator(!showHedgeCalculator)}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm ${
@@ -159,6 +166,14 @@ export default function ChatPageClient({
           {/* Mobile Navigation Menu */}
           {mobileMenuOpen && (
             <div className="md:hidden mt-4 pt-4 border-t border-slate-800/50 space-y-2">
+              <Link
+                href="/methodology"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <BookOpen className="w-4 h-4" />
+                Methodology
+              </Link>
               <button
                 onClick={() => {
                   setShowHedgeCalculator(!showHedgeCalculator)
