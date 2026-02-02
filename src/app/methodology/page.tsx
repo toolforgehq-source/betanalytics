@@ -18,15 +18,15 @@ export default function MethodologyPage() {
               <Image
                 src="/logo.png"
                 alt="BetAnalytics.ai Logo"
-                width={48}
-                height={48}
+                width={64}
+                height={64}
                 className="rounded-lg"
               />
               <div>
-                <span className="text-xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
+                <span className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
                   BetAnalytics.ai
                 </span>
-                <p className="text-xs text-slate-400">Elo-Powered Sports Betting Intelligence</p>
+                <p className="text-sm text-slate-400">Elo-Powered Sports Betting Intelligence</p>
               </div>
             </Link>
             
