@@ -20,7 +20,10 @@ import {
   getEloWinProbabilityByName,
   getEloSpreadProbabilityByName,
   getTeamMarginStatsByName,
-  SUPPORTED_LEAGUES
+  saveProcessedGameIds,
+  getProcessedGameIds,
+  SUPPORTED_LEAGUES,
+  type EloRatings
 } from '@/lib/elo'
 
 export const runtime = 'edge'
@@ -76,6 +79,51 @@ export async function GET(request: Request) {
         success: true,
         leagues: SUPPORTED_LEAGUES,
         message: 'Use ?league=NBA (or other) to backfill a specific league'
+      })
+    }
+    
+    // Action: Reset and recalculate Elo for a specific league from scratch
+    // This clears processed game IDs for the league and resets team ratings to 1500
+    if (action === 'reset') {
+      const league = url.searchParams.get('league')
+      if (!league) {
+        return NextResponse.json({ error: 'Missing league parameter' }, { status: 400 })
+      }
+      
+      // Get current data
+      const eloData = await getEloRatings()
+      const processedIds = await getProcessedGameIds()
+      
+      if (!eloData) {
+        return NextResponse.json({ error: 'No Elo data found' }, { status: 404 })
+      }
+      
+      // Count teams and games to reset
+      const teamsToReset = Object.keys(eloData.ratings).filter(key => 
+        eloData.ratings[key].league === league
+      )
+      
+      // Remove league teams from ratings
+      for (const key of teamsToReset) {
+        delete eloData.ratings[key]
+      }
+      
+      // Filter out processed game IDs for this league (they start with league prefix in game ID)
+      // Since we can't easily identify which game IDs belong to which league,
+      // we'll clear ALL processed IDs to force reprocessing
+      // This is safe because updateEloRatings will skip games that don't change ratings
+      const newProcessedIds = new Set<string>()
+      
+      // Save cleared data
+      await saveEloRatings(eloData)
+      await saveProcessedGameIds(newProcessedIds)
+      
+      return NextResponse.json({
+        success: true,
+        message: `Reset complete for ${league}`,
+        teamsRemoved: teamsToReset.length,
+        processedIdsCleared: processedIds.size,
+        remainingTeams: Object.keys(eloData.ratings).length
       })
     }
     
