@@ -183,6 +183,262 @@ const TOTAL_ELO_FACTOR: Record<string, number> = {
 }
 
 // ============================================
+// MARGIN OF VICTORY (MOV) ADJUSTMENT
+// ============================================
+// 
+// Blowout wins should increase ratings more than close wins.
+// This helps ratings converge to "true" values faster.
+// 
+// Formula: MOV multiplier = ln(abs(margin) + 1) * (2.2 / (eloDiff * 0.001 + 2.2))
+// - The ln(margin + 1) rewards larger margins with diminishing returns
+// - The second term prevents runaway ratings when a strong team blows out a weak team
+// - Based on FiveThirtyEight's NFL Elo methodology
+//
+// Example multipliers:
+// - 1 point margin: ~0.69x (close game, less movement)
+// - 5 point margin: ~1.0x (normal game)
+// - 10 point margin: ~1.2x (solid win)
+// - 20 point margin: ~1.4x (blowout)
+// - 40 point margin: ~1.6x (dominant, but capped)
+
+// Enable/disable MOV adjustment per league
+// Some leagues benefit more from MOV than others
+const MOV_ENABLED: Record<string, boolean> = {
+  'NBA': true,       // High-scoring, margin matters
+  'NFL': true,       // FiveThirtyEight uses this successfully
+  'NHL': true,       // Goals matter
+  'MLB': true,       // Runs matter
+  'NCAAB': true,     // Similar to NBA
+  'NCAAF': true,     // Similar to NFL
+  // Soccer - goals are rare, so MOV is less reliable
+  'soccer_epl': false,
+  'soccer_spain_la_liga': false,
+  'soccer_germany_bundesliga': false,
+  'soccer_italy_serie_a': false,
+  'soccer_france_ligue_one': false,
+  'soccer_usa_mls': false,
+  'soccer_uefa_champs_league': false,
+}
+
+// MOV scaling factor per league (adjusts how much margin affects the multiplier)
+// Higher = margin matters more, Lower = margin matters less
+const MOV_SCALE: Record<string, number> = {
+  'NBA': 1.0,        // Standard scaling
+  'NFL': 1.0,        // Standard scaling
+  'NHL': 2.5,        // Goals are worth more (scale up 1 goal to ~2.5 points equivalent)
+  'MLB': 2.0,        // Runs are worth more
+  'NCAAB': 1.0,
+  'NCAAF': 1.0,
+  'soccer_epl': 3.0,
+  'soccer_spain_la_liga': 3.0,
+  'soccer_germany_bundesliga': 3.0,
+  'soccer_italy_serie_a': 3.0,
+  'soccer_france_ligue_one': 3.0,
+  'soccer_usa_mls': 3.0,
+  'soccer_uefa_champs_league': 3.0,
+}
+
+/**
+ * Calculate Margin of Victory multiplier for K-factor
+ * Based on FiveThirtyEight's methodology
+ * 
+ * @param margin - Point/goal difference (absolute value)
+ * @param eloDiff - Elo difference between winner and loser (positive = favorite won)
+ * @param league - League for scaling
+ * @returns Multiplier for K-factor (typically 0.5 to 2.0)
+ */
+function calculateMOVMultiplier(
+  margin: number,
+  eloDiff: number,
+  league: string
+): number {
+  // If MOV is disabled for this league, return 1.0 (no adjustment)
+  if (!MOV_ENABLED[league]) {
+    return 1.0
+  }
+  
+  const scale = MOV_SCALE[league] || 1.0
+  const scaledMargin = Math.abs(margin) * scale
+  
+  // Natural log of margin + 1 (diminishing returns for blowouts)
+  const marginFactor = Math.log(scaledMargin + 1)
+  
+  // Autocorrelation adjustment: prevents runaway ratings
+  // When a strong team beats a weak team by a lot, we don't want to over-reward
+  // The 2.2 constant is from FiveThirtyEight's research
+  const autoCorr = 2.2 / (Math.abs(eloDiff) * 0.001 + 2.2)
+  
+  // Combine factors
+  const multiplier = marginFactor * autoCorr
+  
+  // Clamp to reasonable range (0.5 to 2.0)
+  return Math.max(0.5, Math.min(2.0, multiplier))
+}
+
+// ============================================
+// SEASON REGRESSION
+// ============================================
+//
+// At the end of each season (after playoffs), ratings should regress toward 1500.
+// This accounts for roster changes, coaching changes, and general uncertainty.
+//
+// Regression factor: how much to regress toward 1500
+// 0.0 = no regression (keep full rating)
+// 0.5 = regress halfway to 1500
+// 1.0 = full reset to 1500
+//
+// Formula: newRating = 1500 + (oldRating - 1500) * (1 - regressionFactor)
+
+const SEASON_REGRESSION_FACTOR: Record<string, number> = {
+  'NBA': 0.25,       // Regress 25% toward 1500 (rosters change moderately)
+  'NFL': 0.33,       // Regress 33% (significant roster turnover)
+  'NHL': 0.25,       // Similar to NBA
+  'MLB': 0.20,       // Less regression (rosters more stable)
+  'NCAAB': 0.40,     // High regression (players graduate/transfer)
+  'NCAAF': 0.40,     // High regression (players graduate/transfer)
+  // Soccer - less regression (rosters fairly stable)
+  'soccer_epl': 0.20,
+  'soccer_spain_la_liga': 0.20,
+  'soccer_germany_bundesliga': 0.20,
+  'soccer_italy_serie_a': 0.20,
+  'soccer_france_ligue_one': 0.20,
+  'soccer_usa_mls': 0.25,
+  'soccer_uefa_champs_league': 0.15,  // Less regression for elite teams
+}
+
+// Approximate playoff end dates (month-day format)
+// Regression should only happen AFTER playoffs end
+// Format: { month: number (1-12), day: number }
+const PLAYOFF_END_DATES: Record<string, { month: number; day: number }> = {
+  'NBA': { month: 6, day: 20 },        // NBA Finals typically end mid-June
+  'NFL': { month: 2, day: 15 },        // Super Bowl early February
+  'NHL': { month: 6, day: 25 },        // Stanley Cup Finals late June
+  'MLB': { month: 11, day: 5 },        // World Series early November
+  'NCAAB': { month: 4, day: 10 },      // March Madness ends early April
+  'NCAAF': { month: 1, day: 15 },      // CFP Championship mid-January
+  // Soccer seasons vary, using approximate end dates
+  'soccer_epl': { month: 5, day: 30 },
+  'soccer_spain_la_liga': { month: 5, day: 30 },
+  'soccer_germany_bundesliga': { month: 5, day: 25 },
+  'soccer_italy_serie_a': { month: 5, day: 30 },
+  'soccer_france_ligue_one': { month: 5, day: 30 },
+  'soccer_usa_mls': { month: 12, day: 15 },  // MLS Cup mid-December
+  'soccer_uefa_champs_league': { month: 6, day: 5 },
+}
+
+// Approximate season start dates (for detecting new season)
+const SEASON_START_DATES: Record<string, { month: number; day: number }> = {
+  'NBA': { month: 10, day: 20 },       // NBA season starts late October
+  'NFL': { month: 9, day: 5 },         // NFL season starts early September
+  'NHL': { month: 10, day: 10 },       // NHL season starts early October
+  'MLB': { month: 3, day: 28 },        // MLB season starts late March
+  'NCAAB': { month: 11, day: 5 },      // College basketball starts early November
+  'NCAAF': { month: 8, day: 25 },      // College football starts late August
+  // Soccer seasons
+  'soccer_epl': { month: 8, day: 15 },
+  'soccer_spain_la_liga': { month: 8, day: 15 },
+  'soccer_germany_bundesliga': { month: 8, day: 15 },
+  'soccer_italy_serie_a': { month: 8, day: 20 },
+  'soccer_france_ligue_one': { month: 8, day: 10 },
+  'soccer_usa_mls': { month: 2, day: 25 },
+  'soccer_uefa_champs_league': { month: 9, day: 15 },
+}
+
+/**
+ * Check if we're in the offseason window where regression should be applied
+ * Returns true if current date is between playoff end and season start
+ */
+function isInOffseason(league: string, date: Date = new Date()): boolean {
+  const playoffEnd = PLAYOFF_END_DATES[league]
+  const seasonStart = SEASON_START_DATES[league]
+  
+  if (!playoffEnd || !seasonStart) return false
+  
+  const month = date.getMonth() + 1  // getMonth() is 0-indexed
+  const day = date.getDate()
+  
+  // Create comparison values (month * 100 + day for easy comparison)
+  const current = month * 100 + day
+  const playoffEndVal = playoffEnd.month * 100 + playoffEnd.day
+  const seasonStartVal = seasonStart.month * 100 + seasonStart.day
+  
+  // Handle wrap-around (e.g., NFL: playoffs end Feb, season starts Sep)
+  if (playoffEndVal < seasonStartVal) {
+    // Normal case: offseason is between playoff end and season start
+    return current > playoffEndVal && current < seasonStartVal
+  } else {
+    // Wrap-around case (e.g., MLS: playoffs end Dec, season starts Feb)
+    return current > playoffEndVal || current < seasonStartVal
+  }
+}
+
+/**
+ * Apply season regression to a team's rating
+ * Should only be called once per team per offseason
+ * 
+ * @param currentRating - Team's current Elo rating
+ * @param league - League for regression factor
+ * @returns New rating after regression toward 1500
+ */
+export function applySeasonRegression(
+  currentRating: number,
+  league: string
+): number {
+  const factor = SEASON_REGRESSION_FACTOR[league] || 0.25
+  // newRating = 1500 + (oldRating - 1500) * (1 - factor)
+  return Math.round(DEFAULT_RATING + (currentRating - DEFAULT_RATING) * (1 - factor))
+}
+
+/**
+ * Apply season regression to all teams in a league
+ * This should be called once after playoffs end for each league
+ * 
+ * @param league - League to regress
+ * @returns Object with regression results
+ */
+export async function applyLeagueSeasonRegression(
+  league: string
+): Promise<{ teamsRegressed: number; averageChange: number } | null> {
+  // Check if we're in the offseason
+  if (!isInOffseason(league)) {
+    console.log(`[Elo] Not in offseason for ${league}, skipping regression`)
+    return null
+  }
+  
+  const eloData = await getEloRatings()
+  if (!eloData || !eloData.ratings) {
+    console.log(`[Elo] No ratings data found for regression`)
+    return null
+  }
+  
+  let teamsRegressed = 0
+  let totalChange = 0
+  
+  for (const team of Object.values(eloData.ratings)) {
+    if (team.league !== league) continue
+    
+    const oldRating = team.rating
+    const newRating = applySeasonRegression(oldRating, league)
+    
+    team.rating = newRating
+    totalChange += Math.abs(newRating - oldRating)
+    teamsRegressed++
+  }
+  
+  if (teamsRegressed > 0) {
+    eloData.lastUpdated = new Date().toISOString()
+    await saveEloRatings(eloData)
+    
+    const averageChange = Math.round(totalChange / teamsRegressed)
+    console.log(`[Elo] Applied season regression to ${league}: ${teamsRegressed} teams, avg change: ${averageChange} Elo`)
+    
+    return { teamsRegressed, averageChange }
+  }
+  
+  return { teamsRegressed: 0, averageChange: 0 }
+}
+
+// ============================================
 // TYPES
 // ============================================
 
@@ -256,6 +512,7 @@ export function calculateNewRating(
 
 /**
  * Update ratings for both teams after a game
+ * Now includes Margin of Victory (MOV) adjustment for more accurate rating changes
  */
 export function updateRatingsAfterGame(
   homeRating: number,
@@ -264,7 +521,7 @@ export function updateRatingsAfterGame(
   awayScore: number,
   league: string
 ): { newHomeRating: number; newAwayRating: number } {
-  const kFactor = K_FACTORS[league] || 24
+  const baseKFactor = K_FACTORS[league] || 24
   const homeAdvantage = HOME_ADVANTAGE[league] || 70
   
   // Calculate expected scores (with home advantage for prediction)
@@ -288,9 +545,32 @@ export function updateRatingsAfterGame(
     awayActual = 0.5
   }
   
+  // Calculate margin of victory
+  const margin = Math.abs(homeScore - awayScore)
+  
+  // Calculate Elo difference from winner's perspective
+  // Positive if favorite won, negative if underdog won
+  let winnerEloDiff: number
+  if (homeScore > awayScore) {
+    // Home team won - Elo diff is home's advantage
+    winnerEloDiff = adjustedHomeRating - awayRating
+  } else if (awayScore > homeScore) {
+    // Away team won - Elo diff is away's advantage (negative of home's)
+    winnerEloDiff = awayRating - adjustedHomeRating
+  } else {
+    // Draw - no winner, use 0
+    winnerEloDiff = 0
+  }
+  
+  // Calculate MOV multiplier (blowouts = more rating change)
+  const movMultiplier = calculateMOVMultiplier(margin, winnerEloDiff, league)
+  
+  // Apply MOV multiplier to K-factor
+  const adjustedKFactor = baseKFactor * movMultiplier
+  
   // Calculate new ratings (without home advantage - that's only for prediction)
-  const newHomeRating = calculateNewRating(homeRating, homeExpected, homeActual, kFactor)
-  const newAwayRating = calculateNewRating(awayRating, awayExpected, awayActual, kFactor)
+  const newHomeRating = calculateNewRating(homeRating, homeExpected, homeActual, adjustedKFactor)
+  const newAwayRating = calculateNewRating(awayRating, awayExpected, awayActual, adjustedKFactor)
   
   return {
     newHomeRating: Math.round(newHomeRating),
