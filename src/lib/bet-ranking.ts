@@ -36,6 +36,7 @@ import {
 import type { WeatherData } from './weather'
 import { type LineMovement } from './line-movement'
 import { normalizeTeamName as normalizeScheduleTeamName, type TeamScheduleData } from './team-schedule'
+import { getCalibratedProbability } from './calibration'
 
 export interface RankedBet {
   gameId: string
@@ -1161,7 +1162,11 @@ export async function analyzeGame(
         teamSpecificSigma  // FIX 2: Pass team-specific sigma for variance adjustment
       )
       
-      const baseEloCoverProb = spreadResult.probability
+      const rawEloCoverProb = spreadResult.probability
+      
+      // FIX 3: Apply calibration to adjust probability based on historical accuracy
+      // This corrects for systematic over/under-confidence in our predictions
+      const baseEloCoverProb = await getCalibratedProbability(rawEloCoverProb)
       
       // Apply situational factors to spread cover probability
       const opponentName = isHomeTeam ? game.awayTeam : game.homeTeam
