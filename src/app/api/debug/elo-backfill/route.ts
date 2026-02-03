@@ -27,7 +27,7 @@ import {
 } from '@/lib/elo'
 
 export const runtime = 'edge'
-export const maxDuration = 300 // 5 minutes for backfill
+export const maxDuration = 300 // 5 minutes for backfill - v2
 
 export async function GET(request: Request) {
   const startTime = Date.now()
