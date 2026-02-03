@@ -454,6 +454,15 @@ export interface TeamRating {
   rating: number
   gamesPlayed: number
   lastUpdated: string
+  // Margin tracking for team-specific variance (Fix 2)
+  marginStats?: {
+    totalMargin: number      // Sum of all margins (positive = wins, negative = losses)
+    marginSquaredSum: number // Sum of squared margins (for variance calculation)
+    marginCount: number      // Number of games with margin data
+    avgMargin: number        // Average margin (totalMargin / marginCount)
+    marginVariance: number   // Variance of margins
+    marginStdDev: number     // Standard deviation of margins (team-specific sigma)
+  }
 }
 
 export interface EloRatings {
@@ -1010,6 +1019,51 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
     awayTeam.gamesPlayed++
     awayTeam.lastUpdated = game.date
     
+    // FIX 2: Track margin statistics for team-specific variance
+    // Margin is from the team's perspective (positive = win, negative = loss)
+    const homeMargin = game.homeScore - game.awayScore
+    const awayMargin = game.awayScore - game.homeScore
+    
+    // Update home team margin stats
+    if (!homeTeam.marginStats) {
+      homeTeam.marginStats = {
+        totalMargin: 0,
+        marginSquaredSum: 0,
+        marginCount: 0,
+        avgMargin: 0,
+        marginVariance: 0,
+        marginStdDev: MARGIN_SIGMA[game.league] || 12 // Default to league average
+      }
+    }
+    homeTeam.marginStats.totalMargin += homeMargin
+    homeTeam.marginStats.marginSquaredSum += homeMargin * homeMargin
+    homeTeam.marginStats.marginCount++
+    homeTeam.marginStats.avgMargin = homeTeam.marginStats.totalMargin / homeTeam.marginStats.marginCount
+    // Calculate variance: E[X^2] - E[X]^2
+    const homeAvgSquared = homeTeam.marginStats.marginSquaredSum / homeTeam.marginStats.marginCount
+    homeTeam.marginStats.marginVariance = homeAvgSquared - (homeTeam.marginStats.avgMargin * homeTeam.marginStats.avgMargin)
+    homeTeam.marginStats.marginStdDev = Math.sqrt(Math.max(0, homeTeam.marginStats.marginVariance))
+    
+    // Update away team margin stats
+    if (!awayTeam.marginStats) {
+      awayTeam.marginStats = {
+        totalMargin: 0,
+        marginSquaredSum: 0,
+        marginCount: 0,
+        avgMargin: 0,
+        marginVariance: 0,
+        marginStdDev: MARGIN_SIGMA[game.league] || 12 // Default to league average
+      }
+    }
+    awayTeam.marginStats.totalMargin += awayMargin
+    awayTeam.marginStats.marginSquaredSum += awayMargin * awayMargin
+    awayTeam.marginStats.marginCount++
+    awayTeam.marginStats.avgMargin = awayTeam.marginStats.totalMargin / awayTeam.marginStats.marginCount
+    // Calculate variance: E[X^2] - E[X]^2
+    const awayAvgSquared = awayTeam.marginStats.marginSquaredSum / awayTeam.marginStats.marginCount
+    awayTeam.marginStats.marginVariance = awayAvgSquared - (awayTeam.marginStats.avgMargin * awayTeam.marginStats.avgMargin)
+    awayTeam.marginStats.marginStdDev = Math.sqrt(Math.max(0, awayTeam.marginStats.marginVariance))
+    
     // Mark game as processed
     processedIds.add(game.gameId)
     newGamesProcessed++
@@ -1044,6 +1098,47 @@ export async function getTeamRating(
   
   const key = `${league}:${teamId}`
   return eloData.ratings[key] || null
+}
+
+/**
+ * FIX 2: Get team margin stats by team name
+ * Returns the team's margin statistics for team-specific variance calculations
+ */
+export async function getTeamMarginStatsByName(
+  league: string,
+  teamName: string
+): Promise<{
+  marginStdDev: number
+  avgMargin: number
+  marginCount: number
+} | null> {
+  const eloData = await getEloRatings()
+  if (!eloData) return null
+  
+  // Find team by name (case-insensitive partial match)
+  const teamKey = Object.keys(eloData.ratings).find(key => {
+    const rating = eloData.ratings[key]
+    return rating.league === league && 
+           rating.teamName.toLowerCase().includes(teamName.toLowerCase())
+  })
+  
+  if (!teamKey) return null
+  
+  const team = eloData.ratings[teamKey]
+  if (!team.marginStats) {
+    // Return league default if no margin stats yet
+    return {
+      marginStdDev: MARGIN_SIGMA[league] || 12,
+      avgMargin: 0,
+      marginCount: 0
+    }
+  }
+  
+  return {
+    marginStdDev: team.marginStats.marginStdDev,
+    avgMargin: team.marginStats.avgMargin,
+    marginCount: team.marginStats.marginCount
+  }
 }
 
 /**
@@ -1672,9 +1767,26 @@ export function calculateSpreadCoverProbability(
   awayElo: number,
   spread: number,
   league: string,
-  forHome: boolean = true
-): { probability: number; expectedMargin: number; confidence: string } {
-  const sigma = MARGIN_SIGMA[league] || 12
+  forHome: boolean = true,
+  teamSpecificSigma?: number  // FIX 2: Optional team-specific sigma for variance adjustment
+): { probability: number; expectedMargin: number; confidence: string; sigmaUsed: number } {
+  // FIX 2: Use team-specific sigma if provided and valid, otherwise use league default
+  // Team-specific sigma accounts for blowout risk (bad teams have higher variance)
+  const leagueSigma = MARGIN_SIGMA[league] || 12
+  
+  // Only use team-specific sigma if it's reasonable (within 50%-200% of league average)
+  // This prevents extreme values from skewing predictions
+  let sigma = leagueSigma
+  if (teamSpecificSigma && teamSpecificSigma > 0) {
+    const minSigma = leagueSigma * 0.5
+    const maxSigma = leagueSigma * 2.0
+    if (teamSpecificSigma >= minSigma && teamSpecificSigma <= maxSigma) {
+      // Blend team-specific sigma with league average (70% team, 30% league)
+      // This smooths out noise while still accounting for team variance
+      sigma = teamSpecificSigma * 0.7 + leagueSigma * 0.3
+    }
+  }
+  
   const expectedMargin = calculateExpectedMargin(homeElo, awayElo, league)
   
   // SPREAD SEMANTICS (from home team's perspective):
@@ -1702,11 +1814,15 @@ export function calculateSpreadCoverProbability(
   }
   
   // Determine confidence based on how far from 50% the probability is
+  // FIX 2: Higher sigma (more variance) reduces confidence
   const edgeFromEven = Math.abs(probability - 0.5)
+  const sigmaFactor = leagueSigma / sigma  // Higher sigma = lower confidence
+  const adjustedEdge = edgeFromEven * sigmaFactor
+  
   let confidence: string
-  if (edgeFromEven > 0.15) {
+  if (adjustedEdge > 0.15) {
     confidence = 'high'
-  } else if (edgeFromEven > 0.08) {
+  } else if (adjustedEdge > 0.08) {
     confidence = 'medium'
   } else {
     confidence = 'low'
@@ -1715,7 +1831,8 @@ export function calculateSpreadCoverProbability(
   return {
     probability: Math.max(0.01, Math.min(0.99, probability)), // Clamp to avoid extreme values
     expectedMargin,
-    confidence
+    confidence,
+    sigmaUsed: sigma  // FIX 2: Return the sigma used for transparency
   }
 }
 
@@ -1810,6 +1927,8 @@ export async function getEloSpreadProbabilityByName(
   homeRating: number
   awayRating: number
   confidence: string
+  sigmaUsed?: number
+  teamMarginStdDev?: number
 } | null> {
   const eloData = await getEloRatings()
   if (!eloData) return null
@@ -1829,15 +1948,28 @@ export async function getEloSpreadProbabilityByName(
   
   if (!homeKey || !awayKey) return null
   
-  const homeRating = eloData.ratings[homeKey].rating
-  const awayRating = eloData.ratings[awayKey].rating
+  const homeTeam = eloData.ratings[homeKey]
+  const awayTeam = eloData.ratings[awayKey]
   
-  const result = calculateSpreadCoverProbability(homeRating, awayRating, spread, league, forHome)
+  // FIX 2: Get team-specific sigma for the team we're betting on
+  // For spread bets, use the sigma of the team that needs to cover
+  const bettingTeam = forHome ? homeTeam : awayTeam
+  const teamMarginStdDev = bettingTeam.marginStats?.marginStdDev
+  
+  const result = calculateSpreadCoverProbability(
+    homeTeam.rating, 
+    awayTeam.rating, 
+    spread, 
+    league, 
+    forHome,
+    teamMarginStdDev  // FIX 2: Pass team-specific sigma
+  )
   
   return {
     ...result,
-    homeRating,
-    awayRating
+    homeRating: homeTeam.rating,
+    awayRating: awayTeam.rating,
+    teamMarginStdDev  // FIX 2: Include for transparency
   }
 }
 

@@ -24,6 +24,7 @@ import {
   getEloWinProbabilityWithInjuries,
   calculateSpreadCoverProbability,
   calculateTotalProbability,
+  getTeamMarginStatsByName,
   type InjuryInfo,
   type PlayerImportance
 } from './elo'
@@ -1146,12 +1147,18 @@ export async function analyzeGame(
       // For home team: use spread as-is
       // For away team: the spread is already from away's perspective (e.g., away +3.5)
       const spreadFromHomePerspective = isHomeTeam ? point : -point
+      
+      // FIX 2: Get team-specific margin variance for the betting team
+      const bettingTeamMarginStats = await getTeamMarginStatsByName(eloLeague, teamName)
+      const teamSpecificSigma = bettingTeamMarginStats?.marginStdDev
+      
       const spreadResult = calculateSpreadCoverProbability(
         homeElo,
         awayElo,
         spreadFromHomePerspective,
         eloLeague,
-        isHomeTeam
+        isHomeTeam,
+        teamSpecificSigma  // FIX 2: Pass team-specific sigma for variance adjustment
       )
       
       const baseEloCoverProb = spreadResult.probability
@@ -1781,6 +1788,10 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
       
       // Calculate Elo-based spread cover probability
       const spreadFromHomePerspective = isHomeTeam ? point : -point
+      
+      // FIX 2: Note - this function doesn't have access to team margin stats
+      // The main analyzeGame function handles team-specific sigma
+      // This is a simplified version for sport queries
       const spreadResult = calculateSpreadCoverProbability(
         homeElo,
         awayElo,
