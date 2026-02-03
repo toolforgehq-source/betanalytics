@@ -44,22 +44,27 @@ const K_FACTORS: Record<string, number> = {
 // 0.98^30 = 0.55 (game 30 ago has 55% weight of recent game)
 // 0.97^30 = 0.40 (game 30 ago has 40% weight)
 // 0.95^30 = 0.21 (game 30 ago has 21% weight)
+// 0.93^30 = 0.11 (game 30 ago has 11% weight)
 // Higher decay = more stability, lower decay = more recency bias
+// 
+// FIX: Reduced decay values to prevent bad teams from being pulled toward 1500
+// This ensures teams like Brooklyn (13-35) have appropriately low Elo ratings
+// instead of being artificially inflated by decay toward baseline
 const RECENCY_DECAY: Record<string, number> = {
-  'NBA': 0.98,      // 82 games - moderate recency, ~55% weight at 30 games ago
-  'NFL': 0.96,      // 17 games - higher recency needed, ~29% weight at 30 games ago
-  'NHL': 0.98,      // 82 games - moderate recency
-  'MLB': 0.99,      // 162 games - very stable, ~74% weight at 30 games ago
-  'NCAAB': 0.97,    // Fewer games - more recency, ~40% weight at 30 games ago
-  'NCAAF': 0.95,    // Very few games - highest recency, ~21% weight at 30 games ago
-  // Soccer leagues - moderate recency
-  'soccer_epl': 0.98,
-  'soccer_spain_la_liga': 0.98,
-  'soccer_germany_bundesliga': 0.98,
-  'soccer_italy_serie_a': 0.98,
-  'soccer_france_ligue_one': 0.98,
-  'soccer_usa_mls': 0.98,
-  'soccer_uefa_champs_league': 0.98,
+  'NBA': 0.95,      // 82 games - was 0.98, now ~21% weight at 30 games ago (bad teams stay low)
+  'NFL': 0.93,      // 17 games - was 0.96, now ~11% weight at 30 games ago
+  'NHL': 0.95,      // 82 games - was 0.98, same as NBA
+  'MLB': 0.97,      // 162 games - was 0.99, now ~40% weight at 30 games ago
+  'NCAAB': 0.94,    // Fewer games - was 0.97, now ~16% weight at 30 games ago
+  'NCAAF': 0.92,    // Very few games - was 0.95, now ~8% weight at 30 games ago
+  // Soccer leagues - reduced recency to keep bad teams low
+  'soccer_epl': 0.95,
+  'soccer_spain_la_liga': 0.95,
+  'soccer_germany_bundesliga': 0.95,
+  'soccer_italy_serie_a': 0.95,
+  'soccer_france_ligue_one': 0.95,
+  'soccer_usa_mls': 0.95,
+  'soccer_uefa_champs_league': 0.95,
 }
 
 // Home advantage in Elo points (added to home team's rating for prediction)
