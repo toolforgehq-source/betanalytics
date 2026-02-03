@@ -18,6 +18,8 @@ import {
   getEloRatings,
   getLeagueRatings,
   getEloWinProbabilityByName,
+  getEloSpreadProbabilityByName,
+  getTeamMarginStatsByName,
   SUPPORTED_LEAGUES
 } from '@/lib/elo'
 
@@ -74,6 +76,54 @@ export async function GET(request: Request) {
         success: true,
         leagues: SUPPORTED_LEAGUES,
         message: 'Use ?league=NBA (or other) to backfill a specific league'
+      })
+    }
+    
+    // Action: Test spread probability calculation (for debugging Fix 2 & 3)
+    if (action === 'spread') {
+      const league = url.searchParams.get('league') || 'NBA'
+      const home = url.searchParams.get('home') || ''
+      const away = url.searchParams.get('away') || ''
+      const spreadStr = url.searchParams.get('spread') || '0'
+      const forHomeStr = url.searchParams.get('forHome') || 'false'
+      
+      if (!home || !away) {
+        return NextResponse.json({ error: 'Missing home or away team' }, { status: 400 })
+      }
+      
+      const spread = parseFloat(spreadStr)
+      const forHome = forHomeStr === 'true'
+      
+      // Get margin stats for both teams
+      const homeMarginStats = await getTeamMarginStatsByName(league, home)
+      const awayMarginStats = await getTeamMarginStatsByName(league, away)
+      
+      // Get spread probability
+      const spreadResult = await getEloSpreadProbabilityByName(
+        league,
+        home,
+        away,
+        spread,
+        forHome
+      )
+      
+      return NextResponse.json({
+        success: true,
+        league,
+        homeTeam: home,
+        awayTeam: away,
+        spread,
+        forHome,
+        bettingOn: forHome ? home : away,
+        homeMarginStats,
+        awayMarginStats,
+        spreadResult,
+        explanation: {
+          probability: spreadResult?.probability ? `${(spreadResult.probability * 100).toFixed(1)}%` : 'N/A',
+          sigmaUsed: spreadResult?.sigmaUsed || 'N/A',
+          teamMarginStdDev: spreadResult?.teamMarginStdDev || 'N/A',
+          confidence: spreadResult?.confidence || 'N/A'
+        }
       })
     }
     
