@@ -1110,7 +1110,7 @@ export async function analyzeGame(
     }
     
     // Evaluate each unique spread line
-    spreadLines.forEach((entries, key) => {
+    for (const [key, entries] of Array.from(spreadLines.entries())) {
       const [teamName, pointStr] = key.split('|')
       const point = parseFloat(pointStr)
       
@@ -1135,12 +1135,12 @@ export async function analyzeGame(
       
       if (teamElo > opponentElo && point > 0) {
         console.error(`[SPREAD VALIDATION ERROR] ${teamName} has higher Elo (${Math.round(teamElo)}) than opponent (${Math.round(opponentElo)}) but has POSITIVE spread (+${point}). This indicates a spread direction bug.`)
-        return // Skip this bet - spread direction is wrong
+        continue // Skip this bet - spread direction is wrong
       }
       
       if (teamElo < opponentElo && point < 0) {
         console.error(`[SPREAD VALIDATION ERROR] ${teamName} has lower Elo (${Math.round(teamElo)}) than opponent (${Math.round(opponentElo)}) but has NEGATIVE spread (${point}). This indicates a spread direction bug.`)
-        return // Skip this bet - spread direction is wrong
+        continue // Skip this bet - spread direction is wrong
       }
       
       // Calculate Elo-based spread cover probability
@@ -1213,19 +1213,19 @@ export async function analyzeGame(
       const roi = calculateROI(ev)
       
       // Apply spread-specific thresholds (more relaxed than moneyline)
-      if (eloCoverProb < MIN_SPREAD_PROBABILITY) return
-      if (edge < MIN_SPREAD_EDGE) return
-      if (ev <= 0) return
-      if (roi < MIN_SPREAD_ROI) return
+      if (eloCoverProb < MIN_SPREAD_PROBABILITY) continue
+      if (edge < MIN_SPREAD_EDGE) continue
+      if (ev <= 0) continue
+      if (roi < MIN_SPREAD_ROI) continue
       
       // SANITY CHECK: Reject bets with impossibly large edges (likely calculation errors)
       if (edge > MAX_SANE_EDGE) {
         console.warn(`[analyzeGame] SANITY CHECK FAILED: ${teamName} spread ${point} has edge ${(edge * 100).toFixed(1)}% > 25% max. Skipping.`)
-        return
+        continue
       }
       
       // Check juice constraint
-      if (bestEntry.outcome.price < MAX_JUICE_ODDS) return
+      if (bestEntry.outcome.price < MAX_JUICE_ODDS) continue
       
       // Calculate score
       const score = calculateBetScore(eloCoverProb, edge, roi)
@@ -1318,7 +1318,7 @@ export async function analyzeGame(
         },
         calculatedAt: now
       })
-    })
+    }
   }
   
   // TOTAL (OVER/UNDER) ANALYSIS - uses Elo-based total probability
