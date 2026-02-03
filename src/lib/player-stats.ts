@@ -9,7 +9,11 @@
  * - Tracks rolling averages with recency weighting
  * - Adjusts for opponent defensive strength
  * - Calculates probability of hitting over/under lines
+ * - Pace/game environment adjustments (NEW)
+ * - Usage adjustments for teammate injuries (NEW)
  */
+
+import { getPaceAdjustment, getUsageAdjustment } from './prop-enhancements'
 
 // ============================================
 // TYPES
@@ -791,8 +795,13 @@ export interface EnhancedPropProbability {
   homeAwayAdjustment: number    // Multiplier for home/away
   opponentAdjustment: number    // Multiplier for opponent defense
   backToBackAdjustment?: number // Multiplier for back-to-back fatigue
+  paceAdjustment?: number       // Multiplier for game pace/environment
+  usageAdjustment?: number      // Multiplier for teammate injuries affecting usage
   adjustedAverage: number       // Average after all adjustments
   confidence: 'high' | 'medium' | 'low'  // Based on sample size and reliability
+  // Additional context
+  paceDescription?: string      // Human-readable pace context
+  usageDescription?: string     // Human-readable usage context
 }
 
 /**
@@ -804,6 +813,8 @@ export interface EnhancedPropProbability {
  * 3. Opponent defensive adjustments
  * 4. Home/away adjustments
  * 5. Reliability weighting
+ * 6. Pace/game environment adjustment (NEW)
+ * 7. Usage adjustment for teammate injuries (NEW)
  */
 export async function getPlayerPropProbability(
   playerName: string,
@@ -812,7 +823,13 @@ export async function getPlayerPropProbability(
   line: number,
   opponentTeamId?: string,
   isHomeGame?: boolean,
-  isBackToBack?: boolean  // New: whether the player's team is on a back-to-back
+  isBackToBack?: boolean,
+  // NEW: Game context for pace and usage adjustments
+  gameContext?: {
+    homeTeam?: string
+    awayTeam?: string
+    playerTeam?: string
+  }
 ): Promise<EnhancedPropProbability | null> {
   const statsData = await getPlayerStatsData()
   if (!statsData) return null
@@ -864,8 +881,30 @@ export async function getPlayerPropProbability(
     backToBackAdjustment = fatigueFactor[sport] || 0.97  // Default -3%
   }
   
-  // Calculate adjusted average
-  const adjustedAverage = avg * opponentAdjustment * homeAwayAdjustment * backToBackAdjustment
+  // NEW: Get pace/game environment adjustment from ESPN game totals
+  let paceAdjustment = 1.0
+  let paceDescription: string | undefined
+  if (gameContext?.homeTeam && gameContext?.awayTeam) {
+    const paceResult = await getPaceAdjustment(gameContext.homeTeam, gameContext.awayTeam, sport)
+    if (paceResult) {
+      paceAdjustment = paceResult.paceMultiplier
+      paceDescription = paceResult.paceDescription
+    }
+  }
+  
+  // NEW: Get usage adjustment based on teammate injuries
+  let usageAdjustment = 1.0
+  let usageDescription: string | undefined
+  if (gameContext?.playerTeam) {
+    const usageResult = await getUsageAdjustment(sport, gameContext.playerTeam, player.position)
+    if (usageResult) {
+      usageAdjustment = usageResult.usageMultiplier
+      usageDescription = usageResult.description
+    }
+  }
+  
+  // Calculate adjusted average with all factors
+  const adjustedAverage = avg * opponentAdjustment * homeAwayAdjustment * backToBackAdjustment * paceAdjustment * usageAdjustment
   
   // Calculate statistical probability using normal distribution
   const statisticalProb = calculateOverProbability(adjustedAverage, stdDev, line, 1.0)
@@ -926,8 +965,12 @@ export async function getPlayerPropProbability(
     homeAwayAdjustment,
     opponentAdjustment,
     backToBackAdjustment: isBackToBack ? backToBackAdjustment : undefined,
+    paceAdjustment: paceAdjustment !== 1.0 ? paceAdjustment : undefined,
+    usageAdjustment: usageAdjustment !== 1.0 ? usageAdjustment : undefined,
     adjustedAverage,
-    confidence
+    confidence,
+    paceDescription,
+    usageDescription
   }
 }
 
