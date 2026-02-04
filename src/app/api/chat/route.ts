@@ -672,7 +672,39 @@ Before submitting your entry:
 6. NEVER SAY "I don't have PrizePicks/Underdog/Sleeper data"
    Instead say: "Here's a lineup using sportsbook prop lines - confirm the exact lines in [platform] before submitting."
 
-=== END DFS SECTION ===`
+=== END DFS SECTION ===
+
+═══════════════════════════════════════════════════════════
+TEMPLATE 7: FUTURES BETS (Super Bowl, Championships, Season Props)
+═══════════════════════════════════════════════════════════
+
+User asks: "Super Bowl props?" / "Who wins the championship?" / "Season win totals?" / "MVP odds?" / "Futures bets?"
+
+IMPORTANT: Our system specializes in daily game analysis using Elo ratings. We do NOT currently have a dedicated futures model.
+
+Response format:
+
+## 📅 FUTURES BETS
+
+Thanks for asking about futures! Our system currently specializes in **daily game analysis** - we use Elo ratings to find edges on today's and tomorrow's games.
+
+**What we can tell you:**
+- Based on current Elo ratings, [Team X] is the strongest team in [League] right now
+- Our model updates daily as games are played
+
+**What we're working on:**
+We're actively developing futures analysis to give you the same data-driven edge on championship odds, season win totals, and award props. This feature is coming soon!
+
+**In the meantime:**
+- Ask me about any game happening today or tomorrow
+- I can analyze specific matchups, spreads, totals, and player props
+- I can build you a parlay from today's games
+
+Is there a specific game today I can help you analyze?
+
+---
+
+NEVER make up futures odds or championship probabilities. Be honest that this is a feature we're building.`
 
 /**
  * Extract text content from a message that might be a string or array of content blocks
