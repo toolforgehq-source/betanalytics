@@ -218,6 +218,48 @@ const MIN_SPREAD_ROI = 0.5           // 0.5% minimum ROI for spreads
 // Real market inefficiencies rarely exceed 5-10%, and even sharp bettors rarely find 15%+ edges
 const MAX_SANE_EDGE = 0.25           // 25% maximum edge - anything higher is flagged as suspicious
 
+// ============================================
+// IMPROVED SPREAD BETTING PARAMETERS (System-wide)
+// ============================================
+// These improvements apply to ALL bet analysis functions, not just backtest
+
+// Sport-specific minimum expected margin edge (in points/goals)
+// Only recommend spreads when our expected margin differs from market spread by this much
+// Higher threshold = more selective = higher win rate
+const MIN_SPREAD_MARGIN_EDGE: Record<string, number> = {
+  'NBA': 3,        // Only bet when expected margin differs by 3+ points from market
+  'NFL': 2.5,      // NFL has fewer games, slightly lower threshold
+  'NHL': 999,      // NHL: Don't recommend puck lines at all (use moneylines only)
+  'MLB': 1,        // MLB run lines are 1.5, so smaller threshold
+  'NCAAB': 4,      // College has more variance, need higher threshold
+  'NCAAF': 3,      // Similar to NFL but more variance
+  'soccer_epl': 0.5,
+  'soccer_spain_la_liga': 0.5,
+  'soccer_germany_bundesliga': 0.5,
+  'soccer_italy_serie_a': 0.5,
+  'soccer_france_ligue_one': 0.5,
+  'soccer_usa_mls': 0.5,
+  'soccer_uefa_champs_league': 0.5,
+}
+
+// Maximum margin variance (sigma) allowed for a team
+// Teams with higher variance are harder to predict - skip these matchups
+const MAX_TEAM_VARIANCE: Record<string, number> = {
+  'NBA': 16,       // Skip games with teams that have >16 point std dev
+  'NFL': 18,       // NFL has more variance naturally
+  'NHL': 2.5,      // NHL goals
+  'MLB': 4,        // MLB runs
+  'NCAAB': 18,     // College has more variance
+  'NCAAF': 22,     // College football has highest variance
+  'soccer_epl': 2,
+  'soccer_spain_la_liga': 2,
+  'soccer_germany_bundesliga': 2,
+  'soccer_italy_serie_a': 2,
+  'soccer_france_ligue_one': 2,
+  'soccer_usa_mls': 2,
+  'soccer_uefa_champs_league': 2,
+}
+
 // Reputable books for consensus calculation (exclude sharp-only books)
 const CONSENSUS_BOOKS = [
   'DraftKings', 'FanDuel', 'BetMGM', 'Caesars', 'PointsBet',
@@ -1162,6 +1204,39 @@ export async function analyzeGame(
         teamSpecificSigma  // FIX 2: Pass team-specific sigma for variance adjustment
       )
       
+      // ============================================
+      // IMPROVED SPREAD FILTERING (System-wide)
+      // ============================================
+      
+      // FILTER 1: Skip NHL puck lines entirely (use moneylines only)
+      // Puck lines (-1.5/+1.5) are very hard to beat because most games are 1-2 goal margins
+      const minMarginEdge = MIN_SPREAD_MARGIN_EDGE[eloLeague] || 2
+      if (minMarginEdge >= 999) {
+        console.log(`[analyzeGame] Skipping ${eloLeague} spread bet - league uses moneylines only`)
+        continue
+      }
+      
+      // FILTER 2: Skip high-variance teams (harder to predict)
+      const maxVariance = MAX_TEAM_VARIANCE[eloLeague] || 16
+      const opponentMarginStats = await getTeamMarginStatsByName(eloLeague, isHomeTeam ? game.awayTeam : game.homeTeam)
+      const opponentSigma = opponentMarginStats?.marginStdDev || 12
+      
+      if ((teamSpecificSigma && teamSpecificSigma > maxVariance) || opponentSigma > maxVariance) {
+        console.log(`[analyzeGame] Skipping high-variance spread: ${teamName} sigma=${teamSpecificSigma?.toFixed(1)}, opponent sigma=${opponentSigma.toFixed(1)}, max=${maxVariance}`)
+        continue
+      }
+      
+      // FILTER 3: Check margin edge (difference between our expected margin and market spread)
+      // Only bet when our expected margin differs significantly from the market spread
+      const expectedMargin = spreadResult.expectedMargin
+      const marketSpread = spreadFromHomePerspective // The spread from home perspective
+      const marginEdge = Math.abs(expectedMargin - (-marketSpread)) // How much our prediction differs from market
+      
+      if (marginEdge < minMarginEdge) {
+        // Edge too small - skip this spread bet
+        continue
+      }
+      
       const rawEloCoverProb = spreadResult.probability
       
       // FIX 3: Apply calibration to adjust probability based on historical accuracy
@@ -1775,6 +1850,17 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
       const [teamName, pointStr] = key.split('|')
       const point = parseFloat(pointStr)
       
+      // ============================================
+      // IMPROVED SPREAD FILTERING (System-wide)
+      // ============================================
+      
+      // FILTER 1: Skip NHL puck lines entirely (use moneylines only)
+      const minMarginEdge = MIN_SPREAD_MARGIN_EDGE[eloLeague] || 2
+      if (minMarginEdge >= 999) {
+        // NHL and other leagues that should use moneylines only
+        return
+      }
+      
       // Find best price across all books
       const bestEntry = entries.reduce((best, curr) => 
         curr.outcome.price > best.outcome.price ? curr : best
@@ -1794,9 +1880,6 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
       // Calculate Elo-based spread cover probability
       const spreadFromHomePerspective = isHomeTeam ? point : -point
       
-      // FIX 2: Note - this function doesn't have access to team margin stats
-      // The main analyzeGame function handles team-specific sigma
-      // This is a simplified version for sport queries
       const spreadResult = calculateSpreadCoverProbability(
         homeElo,
         awayElo,
@@ -1804,6 +1887,16 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
         eloLeague,
         isHomeTeam
       )
+      
+      // FILTER 2: Check margin edge (difference between our expected margin and market spread)
+      const expectedMargin = spreadResult.expectedMargin
+      const marketSpread = spreadFromHomePerspective
+      const marginEdge = Math.abs(expectedMargin - (-marketSpread))
+      
+      if (marginEdge < minMarginEdge) {
+        // Edge too small - skip this spread bet
+        return
+      }
       
       const eloCoverProb = spreadResult.probability
       
