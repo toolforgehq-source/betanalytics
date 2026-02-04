@@ -355,6 +355,46 @@ export default async function MethodologyPage() {
             </p>
           </section>
 
+          {/* Player Props */}
+          <section className="mb-12">
+            <h2 className="text-2xl font-bold mb-4">Player Props Analysis</h2>
+            <p className="text-slate-300 mb-4">
+              Beyond team-based bets, we analyze individual player performance to find edges on player props. Our system tracks 1,300+ players across NBA and NHL.
+            </p>
+            <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-4 mb-4">
+              <h4 className="font-semibold mb-3 text-cyan-400">How Player Props Work</h4>
+              <ul className="space-y-2 text-slate-300">
+                <li><strong className="text-white">Historical Performance:</strong> We track rolling averages with recency weighting (recent games matter more)</li>
+                <li><strong className="text-white">Statistical Modeling:</strong> Normal distribution model calculates probability of hitting over/under lines</li>
+                <li><strong className="text-white">Opponent Adjustments:</strong> Factor in how the opposing team defends against specific stats</li>
+                <li><strong className="text-white">Pace Adjustments:</strong> High-scoring games boost projections, low-scoring games reduce them</li>
+                <li><strong className="text-white">Usage Adjustments:</strong> When key teammates are injured, remaining players often see increased usage</li>
+              </ul>
+            </div>
+            <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-4">
+              <h4 className="font-semibold mb-3 text-cyan-400">Stats Covered</h4>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-white font-medium mb-2">NBA/NCAAB</p>
+                  <ul className="text-slate-300 text-sm space-y-1">
+                    <li>Points, Rebounds, Assists</li>
+                    <li>Three Pointers Made</li>
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-white font-medium mb-2">NHL</p>
+                  <ul className="text-slate-300 text-sm space-y-1">
+                    <li>Goals, Assists, Shots</li>
+                    <li>Saves (goalies)</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            <p className="text-slate-400 mt-4">
+              We only recommend props when our model shows significant edge (8%+) and the probability is between 55-85% to avoid extreme predictions.
+            </p>
+          </section>
+
           {/* Calibration System */}
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Self-Correcting Calibration</h2>

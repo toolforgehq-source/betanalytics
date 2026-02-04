@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import { Activity, Shield, BarChart3, CheckCircle, Clock, Target, Zap, ChevronDown, TrendingUp } from 'lucide-react'
+import { Activity, Shield, BarChart3, CheckCircle, Clock, Target, Zap, ChevronDown, TrendingUp, User } from 'lucide-react'
 import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
 
@@ -212,6 +212,11 @@ export default function HomePage() {
                 description="Recent games matter more than games from October. We use sport-specific decay factors (0.95-0.99) so hot teams and cold streaks are reflected in current ratings."
               />
               <FeatureCard 
+                icon={<User className="w-7 h-7" />}
+                title="Player Props Analysis"
+                description="Individual player prop predictions using historical performance data, pace adjustments, and opponent matchups. Points, rebounds, assists, goals, shots, and more."
+              />
+              <FeatureCard 
                 icon={<Shield className="w-7 h-7" />}
                 title="Responsible Betting Focus"
                 description="We show probabilities, not guarantees. Emphasis on bankroll management and understanding the math behind every recommendation."
@@ -271,6 +276,7 @@ export default function HomePage() {
                 <PricingFeature text="Full methodology transparency" />
                 <PricingFeature text="Unlimited queries" />
                 <PricingFeature text="All major sports covered" />
+                <PricingFeature text="Player props analysis" />
                 <PricingFeature text="Hourly data updates" />
               </ul>
               <Link 
