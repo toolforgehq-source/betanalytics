@@ -198,18 +198,19 @@ export default async function MethodologyPage() {
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Recency Weighting</h2>
             <p className="text-slate-300 mb-4">
-              Recent games matter more than games from months ago. We apply sport-specific decay factors before each rating update:
+              Recent games matter more than games from months ago. We apply sport-specific decay factors before each rating update. Lower decay values ensure bad teams stay appropriately rated instead of being pulled toward the baseline:
             </p>
             <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-4 mb-4">
               <ul className="space-y-2 text-slate-300">
-                <li><strong className="text-white">NBA/NHL:</strong> 0.98 decay (~55% weight at 30 games ago)</li>
-                <li><strong className="text-white">NFL:</strong> 0.96 decay (~29% weight at 30 games ago)</li>
-                <li><strong className="text-white">MLB:</strong> 0.99 decay (~74% weight at 30 games ago)</li>
-                <li><strong className="text-white">NCAAF:</strong> 0.95 decay (~21% weight at 30 games ago)</li>
+                <li><strong className="text-white">NBA/NHL:</strong> 0.95 decay (~21% weight at 30 games ago)</li>
+                <li><strong className="text-white">NFL:</strong> 0.93 decay (~11% weight at 30 games ago)</li>
+                <li><strong className="text-white">MLB:</strong> 0.97 decay (~40% weight at 30 games ago)</li>
+                <li><strong className="text-white">NCAAB:</strong> 0.94 decay (~16% weight at 30 games ago)</li>
+                <li><strong className="text-white">NCAAF:</strong> 0.92 decay (~8% weight at 30 games ago)</li>
               </ul>
             </div>
             <p className="text-slate-400">
-              This means hot teams and cold streaks are reflected in current ratings, while still maintaining stability from historical performance.
+              This ensures teams with losing records maintain appropriately low ratings, while hot streaks and cold streaks are still reflected in current ratings.
             </p>
           </section>
 
@@ -259,6 +260,43 @@ export default async function MethodologyPage() {
             </p>
             <p className="text-slate-400">
               We only recommend bets when we find a significant edge - where our independent calculation meaningfully disagrees with the market price.
+            </p>
+          </section>
+
+          {/* Spread Betting Improvements */}
+          <section className="mb-12">
+            <h2 className="text-2xl font-bold mb-4">Spread Betting Intelligence</h2>
+            <p className="text-slate-300 mb-4">
+              Spread betting requires additional filters beyond simple edge calculation. We apply sport-specific thresholds to ensure high-quality spread recommendations:
+            </p>
+            <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-4 mb-4">
+              <h4 className="font-semibold mb-3 text-cyan-400">Minimum Margin Edge (Points)</h4>
+              <p className="text-slate-400 text-sm mb-3">
+                We only recommend spreads when our expected margin differs from the market spread by at least:
+              </p>
+              <ul className="space-y-2 text-slate-300">
+                <li><strong className="text-white">NBA:</strong> 3 points</li>
+                <li><strong className="text-white">NFL:</strong> 2.5 points</li>
+                <li><strong className="text-white">NCAAB:</strong> 4 points (higher variance)</li>
+                <li><strong className="text-white">NCAAF:</strong> 3 points</li>
+                <li><strong className="text-white">MLB:</strong> 1 run</li>
+                <li><strong className="text-white">NHL:</strong> Moneylines only (puck lines too unpredictable)</li>
+              </ul>
+            </div>
+            <div className="bg-slate-900/30 border border-slate-800/50 rounded-lg p-4">
+              <h4 className="font-semibold mb-3 text-cyan-400">Variance Filtering</h4>
+              <p className="text-slate-400 text-sm mb-3">
+                We skip games involving teams with high margin variance (unpredictable scoring patterns):
+              </p>
+              <ul className="space-y-2 text-slate-300">
+                <li><strong className="text-white">NBA:</strong> Skip if team variance &gt; 16 points</li>
+                <li><strong className="text-white">NFL:</strong> Skip if team variance &gt; 18 points</li>
+                <li><strong className="text-white">NCAAB:</strong> Skip if team variance &gt; 18 points</li>
+                <li><strong className="text-white">NCAAF:</strong> Skip if team variance &gt; 22 points</li>
+              </ul>
+            </div>
+            <p className="text-slate-400 mt-4">
+              These filters ensure we only recommend spreads where we have genuine predictive confidence, not just mathematical edge.
             </p>
           </section>
 
