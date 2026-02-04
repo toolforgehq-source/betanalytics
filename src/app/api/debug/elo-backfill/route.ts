@@ -22,8 +22,7 @@ import {
   getTeamMarginStatsByName,
   saveProcessedGameIds,
   getProcessedGameIds,
-  SUPPORTED_LEAGUES,
-  type EloRatings
+  SUPPORTED_LEAGUES
 } from '@/lib/elo'
 
 export const runtime = 'edge'
