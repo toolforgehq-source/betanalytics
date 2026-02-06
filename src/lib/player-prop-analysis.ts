@@ -574,6 +574,73 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
 }
 
 // ============================================
+// ANALYZE ALL PROPS FOR A SPECIFIC PLAYER
+// When user asks about a player without specifying a stat, run ALL their
+// available props through the full pipeline (model + matchup + pace + usage)
+// and rank them by edge. This is the "best in the world" approach.
+// ============================================
+
+export async function analyzeAllPlayerProps(playerName: string, sport?: string): Promise<PropAnalysisResult[]> {
+  let propsData: GamePlayerProps[] | null = null
+  try {
+    propsData = await getCachedPlayerProps()
+  } catch (err) {
+    console.error('[player-prop-analysis] Failed to fetch props for all-prop analysis:', err)
+    return []
+  }
+
+  if (!propsData || propsData.length === 0) return []
+
+  const normalizedName = playerName.toLowerCase()
+  const uniqueMarkets = new Map<string, { prop: PlayerProp; game: GamePlayerProps }>()
+
+  for (const game of propsData) {
+    const playerProps = game.props.filter(p =>
+      p.playerName.toLowerCase().includes(normalizedName) ||
+      normalizedName.includes(p.playerName.toLowerCase())
+    )
+
+    for (const prop of playerProps) {
+      const key = `${prop.market}|${prop.line}`
+      if (!uniqueMarkets.has(key)) {
+        uniqueMarkets.set(key, { prop, game })
+      }
+    }
+  }
+
+  if (uniqueMarkets.size === 0) return []
+
+  const analyses: PropAnalysisResult[] = []
+
+  for (const [, { prop }] of Array.from(uniqueMarkets.entries())) {
+    const statType = MARKET_TO_STAT_TYPE[prop.market]
+    if (!statType) continue
+
+    try {
+      const analysis = await analyzePlayerProp({
+        playerName: prop.playerName,
+        statType,
+        line: prop.line,
+        direction: null,
+        sport: sport || null,
+        platform: null,
+      })
+      analyses.push(analysis)
+    } catch (err) {
+      console.error(`[player-prop-analysis] Failed to analyze ${prop.playerName} ${prop.market} ${prop.line}:`, err)
+    }
+  }
+
+  analyses.sort((a, b) => {
+    const edgeA = Math.abs(a.recommendation.edge)
+    const edgeB = Math.abs(b.recommendation.edge)
+    return edgeB - edgeA
+  })
+
+  return analyses
+}
+
+// ============================================
 // BEST PROPS ANALYSIS (for "best prop" / "best player prop" queries)
 // ============================================
 

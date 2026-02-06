@@ -9,7 +9,7 @@ import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, 
 import type { RankedBet, BestBetResult } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 import { storePick, getAllPicks } from "@/lib/pick-tracking"
-import { detectPlayerPropQuestion, parsePlayerPropQuery, analyzePlayerProp, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
+import { detectPlayerPropQuestion, parsePlayerPropQuery, analyzePlayerProp, analyzeAllPlayerProps, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
 
@@ -1935,10 +1935,21 @@ export async function POST(request: Request) {
         
         let propAnalysisData: string
         
-        if (propQuery.playerName) {
+        if (propQuery.playerName && propQuery.statType) {
           const analysis = await analyzePlayerProp(propQuery)
           propAnalysisData = formatPropAnalysisForContext(analysis)
-          console.log(`[chat] Player prop analysis complete for ${propQuery.playerName}: pick=${analysis.recommendation.pick}, confidence=${analysis.recommendation.confidence}`)
+          console.log(`[chat] Player prop analysis complete for ${propQuery.playerName} ${propQuery.statType}: pick=${analysis.recommendation.pick}, confidence=${analysis.recommendation.confidence}`)
+        } else if (propQuery.playerName) {
+          console.log(`[chat] No specific stat requested - analyzing ALL props for ${propQuery.playerName}`)
+          const allAnalyses = await analyzeAllPlayerProps(propQuery.playerName, propQuery.sport || undefined)
+          if (allAnalyses.length > 0) {
+            propAnalysisData = formatMultiPropAnalysisForContext(allAnalyses)
+            console.log(`[chat] Full player prop analysis complete for ${propQuery.playerName}: ${allAnalyses.length} stat categories analyzed`)
+          } else {
+            const singleAnalysis = await analyzePlayerProp(propQuery)
+            propAnalysisData = formatPropAnalysisForContext(singleAnalysis)
+            console.log(`[chat] No cached props found for ${propQuery.playerName} - returning available analysis`)
+          }
         } else {
           const bestProps = await analyzeBestProps({ sport: propQuery.sport || undefined, count: 3 })
           if (bestProps.length > 0) {
