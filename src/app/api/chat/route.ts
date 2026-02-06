@@ -2396,22 +2396,67 @@ export async function POST(request: Request) {
           
           const analysis = await analyzePlayerProp(player.name, statType, actualLine, overUnder, cachedProps)
           
-          // CRITICAL: If no player data found, return deterministic response WITHOUT LLM
-          // This prevents the LLM from inventing fake projections/edges/scores
+          // CRITICAL: If no player data found, try to provide market-based analysis as fallback
+          // This prevents the LLM from inventing fake projections while still being helpful
           if (!analysis.playerFound) {
-            console.log(`[chat] No player data found for ${player.name}, returning deterministic response`)
-            const noDataResponse = `I don't have statistical data for ${player.name} in our player props model right now.
+            console.log(`[chat] No model data found for ${player.name}, checking for market data`)
+            
+            // Try to find market data for this player
+            let marketProp: { line: number; overOdds: number; underOdds: number; market: string } | null = null
+            if (cachedProps) {
+              for (const game of cachedProps) {
+                const matchingProp = game.props.find(p => 
+                  p.playerName.toLowerCase().includes(player.normalizedName) &&
+                  p.market.toLowerCase().includes(statType.toLowerCase().replace('threePointersMade', 'threes'))
+                )
+                if (matchingProp) {
+                  marketProp = matchingProp
+                  break
+                }
+              }
+            }
+            
+            let noDataResponse: string
+            if (marketProp) {
+              // We have market data but no model data - provide market-based analysis
+              const relevantOdds = overUnder === 'over' ? marketProp.overOdds : marketProp.underOdds
+              const impliedProb = americanToImpliedProbability(relevantOdds)
+              
+              noDataResponse = `## ${player.name.toUpperCase()} - ${overUnder.toUpperCase()} ${marketProp.line} ${statDisplayName.toUpperCase()}
+
+**Market Data Available** (No Model Projection)
+
+I found the market line for this prop, but I don't have enough historical game data for ${player.name} to run our statistical model.
+
+**Current Market:**
+- Line: ${marketProp.line} ${statDisplayName}
+- ${overUnder.charAt(0).toUpperCase() + overUnder.slice(1)} Odds: ${relevantOdds > 0 ? '+' : ''}${relevantOdds}
+- Implied Probability: ${impliedProb.toFixed(1)}%
+
+**Why No Model Projection:**
+Our model requires recent game data to calculate projections. ${player.name} may be:
+- A newer player without enough games tracked
+- Recently returned from injury
+- Not yet in our database
+
+**Recommendation:** Without our model's edge calculation, I cannot recommend for or against this bet. The market line is ${marketProp.line} with ${impliedProb.toFixed(1)}% implied probability for the ${overUnder}.
+
+Ask "What's the best player prop today?" to see props where I DO have model-backed analysis.`
+            } else {
+              // No market data and no model data
+              noDataResponse = `I don't have data for ${player.name} ${statDisplayName} in our system right now.
 
 **What this means:**
 - Our model tracks 1,000+ NBA players, but ${player.name} may not have enough recent game data
-- Without historical data, I cannot provide a projection, probability, or edge calculation
+- I also couldn't find current market odds for this specific prop
 
 **What you can do:**
 - Ask "What's the best player prop today?" to see props I DO have data for
 - Try a different player (stars like Jokic, Tatum, Edwards usually have data)
-- Check back tomorrow after more games are processed
+- Check back later when sportsbooks post more props
 
 I will NOT guess or invent numbers - that would be irresponsible. Our recommendations must be backed by actual data.`
+            }
             
             // Save messages to database
             await db.messages.create({

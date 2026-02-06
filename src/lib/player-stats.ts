@@ -832,16 +832,68 @@ export async function getPlayerPropProbability(
   }
 ): Promise<EnhancedPropProbability | null> {
   const statsData = await getPlayerStatsData()
-  if (!statsData) return null
+  if (!statsData) {
+    console.log(`[PlayerStats] No stats data available in Redis`)
+    return null
+  }
   
-  // Find player by name (case-insensitive search)
+  console.log(`[PlayerStats] Looking for player: "${playerName}" in sport: "${sport}"`)
+  console.log(`[PlayerStats] Total players in database: ${Object.keys(statsData.players).length}`)
+  
+  // Normalize player name for matching (remove accents, special chars)
+  const normalizeForMatch = (name: string): string => {
+    return name
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Remove accents
+      .replace(/[^a-z0-9\s]/g, '') // Remove special chars
+      .trim()
+  }
+  
+  const normalizedSearchName = normalizeForMatch(playerName)
+  
+  // Find player by name (case-insensitive, accent-insensitive search)
   const playerKey = Object.keys(statsData.players).find(key => {
     const player = statsData.players[key]
-    return player.sport === sport && 
-           player.playerName.toLowerCase().includes(playerName.toLowerCase())
+    if (player.sport !== sport) return false
+    
+    const normalizedPlayerName = normalizeForMatch(player.playerName)
+    
+    // Try multiple matching strategies
+    // 1. Exact match after normalization
+    if (normalizedPlayerName === normalizedSearchName) return true
+    
+    // 2. Contains match (search name in player name)
+    if (normalizedPlayerName.includes(normalizedSearchName)) return true
+    
+    // 3. Contains match (player name in search name)
+    if (normalizedSearchName.includes(normalizedPlayerName)) return true
+    
+    // 4. First/last name match
+    const searchParts = normalizedSearchName.split(/\s+/)
+    const playerParts = normalizedPlayerName.split(/\s+/)
+    
+    // If searching for "Luka", match "Luka Doncic"
+    if (searchParts.length === 1 && playerParts.some(p => p === searchParts[0])) return true
+    
+    // If searching for "Doncic", match "Luka Doncic"
+    if (searchParts.length === 1 && playerParts.some(p => p === searchParts[0])) return true
+    
+    return false
   })
   
-  if (!playerKey) return null
+  if (!playerKey) {
+    console.log(`[PlayerStats] Player "${playerName}" not found in ${sport} database`)
+    // Log some sample player names for debugging
+    const samplePlayers = Object.values(statsData.players)
+      .filter(p => p.sport === sport)
+      .slice(0, 5)
+      .map(p => p.playerName)
+    console.log(`[PlayerStats] Sample ${sport} players in database: ${samplePlayers.join(', ')}`)
+    return null
+  }
+  
+  console.log(`[PlayerStats] Found player: ${statsData.players[playerKey].playerName}`)
   
   const player = statsData.players[playerKey]
   const avg = (player.averages as Record<string, number>)[statType]
