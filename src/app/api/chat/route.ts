@@ -2396,6 +2396,56 @@ export async function POST(request: Request) {
           
           const analysis = await analyzePlayerProp(player.name, statType, actualLine, overUnder, cachedProps)
           
+          // CRITICAL: If no player data found, return deterministic response WITHOUT LLM
+          // This prevents the LLM from inventing fake projections/edges/scores
+          if (!analysis.playerFound) {
+            console.log(`[chat] No player data found for ${player.name}, returning deterministic response`)
+            const noDataResponse = `I don't have statistical data for ${player.name} in our player props model right now.
+
+**What this means:**
+- Our model tracks 1,000+ NBA players, but ${player.name} may not have enough recent game data
+- Without historical data, I cannot provide a projection, probability, or edge calculation
+
+**What you can do:**
+- Ask "What's the best player prop today?" to see props I DO have data for
+- Try a different player (stars like Jokic, Tatum, Edwards usually have data)
+- Check back tomorrow after more games are processed
+
+I will NOT guess or invent numbers - that would be irresponsible. Our recommendations must be backed by actual data.`
+            
+            // Save messages to database
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'user',
+              content: userMessage.content,
+            })
+            
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'assistant',
+              content: noDataResponse,
+            })
+            
+            await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+            
+            // Update question count for non-subscribers
+            if (!subStatus.isSubscribed) {
+              const user = await db.users.findById(session.user.id)
+              if (user) {
+                await db.users.update(session.user.id, { 
+                  questionCount: (user.questionCount || 0) + 1
+                })
+              }
+            }
+            
+            return NextResponse.json({ 
+              message: noDataResponse,
+              questionsRemaining: subStatus.isSubscribed 
+                ? -1 
+                : Math.max(0, subStatus.questionsRemaining - 1)
+            })
+          }
+          
           const formattedAnalysis = formatPlayerPropAnalysis(playerPropQuestion, [{
             playerName: player.name,
             statType,
@@ -2466,6 +2516,57 @@ export async function POST(request: Request) {
               analysis
             }
           }))
+          
+          // CRITICAL: If no player data found for any player, return deterministic response WITHOUT LLM
+          const playersWithNoData = analyses.filter(a => !a.analysis.playerFound)
+          if (playersWithNoData.length > 0) {
+            console.log(`[chat] No player data found for comparison, returning deterministic response`)
+            const missingPlayers = playersWithNoData.map(a => a.playerName).join(' and ')
+            const noDataResponse = `I don't have statistical data for ${missingPlayers} in our player props model right now.
+
+**What this means:**
+- Our model tracks 1,000+ NBA players, but these players may not have enough recent game data
+- Without historical data, I cannot provide a fair comparison
+
+**What you can do:**
+- Ask "What's the best player prop today?" to see props I DO have data for
+- Try comparing different players (stars like Jokic, Tatum, Edwards usually have data)
+- Check back tomorrow after more games are processed
+
+I will NOT guess or invent numbers - that would be irresponsible. Our recommendations must be backed by actual data.`
+            
+            // Save messages to database
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'user',
+              content: userMessage.content,
+            })
+            
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'assistant',
+              content: noDataResponse,
+            })
+            
+            await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+            
+            // Update question count for non-subscribers
+            if (!subStatus.isSubscribed) {
+              const user = await db.users.findById(session.user.id)
+              if (user) {
+                await db.users.update(session.user.id, { 
+                  questionCount: (user.questionCount || 0) + 1
+                })
+              }
+            }
+            
+            return NextResponse.json({ 
+              message: noDataResponse,
+              questionsRemaining: subStatus.isSubscribed 
+                ? -1 
+                : Math.max(0, subStatus.questionsRemaining - 1)
+            })
+          }
           
           const formattedAnalysis = formatPlayerPropAnalysis(playerPropQuestion, analyses)
           
@@ -2625,29 +2726,23 @@ export async function POST(request: Request) {
                 : Math.max(0, subStatus.questionsRemaining - 1)
             })
           } else {
-            // No cached props available - provide helpful message
-            const noPropsMessage = `## 🎯 PLAYER PROPS
+            // No cached props available - return DETERMINISTIC response WITHOUT LLM
+            // This prevents the LLM from inventing fake props or recommendations
+            console.log(`[chat] No cached props available, returning deterministic response`)
+            const noPropsMessage = `I don't have player props data available right now.
 
-We don't have player props data cached right now. This typically happens when:
+**Why this happens:**
 - Props haven't been posted by sportsbooks yet (usually posted morning/early afternoon)
 - The daily props refresh hasn't run yet
+- Our cache may be temporarily empty
 
 **What you can do:**
-- Ask about a specific player: "Should I bet Luka over 28.5 points?"
 - Check back later when props are available
-- Ask about game spreads or totals instead
+- Ask about game spreads or totals instead: "What's the best NBA bet today?"
 
-Our player stats model tracks 1000+ NBA players and can analyze any specific prop you're interested in!`
+I will NOT guess or invent player prop recommendations - that would be irresponsible. Our recommendations must be backed by actual data from sportsbooks.`
             
-            // Generate conversational response
-            const conversationalResponse = await generateConversationalResponse(
-              anthropic,
-              noPropsMessage,
-              userMessageContent,
-              conversationHistory
-            )
-            
-            // Save messages to database
+            // Save messages to database - NO LLM CALL
             await db.messages.create({
               conversationId: conversation.id,
               role: 'user',
@@ -2657,7 +2752,7 @@ Our player stats model tracks 1000+ NBA players and can analyze any specific pro
             await db.messages.create({
               conversationId: conversation.id,
               role: 'assistant',
-              content: conversationalResponse,
+              content: noPropsMessage,
             })
             
             await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
@@ -2673,7 +2768,7 @@ Our player stats model tracks 1000+ NBA players and can analyze any specific pro
             }
             
             return NextResponse.json({ 
-              message: conversationalResponse,
+              message: noPropsMessage,
               questionsRemaining: subStatus.isSubscribed 
                 ? -1 
                 : Math.max(0, subStatus.questionsRemaining - 1)
