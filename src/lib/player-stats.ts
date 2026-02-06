@@ -188,10 +188,16 @@ const SPORT_STATS: Record<string, string[]> = {
 // ESPN sport/league mappings for player stats
 const ESPN_PLAYER_SPORTS = [
   { sport: 'basketball', league: 'nba', name: 'NBA' },
+  { sport: 'basketball', league: 'mens-college-basketball', name: 'NCAAB' },
   { sport: 'football', league: 'nfl', name: 'NFL' },
+  { sport: 'football', league: 'college-football', name: 'NCAAF' },
   { sport: 'hockey', league: 'nhl', name: 'NHL' },
   { sport: 'baseball', league: 'mlb', name: 'MLB' },
 ]
+
+// On-demand cache key prefix (15 minute TTL)
+const ON_DEMAND_CACHE_PREFIX = 'player_ondemand_'
+const ON_DEMAND_CACHE_TTL = 900 // 15 minutes in seconds
 
 // ============================================
 // REDIS HELPERS
@@ -350,6 +356,432 @@ export async function clearProcessedGames(): Promise<boolean> {
     console.error('[PlayerStats] Error clearing processed games:', error)
     return false
   }
+}
+
+// ============================================
+// ON-DEMAND PLAYER STATS FETCHING
+// ============================================
+
+interface ESPNPlayerSearchResult {
+  id: string
+  displayName: string
+  position?: string
+  team?: {
+    id: string
+    displayName: string
+  }
+}
+
+interface ESPNGameLogEntry {
+  date: string
+  opponent: string
+  opponentId: string
+  isHome: boolean
+  stats: Record<string, number>
+}
+
+/**
+ * Search for a player on ESPN by name
+ * Returns player ID and basic info if found
+ */
+async function searchESPNPlayer(
+  playerName: string,
+  sport: string
+): Promise<ESPNPlayerSearchResult | null> {
+  const sportConfig = ESPN_PLAYER_SPORTS.find(s => s.name === sport)
+  if (!sportConfig) {
+    console.log(`[OnDemand] Unknown sport: ${sport}`)
+    return null
+  }
+  
+  try {
+    // ESPN athlete search API
+    const searchUrl = `https://site.web.api.espn.com/apis/common/v3/search?query=${encodeURIComponent(playerName)}&limit=10&type=player`
+    
+    console.log(`[OnDemand] Searching ESPN for player: ${playerName}`)
+    
+    const response = await fetch(searchUrl, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+    
+    if (!response.ok) {
+      console.log(`[OnDemand] ESPN search failed: ${response.status}`)
+      return null
+    }
+    
+    const data = await response.json()
+    
+    // Find matching player in the correct sport
+    const players = data.results?.filter((r: { type: string }) => r.type === 'player') || []
+    
+    for (const result of players) {
+      const items = result.contents || []
+      for (const item of items) {
+        // Check if this player is in the right sport/league
+        const league = item.league?.slug?.toLowerCase() || ''
+        if (league === sportConfig.league || 
+            (sport === 'NBA' && league === 'nba') ||
+            (sport === 'NFL' && league === 'nfl') ||
+            (sport === 'NHL' && league === 'nhl') ||
+            (sport === 'MLB' && league === 'mlb') ||
+            (sport === 'NCAAB' && (league === 'mens-college-basketball' || league === 'ncaam')) ||
+            (sport === 'NCAAF' && (league === 'college-football' || league === 'ncaaf'))) {
+          
+          console.log(`[OnDemand] Found player: ${item.displayName} (ID: ${item.id}) in ${league}`)
+          
+          return {
+            id: item.id,
+            displayName: item.displayName,
+            position: item.position,
+            team: item.team ? {
+              id: item.team.id,
+              displayName: item.team.displayName
+            } : undefined
+          }
+        }
+      }
+    }
+    
+    console.log(`[OnDemand] No matching player found for ${playerName} in ${sport}`)
+    return null
+  } catch (error) {
+    console.error(`[OnDemand] Error searching for player:`, error)
+    return null
+  }
+}
+
+/**
+ * Fetch a player's recent game logs from ESPN
+ * Returns last 10 games with stats
+ */
+async function fetchESPNPlayerGameLogs(
+  playerId: string,
+  sport: string
+): Promise<ESPNGameLogEntry[]> {
+  const sportConfig = ESPN_PLAYER_SPORTS.find(s => s.name === sport)
+  if (!sportConfig) return []
+  
+  try {
+    // ESPN player game log API
+    const url = `https://site.web.api.espn.com/apis/common/v3/sports/${sportConfig.sport}/${sportConfig.league}/athletes/${playerId}/gamelog`
+    
+    console.log(`[OnDemand] Fetching game logs for player ${playerId} from ${url}`)
+    
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+    
+    if (!response.ok) {
+      console.log(`[OnDemand] Failed to fetch game logs: ${response.status}`)
+      return []
+    }
+    
+    const data = await response.json()
+    
+    const gameLogs: ESPNGameLogEntry[] = []
+    
+    // Parse the game log data - structure varies by sport
+    const seasonTypes = data.seasonTypes || []
+    
+    for (const seasonType of seasonTypes) {
+      const categories = seasonType.categories || []
+      
+      for (const category of categories) {
+        const events = category.events || []
+        const labels = category.labels || []
+        
+        for (const event of events) {
+          const stats: Record<string, number> = {}
+          const eventStats = event.stats || []
+          
+          // Map stats to labels
+          for (let i = 0; i < Math.min(labels.length, eventStats.length); i++) {
+            const label = labels[i]?.toLowerCase() || ''
+            const value = parseFloat(eventStats[i]) || 0
+            
+            // Map ESPN labels to our stat names
+            if (sport === 'NBA' || sport === 'NCAAB') {
+              if (label === 'pts') stats.points = value
+              else if (label === 'reb') stats.rebounds = value
+              else if (label === 'ast') stats.assists = value
+              else if (label === '3pm') stats.threePointersMade = value
+              else if (label === 'min') stats.minutes = value
+            } else if (sport === 'NFL' || sport === 'NCAAF') {
+              if (label === 'yds' || label === 'pass yds') stats.passingYards = value
+              else if (label === 'rush yds') stats.rushingYards = value
+              else if (label === 'rec yds') stats.receivingYards = value
+              else if (label === 'td' || label === 'pass td') stats.passingTouchdowns = value
+              else if (label === 'rush td') stats.rushingTouchdowns = value
+              else if (label === 'rec td') stats.receivingTouchdowns = value
+              else if (label === 'rec') stats.receptions = value
+            } else if (sport === 'NHL') {
+              if (label === 'g') stats.goals = value
+              else if (label === 'a') stats.hockeyAssists = value
+              else if (label === 's' || label === 'sog') stats.shots = value
+              else if (label === 'sv') stats.saves = value
+              else if (label === 'toi') stats.minutes = value
+            } else if (sport === 'MLB') {
+              if (label === 'h') stats.hits = value
+              else if (label === 'hr') stats.homeRuns = value
+              else if (label === 'rbi') stats.rbis = value
+              else if (label === 'tb') stats.totalBases = value
+              else if (label === 'k' || label === 'so') stats.strikeouts = value
+              else if (label === 'r') stats.runsScored = value
+            }
+          }
+          
+          // Only add if we have meaningful stats
+          if (Object.keys(stats).length > 0) {
+            gameLogs.push({
+              date: event.eventDate || new Date().toISOString(),
+              opponent: event.opponent?.displayName || 'Unknown',
+              opponentId: event.opponent?.id || '',
+              isHome: event.homeAway === 'home',
+              stats
+            })
+          }
+        }
+      }
+    }
+    
+    // Sort by date (most recent first) and take last 10
+    gameLogs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    
+    console.log(`[OnDemand] Found ${gameLogs.length} game logs for player ${playerId}`)
+    
+    return gameLogs.slice(0, 10)
+  } catch (error) {
+    console.error(`[OnDemand] Error fetching game logs:`, error)
+    return []
+  }
+}
+
+/**
+ * Calculate on-demand player stats from game logs
+ */
+function calculateOnDemandStats(
+  gameLogs: ESPNGameLogEntry[],
+  statType: string
+): { average: number; stdDev: number; recentTrend: number; hitRate: number; gamesPlayed: number } | null {
+  if (gameLogs.length < 3) {
+    console.log(`[OnDemand] Not enough games (${gameLogs.length}) for reliable stats`)
+    return null
+  }
+  
+  // Extract stat values
+  const values = gameLogs
+    .map(log => log.stats[statType])
+    .filter((v): v is number => v !== undefined && !isNaN(v))
+  
+  if (values.length < 3) {
+    console.log(`[OnDemand] Not enough ${statType} values (${values.length})`)
+    return null
+  }
+  
+  // Calculate weighted average (more recent games weighted higher)
+  let weightedSum = 0
+  let totalWeight = 0
+  for (let i = 0; i < values.length; i++) {
+    const weight = Math.pow(RECENCY_DECAY, i)
+    weightedSum += values[i] * weight
+    totalWeight += weight
+  }
+  const average = weightedSum / totalWeight
+  
+  // Calculate standard deviation
+  const squaredDiffs = values.map(v => Math.pow(v - average, 2))
+  const avgSquaredDiff = squaredDiffs.reduce((a, b) => a + b, 0) / squaredDiffs.length
+  const stdDev = Math.sqrt(avgSquaredDiff) || average * 0.3
+  
+  // Calculate recent trend (last 3 games vs overall average)
+  const recentValues = values.slice(0, 3)
+  const recentAvg = recentValues.reduce((a, b) => a + b, 0) / recentValues.length
+  const recentTrend = recentAvg / average // >1 means trending up
+  
+  // Calculate hit rate (how often player exceeds their average)
+  const overCount = values.filter(v => v > average).length
+  const hitRate = overCount / values.length
+  
+  console.log(`[OnDemand] Calculated stats for ${statType}: avg=${average.toFixed(1)}, stdDev=${stdDev.toFixed(1)}, trend=${recentTrend.toFixed(2)}, hitRate=${(hitRate * 100).toFixed(0)}%`)
+  
+  return {
+    average,
+    stdDev,
+    recentTrend,
+    hitRate,
+    gamesPlayed: values.length
+  }
+}
+
+/**
+ * Get or create on-demand cache for a player
+ */
+async function getOnDemandCache(cacheKey: string): Promise<PlayerStats | null> {
+  const redis = await getRedisClient()
+  if (!redis) return null
+  
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['GET', cacheKey]),
+      cache: 'no-store'
+    })
+    
+    if (!response.ok) return null
+    
+    const data = await response.json()
+    if (!data.result) return null
+    
+    return JSON.parse(data.result) as PlayerStats
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Save on-demand player stats to cache with TTL
+ */
+async function saveOnDemandCache(cacheKey: string, stats: PlayerStats): Promise<void> {
+  const redis = await getRedisClient()
+  if (!redis) return
+  
+  try {
+    await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['SETEX', cacheKey, ON_DEMAND_CACHE_TTL, JSON.stringify(stats)])
+    })
+    console.log(`[OnDemand] Cached player stats for ${stats.playerName} (TTL: ${ON_DEMAND_CACHE_TTL}s)`)
+  } catch (error) {
+    console.error('[OnDemand] Error caching player stats:', error)
+  }
+}
+
+/**
+ * Fetch player stats on-demand from ESPN
+ * This is the main entry point for on-demand fetching
+ */
+export async function fetchPlayerStatsOnDemand(
+  playerName: string,
+  sport: string
+): Promise<PlayerStats | null> {
+  console.log(`[OnDemand] Fetching stats on-demand for ${playerName} in ${sport}`)
+  
+  // Check on-demand cache first
+  const cacheKey = `${ON_DEMAND_CACHE_PREFIX}${sport}_${playerName.toLowerCase().replace(/\s+/g, '_')}`
+  const cached = await getOnDemandCache(cacheKey)
+  if (cached) {
+    console.log(`[OnDemand] Found cached stats for ${playerName}`)
+    return cached
+  }
+  
+  // Search for player on ESPN
+  const playerInfo = await searchESPNPlayer(playerName, sport)
+  if (!playerInfo) {
+    console.log(`[OnDemand] Could not find player ${playerName} on ESPN`)
+    return null
+  }
+  
+  // Fetch game logs
+  const gameLogs = await fetchESPNPlayerGameLogs(playerInfo.id, sport)
+  if (gameLogs.length < 3) {
+    console.log(`[OnDemand] Not enough game data for ${playerName} (found ${gameLogs.length} games)`)
+    return null
+  }
+  
+  // Build PlayerStats object
+  const statTypes = SPORT_STATS[sport] || []
+  const averages: Record<string, number> = {}
+  const stdDevs: Record<string, number> = {}
+  const hitRates: Record<string, HitRateData> = {}
+  
+  for (const statType of statTypes) {
+    const stats = calculateOnDemandStats(gameLogs, statType)
+    if (stats) {
+      averages[statType] = stats.average
+      stdDevs[statType] = stats.stdDev
+      hitRates[statType] = {
+        overHits: Math.round(stats.hitRate * stats.gamesPlayed),
+        underHits: stats.gamesPlayed - Math.round(stats.hitRate * stats.gamesPlayed),
+        totalGames: stats.gamesPlayed,
+        hitRate: stats.hitRate * 100
+      }
+    }
+  }
+  
+  // Convert game logs to our format
+  const playerGameLogs: PlayerGameLog[] = gameLogs.map(log => ({
+    gameId: `ondemand_${log.date}`,
+    date: log.date,
+    opponent: log.opponent,
+    opponentId: log.opponentId,
+    isHome: log.isHome,
+    minutes: log.stats.minutes || 0,
+    points: log.stats.points,
+    rebounds: log.stats.rebounds,
+    assists: log.stats.assists,
+    threePointersMade: log.stats.threePointersMade,
+    passingYards: log.stats.passingYards,
+    rushingYards: log.stats.rushingYards,
+    receivingYards: log.stats.receivingYards,
+    passingTouchdowns: log.stats.passingTouchdowns,
+    rushingTouchdowns: log.stats.rushingTouchdowns,
+    receivingTouchdowns: log.stats.receivingTouchdowns,
+    receptions: log.stats.receptions,
+    goals: log.stats.goals,
+    hockeyAssists: log.stats.hockeyAssists,
+    shots: log.stats.shots,
+    saves: log.stats.saves,
+    hits: log.stats.hits,
+    homeRuns: log.stats.homeRuns,
+    rbis: log.stats.rbis,
+    totalBases: log.stats.totalBases,
+    runsScored: log.stats.runsScored,
+    strikeouts: log.stats.strikeouts,
+  }))
+  
+  // Calculate reliability score based on coefficient of variation
+  const cvValues: number[] = []
+  for (const statType of statTypes) {
+    if (averages[statType] && stdDevs[statType]) {
+      const cv = stdDevs[statType] / averages[statType]
+      cvValues.push(cv)
+    }
+  }
+  const avgCV = cvValues.length > 0 ? cvValues.reduce((a, b) => a + b, 0) / cvValues.length : 0.5
+  const reliabilityScore = Math.max(0, Math.min(100, 100 - (avgCV * 100)))
+  
+  const playerStats: PlayerStats = {
+    playerId: playerInfo.id,
+    playerName: playerInfo.displayName,
+    teamId: playerInfo.team?.id || '',
+    teamName: playerInfo.team?.displayName || '',
+    sport,
+    position: playerInfo.position || '',
+    gameLogs: playerGameLogs,
+    averages: averages as PlayerStats['averages'],
+    stdDevs: stdDevs as PlayerStats['stdDevs'],
+    hitRates: hitRates as PlayerStats['hitRates'],
+    reliabilityScore,
+    gamesPlayed: gameLogs.length,
+    lastUpdated: new Date().toISOString()
+  }
+  
+  // Cache for future requests
+  await saveOnDemandCache(cacheKey, playerStats)
+  
+  console.log(`[OnDemand] Successfully fetched stats for ${playerInfo.displayName}: ${gameLogs.length} games`)
+  
+  return playerStats
 }
 
 // ============================================
@@ -882,20 +1314,30 @@ export async function getPlayerPropProbability(
     return false
   })
   
+  let player: PlayerStats | null = null
+  
   if (!playerKey) {
-    console.log(`[PlayerStats] Player "${playerName}" not found in ${sport} database`)
-    // Log some sample player names for debugging
-    const samplePlayers = Object.values(statsData.players)
-      .filter(p => p.sport === sport)
-      .slice(0, 5)
-      .map(p => p.playerName)
-    console.log(`[PlayerStats] Sample ${sport} players in database: ${samplePlayers.join(', ')}`)
-    return null
+    console.log(`[PlayerStats] Player "${playerName}" not found in ${sport} database, trying on-demand fetch`)
+    
+    // Try on-demand fetching from ESPN
+    const onDemandPlayer = await fetchPlayerStatsOnDemand(playerName, sport)
+    if (!onDemandPlayer) {
+      // Log some sample player names for debugging
+      const samplePlayers = Object.values(statsData.players)
+        .filter(p => p.sport === sport)
+        .slice(0, 5)
+        .map(p => p.playerName)
+      console.log(`[PlayerStats] Sample ${sport} players in database: ${samplePlayers.join(', ')}`)
+      console.log(`[PlayerStats] On-demand fetch also failed for ${playerName}`)
+      return null
+    }
+    
+    player = onDemandPlayer
+    console.log(`[PlayerStats] Found player via on-demand fetch: ${player.playerName}`)
+  } else {
+    player = statsData.players[playerKey]
+    console.log(`[PlayerStats] Found player in cache: ${player.playerName}`)
   }
-  
-  console.log(`[PlayerStats] Found player: ${statsData.players[playerKey].playerName}`)
-  
-  const player = statsData.players[playerKey]
   const avg = (player.averages as Record<string, number>)[statType]
   const stdDev = (player.stdDevs as Record<string, number>)[statType]
   
