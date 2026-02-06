@@ -1155,110 +1155,300 @@ function detectParlayQuestion(userMessage: string): { isParlay: boolean; legCoun
 // PLAYER PROP DETECTION AND ANALYSIS
 // ============================================
 
-// Common NBA player names for matching (expanded list)
-const NBA_PLAYER_NAMES = [
-  // Stars
-  'luka', 'doncic', 'lebron', 'james', 'curry', 'steph', 'stephen', 'giannis', 'antetokounmpo',
-  'jokic', 'nikola', 'embiid', 'joel', 'tatum', 'jayson', 'durant', 'kevin', 'booker', 'devin',
-  'morant', 'ja', 'edwards', 'anthony', 'brunson', 'jalen', 'haliburton', 'tyrese', 'mitchell',
-  'donovan', 'lillard', 'damian', 'dame', 'shai', 'gilgeous', 'alexander', 'sga', 'fox', 'deaaron',
-  'trae', 'young', 'lamelo', 'ball', 'bam', 'adebayo', 'butler', 'jimmy', 'kawhi', 'leonard',
-  'paul', 'george', 'pg', 'kyrie', 'irving', 'zion', 'williamson', 'cade', 'cunningham',
-  'wembanyama', 'victor', 'wemby', 'sabonis', 'domantas', 'randle', 'julius', 'maxey', 'tyrese',
-  'garland', 'darius', 'murray', 'dejounte', 'jamal', 'siakam', 'pascal', 'ingram', 'brandon',
-  'banchero', 'paolo', 'mobley', 'evan', 'scottie', 'barnes', 'franz', 'wagner', 'chet', 'holmgren',
-  'lauri', 'markkanen', 'desmond', 'bane', 'jaren', 'jackson', 'jjj', 'mikal', 'bridges', 'cam',
-  'thomas', 'ivey', 'jaden', 'mcdaniels', 'austin', 'reaves', 'poole', 'jordan', 'herro', 'tyler',
-  'sengun', 'alperen', 'green', 'jalen', 'draymond', 'klay', 'thompson', 'wiggins', 'andrew',
-  'ant', 'kat', 'towns', 'gobert', 'rudy', 'ayton', 'deandre', 'allen', 'jarrett', 'vucevic', 'nikola',
-  'lopez', 'brook', 'middleton', 'khris', 'holiday', 'jrue', 'portis', 'bobby', 'giddey', 'josh',
-  'dort', 'luguentz', 'williams', 'jalen', 'grant', 'jerami', 'suggs', 'jalen', 'fultz', 'markelle',
-  'carter', 'wendell', 'isaac', 'jonathan', 'poeltl', 'jakob', 'vassell', 'devin', 'keldon', 'johnson',
-  'tre', 'jones', 'sochan', 'jeremy', 'collins', 'john', 'dejounte', 'capela', 'clint', 'hunter',
-  'bogdanovic', 'bogdan', 'okongwu', 'onyeka', 'johnson', 'jalen', 'duarte', 'chris', 'mathurin',
-  'bennedict', 'turner', 'myles', 'nembhard', 'andrew', 'simons', 'anfernee', 'sharpe', 'shaedon',
-  'nurkic', 'jusuf', 'achiuwa', 'precious', 'quickley', 'immanuel', 'iq', 'barrett', 'rj',
-  'brunson', 'hart', 'josh', 'donte', 'divincenzo', 'og', 'anunoby', 'robinson', 'mitchell',
-  'claxton', 'nic', 'bridges', 'mikal', 'cam', 'johnson', 'finney', 'smith', 'dorian', 'dinwiddie',
-  'spencer', 'clarkson', 'jordan', 'sexton', 'collin', 'conley', 'mike', 'kessler', 'walker',
-  'olynyk', 'kelly', 'oubre', 'kelly', 'rozier', 'terry', 'hayward', 'gordon', 'williams', 'mark',
-  'pj', 'washington', 'plumlee', 'mason', 'smith', 'nick', 'monk', 'malik', 'huerter', 'kevin',
-  'keegan', 'murray', 'lyles', 'trey', 'barnes', 'harrison', 'davion', 'duren', 'jalen', 'stewart',
-  'isaiah', 'bey', 'saddiq', 'bagley', 'marvin', 'burks', 'alec', 'hardaway', 'tim', 'dinwiddie',
-  'lively', 'dereck', 'gafford', 'daniel', 'exum', 'dante', 'hardy', 'jaden', 'kleber', 'maxi',
-  'powell', 'dwight', 'wood', 'christian', 'green', 'josh', 'sengun', 'amen', 'thompson', 'ausar',
-  'whitmore', 'cam', 'smith', 'jabari', 'reed', 'paul', 'dillon', 'brooks', 'aldama', 'santi',
-  'lorenzen', 'wright', 'vince', 'lavert', 'caris', 'okoro', 'isaac', 'mobley', 'allen', 'merrill',
-  'sam', 'niang', 'georges', 'wade', 'dean', 'strus', 'max', 'osman', 'cedi', 'levert'
-]
+// Multi-sport player names for matching
+const PLAYER_NAMES_BY_SPORT: Record<string, string[]> = {
+  NBA: [
+    // Stars
+    'luka', 'doncic', 'lebron', 'james', 'curry', 'steph', 'stephen', 'giannis', 'antetokounmpo',
+    'jokic', 'nikola', 'embiid', 'joel', 'tatum', 'jayson', 'durant', 'kevin', 'booker', 'devin',
+    'morant', 'ja', 'edwards', 'anthony', 'brunson', 'jalen', 'haliburton', 'tyrese', 'mitchell',
+    'donovan', 'lillard', 'damian', 'dame', 'shai', 'gilgeous', 'alexander', 'sga', 'fox', 'deaaron',
+    'trae', 'young', 'lamelo', 'ball', 'bam', 'adebayo', 'butler', 'jimmy', 'kawhi', 'leonard',
+    'paul', 'george', 'pg', 'kyrie', 'irving', 'zion', 'williamson', 'cade', 'cunningham',
+    'wembanyama', 'victor', 'wemby', 'sabonis', 'domantas', 'randle', 'julius', 'maxey',
+    'garland', 'darius', 'murray', 'dejounte', 'jamal', 'siakam', 'pascal', 'ingram', 'brandon',
+    'banchero', 'paolo', 'mobley', 'evan', 'scottie', 'barnes', 'franz', 'wagner', 'chet', 'holmgren',
+    'lauri', 'markkanen', 'desmond', 'bane', 'jaren', 'jackson', 'jjj', 'mikal', 'bridges', 'cam',
+    'thomas', 'ivey', 'jaden', 'mcdaniels', 'austin', 'reaves', 'poole', 'jordan', 'herro', 'tyler',
+    'sengun', 'alperen', 'green', 'draymond', 'klay', 'thompson', 'wiggins', 'andrew',
+    'ant', 'kat', 'towns', 'gobert', 'rudy', 'ayton', 'deandre', 'allen', 'jarrett', 'vucevic',
+    'lopez', 'brook', 'middleton', 'khris', 'holiday', 'jrue', 'portis', 'bobby', 'giddey', 'josh'
+  ],
+  NFL: [
+    // QBs
+    'mahomes', 'patrick', 'allen', 'josh', 'burrow', 'joe', 'hurts', 'jalen', 'jackson', 'lamar',
+    'herbert', 'justin', 'stroud', 'cj', 'love', 'jordan', 'purdy', 'brock', 'goff', 'jared',
+    'stafford', 'matthew', 'prescott', 'dak', 'rodgers', 'aaron', 'cousins', 'kirk', 'lawrence',
+    'trevor', 'richardson', 'anthony', 'daniels', 'jayden', 'williams', 'caleb', 'nix', 'bo',
+    // RBs
+    'mccaffrey', 'christian', 'cmc', 'henry', 'derrick', 'chubb', 'nick', 'barkley', 'saquon',
+    'taylor', 'jonathan', 'jt', 'cook', 'dalvin', 'jacobs', 'josh', 'robinson', 'bijan', 'gibbs',
+    'jahmyr', 'achane', 'de\'von', 'hall', 'breece', 'pollard', 'tony', 'stevenson', 'rhamondre',
+    'mixon', 'joe', 'ekeler', 'austin', 'swift', 'dandre', 'etienne', 'travis', 'walker', 'kenneth',
+    // WRs
+    'hill', 'tyreek', 'jefferson', 'justin', 'chase', 'jamarr', 'lamb', 'ceedee', 'diggs', 'stefon',
+    'adams', 'davante', 'brown', 'aj', 'metcalf', 'dk', 'higgins', 'tee', 'waddle', 'jaylen',
+    'olave', 'chris', 'wilson', 'garrett', 'st brown', 'amon-ra', 'aiyuk', 'brandon', 'mclaurin',
+    'terry', 'smith', 'devonta', 'kupp', 'cooper', 'deebo', 'samuel', 'london', 'drake', 'moore',
+    'dj', 'pittman', 'michael', 'collins', 'nico', 'nabers', 'malik', 'harrison', 'marvin',
+    // TEs
+    'kelce', 'travis', 'andrews', 'mark', 'kittle', 'george', 'hockenson', 'tj', 'goedert', 'dallas',
+    'waller', 'darren', 'pitts', 'kyle', 'njoku', 'david', 'freiermuth', 'pat', 'kincaid', 'dalton'
+  ],
+  NHL: [
+    // Forwards
+    'mcdavid', 'connor', 'draisaitl', 'leon', 'mackinnon', 'nathan', 'matthews', 'auston',
+    'kucherov', 'nikita', 'pastrnak', 'david', 'ovechkin', 'alex', 'ovi', 'crosby', 'sidney', 'sid',
+    'kaprizov', 'kirill', 'marner', 'mitch', 'rantanen', 'mikko', 'stamkos', 'steven', 'huberdeau',
+    'jonathan', 'panarin', 'artemi', 'bread', 'kane', 'patrick', 'eichel', 'jack', 'tkachuk',
+    'matthew', 'brady', 'zibanejad', 'mika', 'point', 'brayden', 'marchand', 'brad', 'rat',
+    'forsberg', 'filip', 'lindholm', 'elias', 'pettersson', 'barzal', 'mathew', 'suzuki', 'nick',
+    'robertson', 'jason', 'hintz', 'roope', 'debrincat', 'alex', 'cat', 'caufield', 'cole',
+    'bedard', 'connor', 'fantilli', 'adam', 'michkov', 'matvei', 'celebrini', 'macklin',
+    // Goalies
+    'vasilevskiy', 'andrei', 'vasi', 'shesterkin', 'igor', 'hellebuyck', 'connor', 'saros', 'juuse',
+    'demko', 'thatcher', 'oettinger', 'jake', 'otter', 'sorokin', 'ilya', 'markstrom', 'jacob'
+  ],
+  MLB: [
+    // Hitters
+    'ohtani', 'shohei', 'trout', 'mike', 'betts', 'mookie', 'judge', 'aaron', 'soto', 'juan',
+    'acuna', 'ronald', 'tatis', 'fernando', 'rodriguez', 'julio', 'jrod', 'tucker', 'kyle',
+    'freeman', 'freddie', 'arenado', 'nolan', 'ramirez', 'jose', 'devers', 'rafael', 'riley',
+    'austin', 'olson', 'matt', 'seager', 'corey', 'turner', 'trea', 'lindor', 'francisco',
+    'guerrero', 'vladdy', 'vlad', 'witt', 'bobby', 'carroll', 'corbin', 'henderson', 'gunnar',
+    'volpe', 'anthony', 'elly', 'de la cruz', 'correa', 'carlos', 'machado', 'manny', 'bregman',
+    'alex', 'harper', 'bryce', 'schwarber', 'kyle', 'stanton', 'giancarlo', 'alvarez', 'yordan',
+    // Pitchers
+    'cole', 'gerrit', 'degrom', 'jacob', 'scherzer', 'max', 'verlander', 'justin', 'kershaw',
+    'clayton', 'alcantara', 'sandy', 'cease', 'dylan', 'bieber', 'shane', 'mcclanahan', 'shane',
+    'strider', 'spencer', 'webb', 'logan', 'wheeler', 'zack', 'nola', 'aaron', 'glasnow', 'tyler',
+    'skubal', 'tarik', 'sale', 'chris', 'burns', 'corbin', 'clase', 'emmanuel', 'hader', 'josh',
+    'diaz', 'edwin', 'williams', 'devin', 'yamamoto', 'yoshinobu'
+  ]
+}
 
-// Stat type mappings
-const STAT_TYPE_PATTERNS: Record<string, { patterns: RegExp[]; statName: string; displayName: string }> = {
+// Flatten all player names for quick lookup (used in detectPlayerPropQuestion)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const ALL_PLAYER_NAMES = Object.values(PLAYER_NAMES_BY_SPORT).flat()
+
+// Multi-sport stat type mappings
+const STAT_TYPE_PATTERNS: Record<string, { patterns: RegExp[]; statName: string; displayName: string; sports: string[] }> = {
+  // NBA Stats
   'points': {
     patterns: [/\bpoints?\b/i, /\bpts?\b/i, /\bscoring\b/i],
     statName: 'points',
-    displayName: 'points'
+    displayName: 'points',
+    sports: ['NBA', 'NCAAB']
   },
   'rebounds': {
     patterns: [/\brebounds?\b/i, /\brebs?\b/i, /\bboards?\b/i],
     statName: 'rebounds',
-    displayName: 'rebounds'
+    displayName: 'rebounds',
+    sports: ['NBA', 'NCAAB']
   },
   'assists': {
     patterns: [/\bassists?\b/i, /\basts?\b/i, /\bdimes?\b/i],
     statName: 'assists',
-    displayName: 'assists'
+    displayName: 'assists',
+    sports: ['NBA', 'NCAAB']
   },
   'threes': {
     patterns: [/\bthrees?\b/i, /\b3s?\b/i, /\bthree[- ]?pointers?\b/i, /\b3[- ]?pointers?\b/i, /\btriples?\b/i, /\b3pt\b/i],
     statName: 'threePointersMade',
-    displayName: 'threes'
+    displayName: 'threes',
+    sports: ['NBA', 'NCAAB']
   },
   'steals': {
     patterns: [/\bsteals?\b/i, /\bstls?\b/i],
     statName: 'steals',
-    displayName: 'steals'
+    displayName: 'steals',
+    sports: ['NBA', 'NCAAB']
   },
   'blocks': {
     patterns: [/\bblocks?\b/i, /\bblks?\b/i],
     statName: 'blocks',
-    displayName: 'blocks'
-  },
-  'turnovers': {
-    patterns: [/\bturnovers?\b/i, /\btos?\b/i],
-    statName: 'turnovers',
-    displayName: 'turnovers'
+    displayName: 'blocks',
+    sports: ['NBA', 'NCAAB']
   },
   'pra': {
     patterns: [/\bpra\b/i, /\bpoints?\s*\+?\s*rebounds?\s*\+?\s*assists?\b/i],
     statName: 'pra',
-    displayName: 'PRA (points+rebounds+assists)'
-  },
-  'pr': {
-    patterns: [/\bpr\b/i, /\bpoints?\s*\+?\s*rebounds?\b/i],
-    statName: 'pr',
-    displayName: 'points+rebounds'
-  },
-  'pa': {
-    patterns: [/\bpa\b/i, /\bpoints?\s*\+?\s*assists?\b/i],
-    statName: 'pa',
-    displayName: 'points+assists'
-  },
-  'ra': {
-    patterns: [/\bra\b/i, /\brebounds?\s*\+?\s*assists?\b/i],
-    statName: 'ra',
-    displayName: 'rebounds+assists'
+    displayName: 'PRA (points+rebounds+assists)',
+    sports: ['NBA', 'NCAAB']
   },
   'double_double': {
     patterns: [/\bdouble[- ]?double\b/i, /\bdd\b/i],
     statName: 'double_double',
-    displayName: 'double-double'
+    displayName: 'double-double',
+    sports: ['NBA', 'NCAAB']
   },
   'triple_double': {
     patterns: [/\btriple[- ]?double\b/i, /\btd\b/i],
     statName: 'triple_double',
-    displayName: 'triple-double'
+    displayName: 'triple-double',
+    sports: ['NBA', 'NCAAB']
+  },
+  // NFL Stats
+  'passingYards': {
+    patterns: [/\bpassing\s*yards?\b/i, /\bpass\s*yds?\b/i, /\bthrow(?:ing)?\s*yards?\b/i],
+    statName: 'passingYards',
+    displayName: 'passing yards',
+    sports: ['NFL', 'NCAAF']
+  },
+  'rushingYards': {
+    patterns: [/\brushing\s*yards?\b/i, /\brush\s*yds?\b/i, /\bcarry(?:ing)?\s*yards?\b/i, /\bground\s*yards?\b/i],
+    statName: 'rushingYards',
+    displayName: 'rushing yards',
+    sports: ['NFL', 'NCAAF']
+  },
+  'receivingYards': {
+    patterns: [/\breceiving\s*yards?\b/i, /\brec\s*yds?\b/i, /\bcatching\s*yards?\b/i],
+    statName: 'receivingYards',
+    displayName: 'receiving yards',
+    sports: ['NFL', 'NCAAF']
+  },
+  'passingTouchdowns': {
+    patterns: [/\bpassing\s*t(?:ouch)?d(?:own)?s?\b/i, /\bpass\s*t(?:ouch)?d(?:own)?s?\b/i, /\bthrow(?:ing)?\s*t(?:ouch)?d(?:own)?s?\b/i],
+    statName: 'passingTouchdowns',
+    displayName: 'passing TDs',
+    sports: ['NFL', 'NCAAF']
+  },
+  'rushingTouchdowns': {
+    patterns: [/\brushing\s*t(?:ouch)?d(?:own)?s?\b/i, /\brush\s*t(?:ouch)?d(?:own)?s?\b/i],
+    statName: 'rushingTouchdowns',
+    displayName: 'rushing TDs',
+    sports: ['NFL', 'NCAAF']
+  },
+  'receivingTouchdowns': {
+    patterns: [/\breceiving\s*t(?:ouch)?d(?:own)?s?\b/i, /\brec\s*t(?:ouch)?d(?:own)?s?\b/i],
+    statName: 'receivingTouchdowns',
+    displayName: 'receiving TDs',
+    sports: ['NFL', 'NCAAF']
+  },
+  'receptions': {
+    patterns: [/\breceptions?\b/i, /\brecs?\b/i, /\bcatches\b/i],
+    statName: 'receptions',
+    displayName: 'receptions',
+    sports: ['NFL', 'NCAAF']
+  },
+  'completions': {
+    patterns: [/\bcompletions?\b/i, /\bcomps?\b/i],
+    statName: 'completions',
+    displayName: 'completions',
+    sports: ['NFL', 'NCAAF']
+  },
+  'interceptions': {
+    patterns: [/\binterceptions?\b/i, /\bints?\b/i, /\bpicks?\b/i],
+    statName: 'interceptions',
+    displayName: 'interceptions',
+    sports: ['NFL', 'NCAAF']
+  },
+  'anytimeTD': {
+    patterns: [/\banytime\s*t(?:ouch)?d(?:own)?\b/i, /\bscore\s*a?\s*t(?:ouch)?d(?:own)?\b/i, /\bfirst\s*t(?:ouch)?d(?:own)?\b/i],
+    statName: 'anytimeTD',
+    displayName: 'anytime TD',
+    sports: ['NFL', 'NCAAF']
+  },
+  // NHL Stats
+  'goals': {
+    patterns: [/\bgoals?\b/i, /\bscores?\b/i, /\blamp(?:lighter)?s?\b/i],
+    statName: 'goals',
+    displayName: 'goals',
+    sports: ['NHL']
+  },
+  'hockeyAssists': {
+    patterns: [/\bassists?\b/i, /\bapples?\b/i, /\bhelpers?\b/i],
+    statName: 'hockeyAssists',
+    displayName: 'assists',
+    sports: ['NHL']
+  },
+  'hockeyPoints': {
+    patterns: [/\bpoints?\b/i, /\bpts?\b/i],
+    statName: 'hockeyPoints',
+    displayName: 'points',
+    sports: ['NHL']
+  },
+  'shots': {
+    patterns: [/\bshots?\b/i, /\bsog\b/i, /\bshots?\s*on\s*goal\b/i],
+    statName: 'shots',
+    displayName: 'shots on goal',
+    sports: ['NHL']
+  },
+  'saves': {
+    patterns: [/\bsaves?\b/i, /\bsv\b/i],
+    statName: 'saves',
+    displayName: 'saves',
+    sports: ['NHL']
+  },
+  // MLB Stats
+  'hits': {
+    patterns: [/\bhits?\b/i, /\bh\b/i],
+    statName: 'hits',
+    displayName: 'hits',
+    sports: ['MLB']
+  },
+  'homeRuns': {
+    patterns: [/\bhome\s*runs?\b/i, /\bhrs?\b/i, /\bdingers?\b/i, /\bbombs?\b/i, /\bjacks?\b/i],
+    statName: 'homeRuns',
+    displayName: 'home runs',
+    sports: ['MLB']
+  },
+  'rbis': {
+    patterns: [/\brbis?\b/i, /\bruns?\s*batted\s*in\b/i],
+    statName: 'rbis',
+    displayName: 'RBIs',
+    sports: ['MLB']
+  },
+  'totalBases': {
+    patterns: [/\btotal\s*bases?\b/i, /\btbs?\b/i],
+    statName: 'totalBases',
+    displayName: 'total bases',
+    sports: ['MLB']
+  },
+  'strikeouts': {
+    patterns: [/\bstrikeouts?\b/i, /\bks?\b/i, /\bpunch(?:ed)?\s*out\b/i],
+    statName: 'strikeouts',
+    displayName: 'strikeouts',
+    sports: ['MLB']
+  },
+  'runs': {
+    patterns: [/\bruns?\s*scored\b/i, /\bruns?\b/i],
+    statName: 'runs',
+    displayName: 'runs',
+    sports: ['MLB']
+  },
+  'stolenBases': {
+    patterns: [/\bstolen\s*bases?\b/i, /\bsbs?\b/i, /\bsteals?\b/i],
+    statName: 'stolenBases',
+    displayName: 'stolen bases',
+    sports: ['MLB']
+  },
+  'walks': {
+    patterns: [/\bwalks?\b/i, /\bbbs?\b/i],
+    statName: 'walks',
+    displayName: 'walks',
+    sports: ['MLB']
+  },
+  'earnedRuns': {
+    patterns: [/\bearned\s*runs?\b/i, /\bers?\b/i],
+    statName: 'earnedRuns',
+    displayName: 'earned runs',
+    sports: ['MLB']
+  },
+  'pitcherStrikeouts': {
+    patterns: [/\bpitcher\s*strikeouts?\b/i, /\bpitching\s*ks?\b/i],
+    statName: 'pitcherStrikeouts',
+    displayName: 'pitcher strikeouts',
+    sports: ['MLB']
   }
+}
+
+// Sport detection keywords
+const SPORT_DETECTION_KEYWORDS: Record<string, RegExp[]> = {
+  NBA: [/\bnba\b/i, /\bbasketball\b/i, /\bhoops?\b/i],
+  NFL: [/\bnfl\b/i, /\bfootball\b/i, /\bsuper\s*bowl\b/i],
+  NHL: [/\bnhl\b/i, /\bhockey\b/i, /\bice\b/i, /\bpuck\b/i],
+  MLB: [/\bmlb\b/i, /\bbaseball\b/i, /\bdiamonds?\b/i]
 }
 
 // Player prop question result interface
@@ -1267,6 +1457,7 @@ interface PlayerPropQuestion {
   players: Array<{
     name: string
     normalizedName: string
+    sport?: string  // Detected sport for this player
   }>
   statType?: string
   statDisplayName?: string
@@ -1274,6 +1465,54 @@ interface PlayerPropQuestion {
   overUnder?: 'over' | 'under'
   team?: string
   parlayCount?: number
+  sport?: string  // Overall detected sport for the question
+}
+
+/**
+ * Detect sport from message context (keywords, player names, stat types)
+ */
+function detectSportFromContext(message: string, playerName?: string): string | undefined {
+  const normalizedMessage = message.toLowerCase()
+  
+  // 1. Check for explicit sport keywords
+  for (const [sport, patterns] of Object.entries(SPORT_DETECTION_KEYWORDS)) {
+    if (patterns.some(p => p.test(normalizedMessage))) {
+      return sport
+    }
+  }
+  
+  // 2. Check if player name matches a specific sport
+  if (playerName) {
+    const normalizedPlayer = playerName.toLowerCase()
+    for (const [sport, players] of Object.entries(PLAYER_NAMES_BY_SPORT)) {
+      if (players.some(p => normalizedPlayer.includes(p) || p.includes(normalizedPlayer))) {
+        return sport
+      }
+    }
+  }
+  
+  // 3. Check stat type to infer sport
+  for (const [, statInfo] of Object.entries(STAT_TYPE_PATTERNS)) {
+    if (statInfo.patterns.some(p => p.test(normalizedMessage))) {
+      // Return the first sport that supports this stat
+      if (statInfo.sports.length === 1) {
+        return statInfo.sports[0]
+      }
+      // For stats that span multiple sports, check for sport-specific context
+      if (statInfo.sports.includes('NFL') && /\byards?\b/i.test(normalizedMessage)) {
+        return 'NFL'
+      }
+      if (statInfo.sports.includes('NHL') && /\bgoals?\b/i.test(normalizedMessage)) {
+        return 'NHL'
+      }
+      if (statInfo.sports.includes('MLB') && /\bhome\s*runs?\b/i.test(normalizedMessage)) {
+        return 'MLB'
+      }
+    }
+  }
+  
+  // 4. Default to NBA if no sport detected (most common)
+  return undefined
 }
 
 /**
@@ -1365,7 +1604,7 @@ function detectPlayerPropQuestion(userMessage: string): PlayerPropQuestion | nul
   // Find player names in the message
   const foundPlayers: Array<{ name: string; normalizedName: string }> = []
   
-  for (const playerName of NBA_PLAYER_NAMES) {
+  for (const playerName of ALL_PLAYER_NAMES) {
     // Create word boundary regex for the player name
     const regex = new RegExp(`\\b${playerName}\\b`, 'i')
     if (regex.test(normalizedMessage)) {
@@ -1460,13 +1699,15 @@ function detectPlayerPropQuestion(userMessage: string): PlayerPropQuestion | nul
 
 /**
  * Analyze a specific player prop and return formatted analysis
+ * Now supports ALL sports: NBA, NFL, NHL, MLB
  */
 async function analyzePlayerProp(
   playerName: string,
   statType: string,
   line: number,
   overUnder: 'over' | 'under' = 'over',
-  cachedProps: GamePlayerProps[] | null
+  cachedProps: GamePlayerProps[] | null,
+  sport: string = 'NBA'  // Default to NBA but now supports all sports
 ): Promise<{
   projection: number
   probability: number
@@ -1478,14 +1719,35 @@ async function analyzePlayerProp(
   impliedProb?: number
   adjustments: string[]
   playerFound: boolean
+  sport: string
 }> {
-  // Get player stats from our model
-  const modelResult = await getPlayerPropProbability(
+  console.log(`[analyzePlayerProp] Analyzing ${playerName} for ${statType} in ${sport}`)
+  
+  // Try the specified sport first
+  let modelResult = await getPlayerPropProbability(
     playerName,
-    'NBA',
+    sport,
     statType,
     line
   )
+  
+  // If not found in specified sport, try all sports
+  if (!modelResult && sport !== 'NBA') {
+    console.log(`[analyzePlayerProp] Not found in ${sport}, trying NBA`)
+    modelResult = await getPlayerPropProbability(playerName, 'NBA', statType, line)
+  }
+  if (!modelResult && sport !== 'NFL') {
+    console.log(`[analyzePlayerProp] Not found, trying NFL`)
+    modelResult = await getPlayerPropProbability(playerName, 'NFL', statType, line)
+  }
+  if (!modelResult && sport !== 'NHL') {
+    console.log(`[analyzePlayerProp] Not found, trying NHL`)
+    modelResult = await getPlayerPropProbability(playerName, 'NHL', statType, line)
+  }
+  if (!modelResult && sport !== 'MLB') {
+    console.log(`[analyzePlayerProp] Not found, trying MLB`)
+    modelResult = await getPlayerPropProbability(playerName, 'MLB', statType, line)
+  }
   
   if (!modelResult) {
     return {
@@ -1496,7 +1758,8 @@ async function analyzePlayerProp(
       confidence: 'low',
       recommendation: 'no_data',
       adjustments: [],
-      playerFound: false
+      playerFound: false,
+      sport
     }
   }
   
@@ -1598,7 +1861,8 @@ async function analyzePlayerProp(
     marketOdds,
     impliedProb,
     adjustments,
-    playerFound: true
+    playerFound: true,
+    sport
   }
 }
 
@@ -2368,6 +2632,10 @@ export async function POST(request: Request) {
           const line = playerPropQuestion.line || 0
           const overUnder = playerPropQuestion.overUnder || 'over'
           
+          // Detect sport from context (keywords, player name, stat type)
+          const detectedSport = detectSportFromContext(userMessageContent, player.name) || 'NBA'
+          console.log(`[chat] Detected sport for ${player.name}: ${detectedSport}`)
+          
           // If no line specified, try to find it from cached props or use a reasonable default
           let actualLine = line
           if (actualLine === 0 && cachedProps) {
@@ -2386,7 +2654,7 @@ export async function POST(request: Request) {
           
           // If still no line, get player's average and use that
           if (actualLine === 0) {
-            const modelResult = await getPlayerPropProbability(player.name, 'NBA', statType, 25)
+            const modelResult = await getPlayerPropProbability(player.name, detectedSport, statType, 25)
             if (modelResult) {
               actualLine = Math.round(modelResult.average * 2) / 2 // Round to nearest 0.5
             } else {
@@ -2394,7 +2662,7 @@ export async function POST(request: Request) {
             }
           }
           
-          const analysis = await analyzePlayerProp(player.name, statType, actualLine, overUnder, cachedProps)
+          const analysis = await analyzePlayerProp(player.name, statType, actualLine, overUnder, cachedProps, detectedSport)
           
           // CRITICAL: If no player data found, try to provide market-based analysis as fallback
           // This prevents the LLM from inventing fake projections while still being helpful
@@ -2546,11 +2814,14 @@ I will NOT guess or invent numbers - that would be irresponsible. Our recommenda
           const statDisplayName = playerPropQuestion.statDisplayName || 'points'
           
           const analyses = await Promise.all(playerPropQuestion.players.slice(0, 2).map(async (player) => {
+            // Detect sport for each player
+            const playerSport = detectSportFromContext(userMessageContent, player.name) || 'NBA'
+            
             // Get player's average for the line
-            const modelResult = await getPlayerPropProbability(player.name, 'NBA', statType, 25)
+            const modelResult = await getPlayerPropProbability(player.name, playerSport, statType, 25)
             const line = modelResult ? Math.round(modelResult.average * 2) / 2 : 25
             
-            const analysis = await analyzePlayerProp(player.name, statType, line, 'over', cachedProps)
+            const analysis = await analyzePlayerProp(player.name, statType, line, 'over', cachedProps, playerSport)
             
             return {
               playerName: player.name,
