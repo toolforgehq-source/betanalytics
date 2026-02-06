@@ -169,7 +169,8 @@ const PLAYER_STATS_KEY = 'player_stats_v1'
 const PLAYER_PROCESSED_GAMES_KEY = 'player_stats_processed_games_v1'
 
 // Number of recent games to use for rolling averages
-const ROLLING_WINDOW = 10
+const ROLLING_WINDOW = 20
+const RECENT_FORM_WINDOW = 5
 
 // Recency weight decay (more recent games weighted higher)
 // Weight for game i (0 = most recent): weight = RECENCY_DECAY ^ i
@@ -757,8 +758,9 @@ export function calculateOverProbability(
   // Approximate normal CDF using error function approximation
   const probability = 1 - normalCDF(z)
   
-  // Clamp to reasonable range
-  return Math.max(0.05, Math.min(0.95, probability))
+  // Clamp to realistic range — no prop bet is ever 95% or 5%
+  // Sportsbooks wouldn't offer it. Tighter bounds produce honest probabilities.
+  return Math.max(0.15, Math.min(0.85, probability))
 }
 
 /**
@@ -905,9 +907,20 @@ export async function getPlayerPropProbability(
   
   // Calculate adjusted average with all factors
   const adjustedAverage = avg * opponentAdjustment * homeAwayAdjustment * backToBackAdjustment * paceAdjustment * usageAdjustment
-  
+
+  const recentLogs = player.gameLogs.slice(0, RECENT_FORM_WINDOW)
+  const recentValues = recentLogs
+    .map(log => (log as unknown as Record<string, number | undefined>)[statType])
+    .filter((v): v is number => v !== undefined && v !== null)
+  const recentAvg = recentValues.length >= 3
+    ? recentValues.reduce((a, b) => a + b, 0) / recentValues.length
+    : null
+  const blendedAverage = recentAvg !== null
+    ? (adjustedAverage * 0.6 + recentAvg * opponentAdjustment * homeAwayAdjustment * backToBackAdjustment * paceAdjustment * usageAdjustment * 0.4)
+    : adjustedAverage
+
   // Calculate statistical probability using normal distribution
-  const statisticalProb = calculateOverProbability(adjustedAverage, stdDev, line, 1.0)
+  const statisticalProb = calculateOverProbability(blendedAverage, stdDev, line, 1.0)
   
   // Get historical hit rate for this stat
   let historicalHitRate = 0.5  // Default to 50%
@@ -955,7 +968,7 @@ export async function getPlayerPropProbability(
   }
   
   return {
-    probability: Math.max(0.05, Math.min(0.95, combinedProbability)),
+    probability: Math.max(0.15, Math.min(0.85, combinedProbability)),
     statisticalProb,
     historicalHitRate,
     average: avg,

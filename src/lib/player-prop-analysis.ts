@@ -732,11 +732,13 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
 
         if (modelResult && modelResult.gamesPlayed >= 5) {
           const rawModel = side.dir === 'over' ? modelResult.probability : (1 - modelResult.probability)
-          finalProb = rawModel * 0.6 + side.prob * 0.4
+          finalProb = rawModel * MODEL_WEIGHT_VS_MARKET + side.prob * (1 - MODEL_WEIGHT_VS_MARKET)
           modelProb = rawModel
         }
 
-        const edge = finalProb - side.implied
+        let edge = finalProb - side.implied
+        const confScale = modelResult ? (CONFIDENCE_EDGE_SCALE[modelResult.confidence] || 0.4) : 0.4
+        edge = Math.max(-MAX_REALISTIC_EDGE, Math.min(MAX_REALISTIC_EDGE, edge * confScale))
         if (edge < 0.01) continue
         if (finalProb < 0.5) continue
 
@@ -894,12 +896,16 @@ export function formatPropAnalysisForContext(analysis: PropAnalysisResult): stri
   if (rec.pick) {
     lines.push(`PICK: ${rec.pick} ${analysis.query.line || ''} ${getStatDisplay(analysis.query.statType || '')}`)
     lines.push(`Confidence: ${rec.confidence.toUpperCase()}`)
-    lines.push(`Model Probability: ${(rec.modelProbability * 100).toFixed(1)}%`)
+    lines.push(`Calibrated Probability: ${(rec.modelProbability * 100).toFixed(1)}% (blended model + market)`)
     lines.push(`Market Implied: ${(rec.marketImpliedProbability * 100).toFixed(1)}%`)
-    lines.push(`Edge: ${rec.edge > 0 ? '+' : ''}${(rec.edge * 100).toFixed(1)}%`)
-    lines.push(`Projected Value: $${rec.projectedValue.toFixed(2)} per $100`)
+    const edgePct = Math.abs(rec.edge * 100)
+    const edgeLabel = edgePct >= 8 ? 'STRONG' : edgePct >= 4 ? 'MODERATE' : edgePct >= 2 ? 'SLIGHT' : 'MINIMAL'
+    lines.push(`Edge: ${rec.edge > 0 ? '+' : ''}${(rec.edge * 100).toFixed(1)}% (${edgeLabel})`)
+    if (rec.projectedValue > 0) {
+      lines.push(`Projected Value: $${rec.projectedValue.toFixed(2)} per $100`)
+    }
   } else {
-    lines.push('No clear recommendation - insufficient data or no edge detected')
+    lines.push('No clear recommendation — insufficient data or no edge detected')
   }
 
   if (rec.reasons.length > 0) {
@@ -995,6 +1001,10 @@ export function formatMultiPropAnalysisForContext(analyses: PropAnalysisResult[]
 // HELPERS
 // ============================================
 
+const MAX_REALISTIC_EDGE = 0.12
+const MODEL_WEIGHT_VS_MARKET = 0.35
+const CONFIDENCE_EDGE_SCALE: Record<string, number> = { high: 1.0, medium: 0.7, low: 0.4 }
+
 function buildRecommendation(
   query: PlayerPropQuery,
   modelResult: EnhancedPropProbability | null,
@@ -1014,22 +1024,22 @@ function buildRecommendation(
   let confidence: 'high' | 'medium' | 'low' = 'low'
 
   if (modelResult && query.line !== null) {
-    const overProb = modelResult.probability
-    const underProb = 1 - overProb
+    const rawOverProb = modelResult.probability
+    const rawUnderProb = 1 - rawOverProb
 
     if (query.direction === 'over') {
-      modelProbability = overProb
+      modelProbability = rawOverProb
       pick = 'Over'
     } else if (query.direction === 'under') {
-      modelProbability = underProb
+      modelProbability = rawUnderProb
       pick = 'Under'
     } else {
-      if (overProb > underProb) {
+      if (rawOverProb > rawUnderProb) {
         pick = 'Over'
-        modelProbability = overProb
+        modelProbability = rawOverProb
       } else {
         pick = 'Under'
-        modelProbability = underProb
+        modelProbability = rawUnderProb
       }
     }
 
@@ -1037,13 +1047,29 @@ function buildRecommendation(
       marketImpliedProbability = pick === 'Over'
         ? marketData.consensusOverProb / 100
         : marketData.consensusUnderProb / 100
+
+      modelProbability = (modelProbability * MODEL_WEIGHT_VS_MARKET) +
+        (marketImpliedProbability * (1 - MODEL_WEIGHT_VS_MARKET))
     }
 
-    edge = modelProbability - marketImpliedProbability
     confidence = modelResult.confidence
+
+    let rawEdge = modelProbability - marketImpliedProbability
+    const confScale = CONFIDENCE_EDGE_SCALE[confidence] || 0.4
+    rawEdge = rawEdge * confScale
+    edge = Math.max(-MAX_REALISTIC_EDGE, Math.min(MAX_REALISTIC_EDGE, rawEdge))
 
     if (seasonStats && query.line !== null) {
       const avgVsLine = seasonStats.average - query.line
+
+      if (pick === 'Over' && avgVsLine < 0) {
+        warnings.push(`Caution: Season average (${seasonStats.average}) is below the line (${query.line}) — over pick is risky`)
+        edge = Math.min(edge, 0.02)
+      } else if (pick === 'Under' && avgVsLine > 0) {
+        warnings.push(`Caution: Season average (${seasonStats.average}) is above the line (${query.line}) — under pick is risky`)
+        edge = Math.min(edge, 0.02)
+      }
+
       if (pick === 'Over' && avgVsLine > 0) {
         reasons.push(`Season average (${seasonStats.average}) is ${avgVsLine.toFixed(1)} above the line (${query.line})`)
       } else if (pick === 'Under' && avgVsLine < 0) {
@@ -1053,26 +1079,45 @@ function buildRecommendation(
       if (seasonStats.last5Average !== seasonStats.average) {
         const trend = seasonStats.last5Average > seasonStats.average ? 'trending up' : 'trending down'
         reasons.push(`Recent form ${trend} (last 5 avg: ${seasonStats.last5Average} vs season: ${seasonStats.average})`)
+
+        if (pick === 'Over' && seasonStats.last5Average < seasonStats.average) {
+          warnings.push(`Recent form trending down — last 5 games average (${seasonStats.last5Average}) is below season average`)
+        } else if (pick === 'Under' && seasonStats.last5Average > seasonStats.average) {
+          warnings.push(`Recent form trending up — last 5 games average (${seasonStats.last5Average}) is above season average`)
+        }
       }
     }
 
-    if (edge > 0.03) {
-      reasons.push(`${(edge * 100).toFixed(1)}% edge over market`)
+    if (edge > 0.02) {
+      reasons.push(`${(edge * 100).toFixed(1)}% estimated edge over market`)
     }
 
     if (modelResult.reliabilityScore && modelResult.reliabilityScore >= 70) {
-      reasons.push(`High reliability player (${modelResult.reliabilityScore}/100 consistency score)`)
+      reasons.push(`High consistency player (${modelResult.reliabilityScore}/100 reliability score)`)
     }
   } else if (seasonStats && query.line !== null) {
     const avgVsLine = seasonStats.average - query.line
     if (Math.abs(avgVsLine) > seasonStats.stdDev * 0.5) {
       pick = avgVsLine > 0 ? 'Over' : 'Under'
-      modelProbability = pick === 'Over'
+      const rawProb = pick === 'Over'
         ? calculateOverProbability(seasonStats.average, seasonStats.stdDev, query.line, 1.0)
         : 1 - calculateOverProbability(seasonStats.average, seasonStats.stdDev, query.line, 1.0)
+
+      if (marketData) {
+        const mktProb = pick === 'Over'
+          ? marketData.consensusOverProb / 100
+          : marketData.consensusUnderProb / 100
+        marketImpliedProbability = mktProb
+        modelProbability = (rawProb * 0.25) + (mktProb * 0.75)
+      } else {
+        modelProbability = rawProb
+      }
+
+      edge = Math.max(-MAX_REALISTIC_EDGE, Math.min(MAX_REALISTIC_EDGE,
+        (modelProbability - marketImpliedProbability) * 0.4))
       reasons.push(`Based on season average (${seasonStats.average}) vs line (${query.line})`)
       confidence = 'low'
-      warnings.push('Limited model data - using season averages only')
+      warnings.push('Limited model data — using season averages only')
     }
   }
 
@@ -1097,15 +1142,18 @@ function buildRecommendation(
   }
 
   if (!modelResult && !seasonStats) {
-    warnings.push('No player stats data available - recommendation based on market data only')
+    warnings.push('No player stats data available — recommendation based on market data only')
   }
 
   if (modelResult && modelResult.gamesPlayed < 10) {
     warnings.push(`Small sample size (${modelResult.gamesPlayed} games tracked)`)
   }
 
+  const calibratedProb = marketData
+    ? marketImpliedProbability + edge
+    : modelProbability
   const projectedValue = edge > 0 && marketData
-    ? calculateEV(pick === 'Over' ? marketData.bestOverPrice : marketData.bestUnderPrice, modelProbability)
+    ? calculateEV(pick === 'Over' ? marketData.bestOverPrice : marketData.bestUnderPrice, calibratedProb)
     : 0
 
   return {
