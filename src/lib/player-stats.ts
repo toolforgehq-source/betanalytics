@@ -174,7 +174,8 @@ const RECENT_FORM_WINDOW = 5
 
 // Recency weight decay (more recent games weighted higher)
 // Weight for game i (0 = most recent): weight = RECENCY_DECAY ^ i
-const RECENCY_DECAY = 0.85
+const RECENCY_DECAY = 0.90
+const VARIANCE_INFLATION = 1.25
 
 const COUNT_STATS = new Set([
   'threePointersMade', 'passingTouchdowns', 'rushingTouchdowns', 'receivingTouchdowns',
@@ -758,14 +759,15 @@ export function calculateOverProbability(
   
   // Use normal distribution CDF
   // P(X > line) = 1 - P(X <= line) = 1 - Phi((line - mean) / stdDev)
-  const z = (line - adjustedAvg) / (playerStdDev || adjustedAvg * 0.3)
+  const inflatedStd = playerStdDev * VARIANCE_INFLATION
+  const z = (line - adjustedAvg) / (inflatedStd || adjustedAvg * 0.35)
   
   // Approximate normal CDF using error function approximation
   const probability = 1 - normalCDF(z)
   
   // Clamp to realistic range — no prop bet is ever 95% or 5%
   // Sportsbooks wouldn't offer it. Tighter bounds produce honest probabilities.
-  return Math.max(0.15, Math.min(0.85, probability))
+  return Math.max(0.10, Math.min(0.90, probability))
 }
 
 function poissonCDF(lambda: number, k: number): number {
@@ -781,7 +783,7 @@ function poissonCDF(lambda: number, k: number): number {
 export function calculateOverProbabilityPoisson(lambda: number, line: number): number {
   const k = Math.floor(line)
   const prob = 1 - poissonCDF(lambda, k)
-  return Math.max(0.15, Math.min(0.85, prob))
+  return Math.max(0.10, Math.min(0.90, prob))
 }
 
 function projectMinutes(player: PlayerStats): number | null {
@@ -942,7 +944,7 @@ export async function getPlayerPropProbability(
   const projectedMins = projectMinutes(player)
   const seasonMinutes = player.averages.minutes
   if (projectedMins && seasonMinutes && seasonMinutes > 0) {
-    minutesMultiplier = Math.max(0.75, Math.min(1.25, projectedMins / seasonMinutes))
+    minutesMultiplier = Math.max(0.90, Math.min(1.10, projectedMins / seasonMinutes))
   }
 
   const adjustedAverage = avg * opponentAdjustment * homeAwayAdjustment * backToBackAdjustment * paceAdjustment * usageAdjustment * minutesMultiplier
@@ -956,7 +958,7 @@ export async function getPlayerPropProbability(
     : null
   const allAdjustments = opponentAdjustment * homeAwayAdjustment * backToBackAdjustment * paceAdjustment * usageAdjustment * minutesMultiplier
   const blendedAverage = recentAvg !== null
-    ? (adjustedAverage * 0.6 + recentAvg * allAdjustments * 0.4)
+    ? (adjustedAverage * 0.70 + recentAvg * allAdjustments * 0.30)
     : adjustedAverage
 
   const isCountStat = COUNT_STATS.has(statType)
@@ -1010,7 +1012,7 @@ export async function getPlayerPropProbability(
   }
   
   return {
-    probability: Math.max(0.15, Math.min(0.85, combinedProbability)),
+    probability: Math.max(0.10, Math.min(0.90, combinedProbability)),
     statisticalProb,
     historicalHitRate,
     average: avg,

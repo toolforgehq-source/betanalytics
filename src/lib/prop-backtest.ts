@@ -25,7 +25,8 @@ const SPORT_STATS: Record<string, string[]> = {
   MLB: ['hits', 'homeRuns', 'rbis', 'strikeouts'],
 }
 
-const MODEL_WEIGHT_VS_MARKET = 0.35
+const MODEL_WEIGHT_VS_MARKET = 0.25
+const VARIANCE_INFLATION = 1.25
 
 export interface BacktestPrediction {
   playerName: string
@@ -71,7 +72,7 @@ function weightedAverage(values: number[], decay: number): number {
 }
 
 function stdDev(values: number[], mean: number): number {
-  if (values.length < 2) return mean * 0.3
+  if (values.length < 2) return mean * 0.35
   const sq = values.map(v => Math.pow(v - mean, 2))
   return Math.sqrt(sq.reduce((a, b) => a + b, 0) / sq.length)
 }
@@ -107,10 +108,13 @@ export async function runPropBacktest(): Promise<BacktestResults> {
 
         if (historyValues.length < 5) continue
 
-        const avg = weightedAverage(historyValues.slice(0, 20), 0.85)
+        const avg = weightedAverage(historyValues.slice(0, 20), 0.90)
         const sd = stdDev(historyValues.slice(0, 20), avg)
 
-        const line = avg
+        const line = COUNT_STATS.has(stat)
+          ? [0.5, 1.5, 2.5, 3.5, 4.5, 5.5].reduce((best, t) => Math.abs(avg - t) < Math.abs(avg - best) ? t : best, 0.5)
+          : Math.floor(avg) + 0.5
+        if (line < 0.5) continue
 
         const recentSlice = historyValues.slice(0, 5)
         const recentAvg = recentSlice.reduce((a, b) => a + b, 0) / recentSlice.length
@@ -120,17 +124,17 @@ export async function runPropBacktest(): Promise<BacktestResults> {
         let minutesMult = 1.0
         if (recentMinutes.length >= 3 && seasonMinutes > 0) {
           const recentMinAvg = recentMinutes.reduce((a, b) => a + b, 0) / recentMinutes.length
-          const projected = seasonMinutes * 0.5 + recentMinAvg * 0.5
-          minutesMult = Math.max(0.75, Math.min(1.25, projected / seasonMinutes))
+          const projected = seasonMinutes * 0.6 + recentMinAvg * 0.4
+          minutesMult = Math.max(0.90, Math.min(1.10, projected / seasonMinutes))
         }
 
         const adjustedAvg = avg * minutesMult
-        const blendedAvg = adjustedAvg * 0.6 + recentAvg * minutesMult * 0.4
+        const blendedAvg = adjustedAvg * 0.70 + recentAvg * minutesMult * 0.30
 
         const isCount = COUNT_STATS.has(stat)
         const statProb = isCount && blendedAvg > 0
           ? calculateOverProbabilityPoisson(blendedAvg, line)
-          : calculateOverProbability(blendedAvg, sd, line, 1.0)
+          : calculateOverProbability(blendedAvg, sd * VARIANCE_INFLATION, line, 1.0)
 
         const marketImplied = 0.5
         const blendedProb = (statProb * MODEL_WEIGHT_VS_MARKET) + (marketImplied * (1 - MODEL_WEIGHT_VS_MARKET))
@@ -153,7 +157,7 @@ export async function runPropBacktest(): Promise<BacktestResults> {
           sport: player.sport,
           statType: stat,
           line,
-          predictedProb: Math.max(0.15, Math.min(0.85, predictedProb)),
+          predictedProb: Math.max(0.10, Math.min(0.90, predictedProb)),
           actualValue,
           hit: actualHit,
           confidence,
@@ -169,12 +173,12 @@ export async function runPropBacktest(): Promise<BacktestResults> {
 
   const buckets: CalibrationBucket[] = []
   const ranges = [
-    { min: 0.15, max: 0.40, label: '15-40%' },
+    { min: 0.10, max: 0.40, label: '10-40%' },
     { min: 0.40, max: 0.50, label: '40-50%' },
     { min: 0.50, max: 0.55, label: '50-55%' },
     { min: 0.55, max: 0.60, label: '55-60%' },
     { min: 0.60, max: 0.70, label: '60-70%' },
-    { min: 0.70, max: 0.85, label: '70-85%' },
+    { min: 0.70, max: 0.90, label: '70-90%' },
   ]
 
   let totalCalError = 0
