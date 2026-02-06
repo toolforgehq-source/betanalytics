@@ -9,6 +9,7 @@ import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, 
 import type { RankedBet, BestBetResult } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 import { storePick, getAllPicks } from "@/lib/pick-tracking"
+import { detectPlayerPropQuestion, parsePlayerPropQuery, analyzePlayerProp, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
 
@@ -1920,6 +1921,73 @@ export async function POST(request: Request) {
       } catch (err) {
         console.error('[chat] Error processing parlay question:', err)
         // Fall through to LLM if processing fails
+      }
+    }
+    
+    // Check for PLAYER PROP questions (separate pipeline from team bets/Elo)
+    // This runs AFTER game-specific and parlay detection, but BEFORE best bet detection
+    // Player props use their own deterministic model - completely independent of the Elo system
+    if (detectPlayerPropQuestion(userMessageContent)) {
+      console.log(`[chat] Detected PLAYER PROP question - routing to prop analysis pipeline (separate from Elo/team bets)`)
+      try {
+        const propQuery = parsePlayerPropQuery(userMessageContent)
+        console.log(`[chat] Parsed prop query: player="${propQuery.playerName}", stat=${propQuery.statType}, line=${propQuery.line}, direction=${propQuery.direction}`)
+        
+        let propAnalysisData: string
+        
+        if (propQuery.playerName) {
+          const analysis = await analyzePlayerProp(propQuery)
+          propAnalysisData = formatPropAnalysisForContext(analysis)
+          console.log(`[chat] Player prop analysis complete for ${propQuery.playerName}: pick=${analysis.recommendation.pick}, confidence=${analysis.recommendation.confidence}`)
+        } else {
+          const bestProps = await analyzeBestProps({ sport: propQuery.sport || undefined, count: 3 })
+          if (bestProps.length > 0) {
+            propAnalysisData = formatMultiPropAnalysisForContext(bestProps)
+            console.log(`[chat] Best props analysis complete: ${bestProps.length} props ranked`)
+          } else {
+            propAnalysisData = 'PLAYER PROP ANALYSIS\n\nNo player props data available at this time. Props are typically posted by sportsbooks in the morning/early afternoon for evening games. Please check back later.'
+            console.log(`[chat] No props data available for analysis`)
+          }
+        }
+        
+        const conversationalResponse = await generateConversationalResponse(
+          anthropic,
+          propAnalysisData,
+          userMessageContent,
+          conversationHistory
+        )
+        
+        await db.messages.create({
+          conversationId: conversation.id,
+          role: 'user',
+          content: userMessage.content,
+        })
+        
+        await db.messages.create({
+          conversationId: conversation.id,
+          role: 'assistant',
+          content: conversationalResponse,
+        })
+        
+        await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+        
+        if (!subStatus.isSubscribed) {
+          const user = await db.users.findById(session.user.id)
+          if (user) {
+            await db.users.update(session.user.id, { 
+              questionCount: (user.questionCount || 0) + 1
+            })
+          }
+        }
+        
+        return NextResponse.json({ 
+          message: conversationalResponse,
+          questionsRemaining: subStatus.isSubscribed 
+            ? -1 
+            : Math.max(0, subStatus.questionsRemaining - 1)
+        })
+      } catch (err) {
+        console.error('[chat] Error processing player prop question:', err)
       }
     }
     
