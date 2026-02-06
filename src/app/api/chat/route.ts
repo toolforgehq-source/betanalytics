@@ -5,10 +5,12 @@ import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
 import { getCachedESPNOdds, getCachedESPNData, type ESPNOdds, type ESPNInjury } from "@/lib/espn"
-import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext } from "@/lib/bet-ranking"
-import type { RankedBet, BestBetResult } from "@/lib/bet-ranking"
-import type { Game } from "@/lib/odds"
+import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext, americanToImpliedProbability, getCachedBestProp } from "@/lib/bet-ranking"
+import type { RankedBet, BestBetResult, RankedProp } from "@/lib/bet-ranking"
+import type { Game, GamePlayerProps } from "@/lib/odds"
+import { getCachedPlayerProps } from "@/lib/odds"
 import { storePick, getAllPicks } from "@/lib/pick-tracking"
+import { getPlayerPropProbability } from "@/lib/player-stats"
 
 const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
 
@@ -1149,6 +1151,588 @@ function detectParlayQuestion(userMessage: string): { isParlay: boolean; legCoun
   return { isParlay: true, legCount: 3 }
 }
 
+// ============================================
+// PLAYER PROP DETECTION AND ANALYSIS
+// ============================================
+
+// Common NBA player names for matching (expanded list)
+const NBA_PLAYER_NAMES = [
+  // Stars
+  'luka', 'doncic', 'lebron', 'james', 'curry', 'steph', 'stephen', 'giannis', 'antetokounmpo',
+  'jokic', 'nikola', 'embiid', 'joel', 'tatum', 'jayson', 'durant', 'kevin', 'booker', 'devin',
+  'morant', 'ja', 'edwards', 'anthony', 'brunson', 'jalen', 'haliburton', 'tyrese', 'mitchell',
+  'donovan', 'lillard', 'damian', 'dame', 'shai', 'gilgeous', 'alexander', 'sga', 'fox', 'deaaron',
+  'trae', 'young', 'lamelo', 'ball', 'bam', 'adebayo', 'butler', 'jimmy', 'kawhi', 'leonard',
+  'paul', 'george', 'pg', 'kyrie', 'irving', 'zion', 'williamson', 'cade', 'cunningham',
+  'wembanyama', 'victor', 'wemby', 'sabonis', 'domantas', 'randle', 'julius', 'maxey', 'tyrese',
+  'garland', 'darius', 'murray', 'dejounte', 'jamal', 'siakam', 'pascal', 'ingram', 'brandon',
+  'banchero', 'paolo', 'mobley', 'evan', 'scottie', 'barnes', 'franz', 'wagner', 'chet', 'holmgren',
+  'lauri', 'markkanen', 'desmond', 'bane', 'jaren', 'jackson', 'jjj', 'mikal', 'bridges', 'cam',
+  'thomas', 'ivey', 'jaden', 'mcdaniels', 'austin', 'reaves', 'poole', 'jordan', 'herro', 'tyler',
+  'sengun', 'alperen', 'green', 'jalen', 'draymond', 'klay', 'thompson', 'wiggins', 'andrew',
+  'ant', 'kat', 'towns', 'gobert', 'rudy', 'ayton', 'deandre', 'allen', 'jarrett', 'vucevic', 'nikola',
+  'lopez', 'brook', 'middleton', 'khris', 'holiday', 'jrue', 'portis', 'bobby', 'giddey', 'josh',
+  'dort', 'luguentz', 'williams', 'jalen', 'grant', 'jerami', 'suggs', 'jalen', 'fultz', 'markelle',
+  'carter', 'wendell', 'isaac', 'jonathan', 'poeltl', 'jakob', 'vassell', 'devin', 'keldon', 'johnson',
+  'tre', 'jones', 'sochan', 'jeremy', 'collins', 'john', 'dejounte', 'capela', 'clint', 'hunter',
+  'bogdanovic', 'bogdan', 'okongwu', 'onyeka', 'johnson', 'jalen', 'duarte', 'chris', 'mathurin',
+  'bennedict', 'turner', 'myles', 'nembhard', 'andrew', 'simons', 'anfernee', 'sharpe', 'shaedon',
+  'nurkic', 'jusuf', 'achiuwa', 'precious', 'quickley', 'immanuel', 'iq', 'barrett', 'rj',
+  'brunson', 'hart', 'josh', 'donte', 'divincenzo', 'og', 'anunoby', 'robinson', 'mitchell',
+  'claxton', 'nic', 'bridges', 'mikal', 'cam', 'johnson', 'finney', 'smith', 'dorian', 'dinwiddie',
+  'spencer', 'clarkson', 'jordan', 'sexton', 'collin', 'conley', 'mike', 'kessler', 'walker',
+  'olynyk', 'kelly', 'oubre', 'kelly', 'rozier', 'terry', 'hayward', 'gordon', 'williams', 'mark',
+  'pj', 'washington', 'plumlee', 'mason', 'smith', 'nick', 'monk', 'malik', 'huerter', 'kevin',
+  'keegan', 'murray', 'lyles', 'trey', 'barnes', 'harrison', 'davion', 'duren', 'jalen', 'stewart',
+  'isaiah', 'bey', 'saddiq', 'bagley', 'marvin', 'burks', 'alec', 'hardaway', 'tim', 'dinwiddie',
+  'lively', 'dereck', 'gafford', 'daniel', 'exum', 'dante', 'hardy', 'jaden', 'kleber', 'maxi',
+  'powell', 'dwight', 'wood', 'christian', 'green', 'josh', 'sengun', 'amen', 'thompson', 'ausar',
+  'whitmore', 'cam', 'smith', 'jabari', 'reed', 'paul', 'dillon', 'brooks', 'aldama', 'santi',
+  'lorenzen', 'wright', 'vince', 'lavert', 'caris', 'okoro', 'isaac', 'mobley', 'allen', 'merrill',
+  'sam', 'niang', 'georges', 'wade', 'dean', 'strus', 'max', 'osman', 'cedi', 'levert'
+]
+
+// Stat type mappings
+const STAT_TYPE_PATTERNS: Record<string, { patterns: RegExp[]; statName: string; displayName: string }> = {
+  'points': {
+    patterns: [/\bpoints?\b/i, /\bpts?\b/i, /\bscoring\b/i],
+    statName: 'points',
+    displayName: 'points'
+  },
+  'rebounds': {
+    patterns: [/\brebounds?\b/i, /\brebs?\b/i, /\bboards?\b/i],
+    statName: 'rebounds',
+    displayName: 'rebounds'
+  },
+  'assists': {
+    patterns: [/\bassists?\b/i, /\basts?\b/i, /\bdimes?\b/i],
+    statName: 'assists',
+    displayName: 'assists'
+  },
+  'threes': {
+    patterns: [/\bthrees?\b/i, /\b3s?\b/i, /\bthree[- ]?pointers?\b/i, /\b3[- ]?pointers?\b/i, /\btriples?\b/i, /\b3pt\b/i],
+    statName: 'threePointersMade',
+    displayName: 'threes'
+  },
+  'steals': {
+    patterns: [/\bsteals?\b/i, /\bstls?\b/i],
+    statName: 'steals',
+    displayName: 'steals'
+  },
+  'blocks': {
+    patterns: [/\bblocks?\b/i, /\bblks?\b/i],
+    statName: 'blocks',
+    displayName: 'blocks'
+  },
+  'turnovers': {
+    patterns: [/\bturnovers?\b/i, /\btos?\b/i],
+    statName: 'turnovers',
+    displayName: 'turnovers'
+  },
+  'pra': {
+    patterns: [/\bpra\b/i, /\bpoints?\s*\+?\s*rebounds?\s*\+?\s*assists?\b/i],
+    statName: 'pra',
+    displayName: 'PRA (points+rebounds+assists)'
+  },
+  'pr': {
+    patterns: [/\bpr\b/i, /\bpoints?\s*\+?\s*rebounds?\b/i],
+    statName: 'pr',
+    displayName: 'points+rebounds'
+  },
+  'pa': {
+    patterns: [/\bpa\b/i, /\bpoints?\s*\+?\s*assists?\b/i],
+    statName: 'pa',
+    displayName: 'points+assists'
+  },
+  'ra': {
+    patterns: [/\bra\b/i, /\brebounds?\s*\+?\s*assists?\b/i],
+    statName: 'ra',
+    displayName: 'rebounds+assists'
+  },
+  'double_double': {
+    patterns: [/\bdouble[- ]?double\b/i, /\bdd\b/i],
+    statName: 'double_double',
+    displayName: 'double-double'
+  },
+  'triple_double': {
+    patterns: [/\btriple[- ]?double\b/i, /\btd\b/i],
+    statName: 'triple_double',
+    displayName: 'triple-double'
+  }
+}
+
+// Player prop question result interface
+interface PlayerPropQuestion {
+  type: 'specific' | 'comparison' | 'parlay' | 'team' | 'best'
+  players: Array<{
+    name: string
+    normalizedName: string
+  }>
+  statType?: string
+  statDisplayName?: string
+  line?: number
+  overUnder?: 'over' | 'under'
+  team?: string
+  parlayCount?: number
+}
+
+/**
+ * Detect if the user is asking about player props
+ * Returns parsed question details or null if not a player prop question
+ */
+function detectPlayerPropQuestion(userMessage: string): PlayerPropQuestion | null {
+  const normalizedMessage = userMessage.toLowerCase()
+  
+  // Check for "best player prop" questions first
+  const bestPropPatterns = [
+    /\bbest\s+(player\s+)?props?\b/i,
+    /\btop\s+(player\s+)?props?\b/i,
+    /\bplayer\s+props?\s+today\b/i,
+    /\bwhat\s+(player\s+)?props?\b/i,
+    /\bgive\s+me\s+(a\s+)?(player\s+)?props?\b/i,
+    /\bany\s+good\s+(player\s+)?props?\b/i,
+  ]
+  
+  if (bestPropPatterns.some(p => p.test(normalizedMessage))) {
+    // Check if it's a parlay request
+    const parlayMatch = normalizedMessage.match(/(\d+)\s*(player\s+)?props?\s*(for\s+)?(a\s+)?parlay/i) ||
+                        normalizedMessage.match(/parlay.*?(\d+)\s*(player\s+)?props?/i)
+    if (parlayMatch) {
+      return {
+        type: 'parlay',
+        players: [],
+        parlayCount: parseInt(parlayMatch[1]) || 3
+      }
+    }
+    
+    return { type: 'best', players: [] }
+  }
+  
+  // Check for player prop parlay requests
+  const parlayPropPatterns = [
+    /(\d+)\s*(player\s+)?props?\s*(for\s+)?(a\s+)?parlay/i,
+    /parlay.*?(\d+)\s*(player\s+)?props?/i,
+    /player\s+prop\s+parlay/i,
+    /props?\s+parlay/i,
+  ]
+  
+  for (const pattern of parlayPropPatterns) {
+    const match = normalizedMessage.match(pattern)
+    if (match) {
+      const count = match[1] ? parseInt(match[1]) : 3
+      return {
+        type: 'parlay',
+        players: [],
+        parlayCount: count
+      }
+    }
+  }
+  
+  // Check for team-specific prop questions
+  const teamPropPatterns = [
+    /\bbest\s+(\w+)\s+(player\s+)?props?\b/i,
+    /\b(\w+)\s+(player\s+)?props?\b/i,
+  ]
+  
+  const nbaTeams = ['lakers', 'celtics', 'warriors', 'nets', 'knicks', 'heat', 'bucks', 'suns', 
+    'nuggets', 'clippers', 'sixers', '76ers', 'mavericks', 'mavs', 'bulls', 'hawks', 'cavaliers',
+    'cavs', 'grizzlies', 'pelicans', 'timberwolves', 'wolves', 'thunder', 'kings', 'rockets',
+    'spurs', 'jazz', 'trail blazers', 'blazers', 'raptors', 'magic', 'pacers', 'hornets', 'pistons', 'wizards']
+  
+  for (const pattern of teamPropPatterns) {
+    const match = normalizedMessage.match(pattern)
+    if (match && match[1] && nbaTeams.includes(match[1].toLowerCase())) {
+      return {
+        type: 'team',
+        players: [],
+        team: match[1]
+      }
+    }
+  }
+  
+  // Check for comparison questions
+  const comparisonPatterns = [
+    /\bcompare\b/i,
+    /\bvs\b/i,
+    /\bversus\b/i,
+    /\bor\b.*\bbetter\b/i,
+    /\bwhich\s+is\s+better\b/i,
+    /\bwhat'?s?\s+better\b/i,
+  ]
+  
+  const isComparison = comparisonPatterns.some(p => p.test(normalizedMessage))
+  
+  // Find player names in the message
+  const foundPlayers: Array<{ name: string; normalizedName: string }> = []
+  
+  for (const playerName of NBA_PLAYER_NAMES) {
+    // Create word boundary regex for the player name
+    const regex = new RegExp(`\\b${playerName}\\b`, 'i')
+    if (regex.test(normalizedMessage)) {
+      // Avoid duplicates (e.g., "luka" and "doncic" for same player)
+      const alreadyFound = foundPlayers.some(p => 
+        p.normalizedName === playerName || 
+        (playerName === 'luka' && p.normalizedName === 'doncic') ||
+        (playerName === 'doncic' && p.normalizedName === 'luka') ||
+        (playerName === 'lebron' && p.normalizedName === 'james') ||
+        (playerName === 'james' && p.normalizedName === 'lebron') ||
+        (playerName === 'steph' && p.normalizedName === 'curry') ||
+        (playerName === 'curry' && p.normalizedName === 'steph') ||
+        (playerName === 'stephen' && p.normalizedName === 'curry') ||
+        (playerName === 'giannis' && p.normalizedName === 'antetokounmpo') ||
+        (playerName === 'antetokounmpo' && p.normalizedName === 'giannis')
+      )
+      
+      if (!alreadyFound) {
+        foundPlayers.push({
+          name: playerName.charAt(0).toUpperCase() + playerName.slice(1),
+          normalizedName: playerName
+        })
+      }
+    }
+  }
+  
+  // If no players found, check if it's still a prop-related question
+  if (foundPlayers.length === 0) {
+    // Check for generic prop questions without player names
+    const genericPropPatterns = [
+      /\bplayer\s+props?\b/i,
+      /\bprops?\s+bet\b/i,
+      /\bbet\s+on\s+props?\b/i,
+    ]
+    
+    if (genericPropPatterns.some(p => p.test(normalizedMessage))) {
+      return { type: 'best', players: [] }
+    }
+    
+    return null
+  }
+  
+  // Detect stat type
+  let detectedStatType: string | undefined
+  let detectedStatDisplayName: string | undefined
+  
+  for (const [, config] of Object.entries(STAT_TYPE_PATTERNS)) {
+    if (config.patterns.some(p => p.test(normalizedMessage))) {
+      detectedStatType = config.statName
+      detectedStatDisplayName = config.displayName
+      break
+    }
+  }
+  
+  // Detect line number
+  let detectedLine: number | undefined
+  const linePatterns = [
+    /\b(?:over|under|o|u)\s*(\d+(?:\.\d+)?)\b/i,
+    /\b(\d+(?:\.\d+)?)\s*(?:points?|pts?|rebounds?|rebs?|assists?|asts?|threes?|3s?)\b/i,
+    /\b(\d+(?:\.\d+)?)\+/i,
+    /\bat\s*(\d+(?:\.\d+)?)\b/i,
+  ]
+  
+  for (const pattern of linePatterns) {
+    const match = normalizedMessage.match(pattern)
+    if (match && match[1]) {
+      detectedLine = parseFloat(match[1])
+      break
+    }
+  }
+  
+  // Detect over/under
+  let detectedOverUnder: 'over' | 'under' | undefined
+  if (/\bover\b/i.test(normalizedMessage) || /\bo\s*\d/i.test(normalizedMessage)) {
+    detectedOverUnder = 'over'
+  } else if (/\bunder\b/i.test(normalizedMessage) || /\bu\s*\d/i.test(normalizedMessage)) {
+    detectedOverUnder = 'under'
+  }
+  
+  // Determine question type
+  const questionType = isComparison && foundPlayers.length >= 2 ? 'comparison' : 'specific'
+  
+  return {
+    type: questionType,
+    players: foundPlayers,
+    statType: detectedStatType,
+    statDisplayName: detectedStatDisplayName,
+    line: detectedLine,
+    overUnder: detectedOverUnder
+  }
+}
+
+/**
+ * Analyze a specific player prop and return formatted analysis
+ */
+async function analyzePlayerProp(
+  playerName: string,
+  statType: string,
+  line: number,
+  overUnder: 'over' | 'under' = 'over',
+  cachedProps: GamePlayerProps[] | null
+): Promise<{
+  projection: number
+  probability: number
+  edge: number
+  score: number
+  confidence: string
+  recommendation: string
+  marketOdds?: number
+  impliedProb?: number
+  adjustments: string[]
+  playerFound: boolean
+}> {
+  // Get player stats from our model
+  const modelResult = await getPlayerPropProbability(
+    playerName,
+    'NBA',
+    statType,
+    line
+  )
+  
+  if (!modelResult) {
+    return {
+      projection: 0,
+      probability: 0,
+      edge: 0,
+      score: 0,
+      confidence: 'low',
+      recommendation: 'no_data',
+      adjustments: [],
+      playerFound: false
+    }
+  }
+  
+  // Calculate probability based on over/under
+  let probability = modelResult.probability
+  if (overUnder === 'under') {
+    probability = 1 - probability
+  }
+  
+  // Try to find market odds from cached props
+  let marketOdds: number | undefined
+  let impliedProb: number | undefined
+  
+  if (cachedProps) {
+    for (const game of cachedProps) {
+      const matchingProp = game.props.find(p => 
+        p.playerName.toLowerCase().includes(playerName.toLowerCase()) &&
+        p.market.toLowerCase().includes(statType.toLowerCase().replace('threePointersMade', 'threes')) &&
+        Math.abs(p.line - line) < 0.5
+      )
+      
+      if (matchingProp) {
+        marketOdds = overUnder === 'over' ? matchingProp.overOdds : matchingProp.underOdds
+        impliedProb = americanToImpliedProbability(marketOdds)
+        break
+      }
+    }
+  }
+  
+  // Calculate edge
+  const edge = impliedProb ? (probability * 100) - impliedProb : (probability * 100) - 52.4 // Default to -110 implied
+  
+  // Calculate score (0-100)
+  let score = 50 // Base score
+  
+  // Add points for probability
+  if (probability > 0.65) score += 20
+  else if (probability > 0.55) score += 10
+  else if (probability < 0.45) score -= 10
+  
+  // Add points for edge
+  if (edge > 10) score += 20
+  else if (edge > 5) score += 10
+  else if (edge > 0) score += 5
+  else if (edge < -5) score -= 15
+  
+  // Add points for confidence
+  if (modelResult.confidence === 'high') score += 10
+  else if (modelResult.confidence === 'medium') score += 5
+  else score -= 5
+  
+  // Add points for reliability
+  if (modelResult.reliabilityScore && modelResult.reliabilityScore > 70) score += 10
+  else if (modelResult.reliabilityScore && modelResult.reliabilityScore > 60) score += 5
+  
+  // Clamp score
+  score = Math.max(0, Math.min(100, score))
+  
+  // Determine recommendation
+  let recommendation: string
+  if (score >= 70 && edge > 5) {
+    recommendation = 'strong_bet'
+  } else if (score >= 60 && edge > 0) {
+    recommendation = 'bet'
+  } else if (score >= 50 && edge > -3) {
+    recommendation = 'lean'
+  } else if (score >= 40) {
+    recommendation = 'avoid'
+  } else {
+    recommendation = 'strong_avoid'
+  }
+  
+  // Build adjustments list
+  const adjustments: string[] = []
+  if (modelResult.opponentAdjustment && modelResult.opponentAdjustment !== 1.0) {
+    const pct = Math.round((modelResult.opponentAdjustment - 1) * 100)
+    adjustments.push(`Opponent defense: ${pct > 0 ? '+' : ''}${pct}%`)
+  }
+  if (modelResult.homeAwayAdjustment && modelResult.homeAwayAdjustment !== 1.0) {
+    const pct = Math.round((modelResult.homeAwayAdjustment - 1) * 100)
+    adjustments.push(`Home/away: ${pct > 0 ? '+' : ''}${pct}%`)
+  }
+  if (modelResult.paceAdjustment && modelResult.paceAdjustment !== 1.0) {
+    const pct = Math.round((modelResult.paceAdjustment - 1) * 100)
+    adjustments.push(`Pace: ${pct > 0 ? '+' : ''}${pct}%`)
+  }
+  if (modelResult.usageAdjustment && modelResult.usageAdjustment !== 1.0) {
+    const pct = Math.round((modelResult.usageAdjustment - 1) * 100)
+    adjustments.push(`Usage: ${pct > 0 ? '+' : ''}${pct}%`)
+  }
+  
+  return {
+    projection: modelResult.adjustedAverage,
+    probability: probability * 100,
+    edge,
+    score,
+    confidence: modelResult.confidence,
+    recommendation,
+    marketOdds,
+    impliedProb,
+    adjustments,
+    playerFound: true
+  }
+}
+
+/**
+ * Format player prop analysis for conversational response
+ */
+function formatPlayerPropAnalysis(
+  question: PlayerPropQuestion,
+  analyses: Array<{
+    playerName: string
+    statType: string
+    statDisplayName: string
+    line: number
+    overUnder: 'over' | 'under'
+    analysis: Awaited<ReturnType<typeof analyzePlayerProp>>
+  }>
+): string {
+  const lines: string[] = []
+  
+  if (question.type === 'comparison' && analyses.length >= 2) {
+    // Comparison format
+    lines.push('## PLAYER PROP COMPARISON')
+    lines.push('')
+    
+    // Sort by score
+    const sorted = [...analyses].sort((a, b) => b.analysis.score - a.analysis.score)
+    
+    for (let i = 0; i < sorted.length; i++) {
+      const { playerName, statDisplayName, line, overUnder, analysis } = sorted[i]
+      const emoji = i === 0 ? '🏆' : '📊'
+      
+      lines.push(`${emoji} **${playerName} ${overUnder} ${line} ${statDisplayName}**`)
+      
+      if (!analysis.playerFound) {
+        lines.push(`   No data available for this player`)
+        lines.push('')
+        continue
+      }
+      
+      lines.push(`   Projection: ${analysis.projection.toFixed(1)} ${statDisplayName}`)
+      lines.push(`   Probability: ${analysis.probability.toFixed(0)}%`)
+      lines.push(`   Edge: ${analysis.edge > 0 ? '+' : ''}${analysis.edge.toFixed(1)}%`)
+      lines.push(`   Score: ${analysis.score}/100`)
+      lines.push(`   Confidence: ${analysis.confidence}`)
+      lines.push('')
+    }
+    
+    const winner = sorted[0]
+    lines.push(`**VERDICT:** ${winner.playerName} ${winner.overUnder} ${winner.line} ${winner.statDisplayName} is the stronger play with a ${winner.analysis.score}/100 score and ${winner.analysis.edge.toFixed(1)}% edge.`)
+    
+  } else if (analyses.length === 1) {
+    // Single prop format
+    const { playerName, statDisplayName, line, overUnder, analysis } = analyses[0]
+    
+    lines.push(`## 🎯 PLAYER PROP ANALYSIS: ${playerName.toUpperCase()}`)
+    lines.push('')
+    
+    if (!analysis.playerFound) {
+      lines.push(`We don't have enough historical data for ${playerName} to provide a model-backed projection.`)
+      lines.push('')
+      lines.push(`**What you can do:**`)
+      lines.push(`- Check back later when we have more game data`)
+      lines.push(`- Ask about a different player`)
+      lines.push(`- Ask "What's the best player prop today?" for our top recommendations`)
+      return lines.join('\n')
+    }
+    
+    lines.push(`**${overUnder.toUpperCase()} ${line} ${statDisplayName.toUpperCase()}**`)
+    lines.push('')
+    lines.push(`📈 **Model Projection:** ${analysis.projection.toFixed(1)} ${statDisplayName}`)
+    lines.push(`📊 **Probability:** ${analysis.probability.toFixed(0)}%`)
+    
+    if (analysis.marketOdds) {
+      lines.push(`💰 **Market Odds:** ${analysis.marketOdds > 0 ? '+' : ''}${analysis.marketOdds}`)
+      lines.push(`📉 **Implied Prob:** ${analysis.impliedProb?.toFixed(0)}%`)
+    }
+    
+    lines.push(`⚡ **Edge:** ${analysis.edge > 0 ? '+' : ''}${analysis.edge.toFixed(1)}%`)
+    lines.push(`🎯 **Score:** ${analysis.score}/100`)
+    lines.push(`🔒 **Confidence:** ${analysis.confidence}`)
+    lines.push('')
+    
+    if (analysis.adjustments.length > 0) {
+      lines.push(`**Adjustments Applied:**`)
+      for (const adj of analysis.adjustments) {
+        lines.push(`- ${adj}`)
+      }
+      lines.push('')
+    }
+    
+    // Recommendation
+    const recEmoji = {
+      'strong_bet': '✅',
+      'bet': '👍',
+      'lean': '🤔',
+      'avoid': '⚠️',
+      'strong_avoid': '❌',
+      'no_data': '❓'
+    }[analysis.recommendation]
+    
+    const recText = {
+      'strong_bet': `STRONG BET - This is a high-value play with significant edge.`,
+      'bet': `RECOMMENDED - Good value, worth a standard bet.`,
+      'lean': `LEAN - Slight value, consider a smaller bet.`,
+      'avoid': `AVOID - Negative expected value, not recommended.`,
+      'strong_avoid': `STRONG AVOID - Significant negative edge.`,
+      'no_data': `INSUFFICIENT DATA - Cannot make a recommendation.`
+    }[analysis.recommendation]
+    
+    lines.push(`**RECOMMENDATION:** ${recEmoji} ${recText}`)
+    
+  } else {
+    // Multiple props (parlay or team)
+    lines.push('## 🎯 PLAYER PROP ANALYSIS')
+    lines.push('')
+    
+    for (const { playerName, statDisplayName, line, overUnder, analysis } of analyses) {
+      if (!analysis.playerFound) {
+        lines.push(`**${playerName}:** No data available`)
+        lines.push('')
+        continue
+      }
+      
+      const recEmoji = analysis.score >= 60 ? '✅' : analysis.score >= 50 ? '🤔' : '⚠️'
+      
+      lines.push(`${recEmoji} **${playerName} ${overUnder} ${line} ${statDisplayName}**`)
+      lines.push(`   Projection: ${analysis.projection.toFixed(1)} | Prob: ${analysis.probability.toFixed(0)}% | Edge: ${analysis.edge > 0 ? '+' : ''}${analysis.edge.toFixed(1)}% | Score: ${analysis.score}/100`)
+      lines.push('')
+    }
+  }
+  
+  return lines.join('\n')
+}
+
 // Extended Game type with ESPN data for injury support
 interface EnrichedGame extends Game {
   espnData?: {
@@ -1763,6 +2347,342 @@ export async function POST(request: Request) {
       } catch (err) {
         console.error('[chat] Error running game analysis:', err)
         // Fall through to other detection methods if analysis fails
+      }
+    }
+    
+    // PLAYER PROP DETECTION - Check for player prop questions BEFORE parlay/best bet
+    // This handles: "Should I bet Luka over 28.5 points?", "Curry 5+ threes?", comparisons, etc.
+    const playerPropQuestion = detectPlayerPropQuestion(userMessageContent)
+    if (playerPropQuestion) {
+      console.log(`[chat] Detected player prop question: type=${playerPropQuestion.type}, players=${playerPropQuestion.players.map(p => p.name).join(', ')}`)
+      
+      try {
+        // Get cached player props for market odds lookup
+        const cachedProps = await getCachedPlayerProps()
+        
+        if (playerPropQuestion.type === 'specific' && playerPropQuestion.players.length > 0) {
+          // Specific player prop question: "Should I bet Luka over 28.5 points?"
+          const player = playerPropQuestion.players[0]
+          const statType = playerPropQuestion.statType || 'points'
+          const statDisplayName = playerPropQuestion.statDisplayName || 'points'
+          const line = playerPropQuestion.line || 0
+          const overUnder = playerPropQuestion.overUnder || 'over'
+          
+          // If no line specified, try to find it from cached props or use a reasonable default
+          let actualLine = line
+          if (actualLine === 0 && cachedProps) {
+            // Try to find the line from cached props
+            for (const game of cachedProps) {
+              const matchingProp = game.props.find(p => 
+                p.playerName.toLowerCase().includes(player.normalizedName) &&
+                p.market.toLowerCase().includes(statType.toLowerCase().replace('threePointersMade', 'threes'))
+              )
+              if (matchingProp) {
+                actualLine = matchingProp.line
+                break
+              }
+            }
+          }
+          
+          // If still no line, get player's average and use that
+          if (actualLine === 0) {
+            const modelResult = await getPlayerPropProbability(player.name, 'NBA', statType, 25)
+            if (modelResult) {
+              actualLine = Math.round(modelResult.average * 2) / 2 // Round to nearest 0.5
+            } else {
+              actualLine = 25 // Default fallback
+            }
+          }
+          
+          const analysis = await analyzePlayerProp(player.name, statType, actualLine, overUnder, cachedProps)
+          
+          const formattedAnalysis = formatPlayerPropAnalysis(playerPropQuestion, [{
+            playerName: player.name,
+            statType,
+            statDisplayName,
+            line: actualLine,
+            overUnder,
+            analysis
+          }])
+          
+          // Generate conversational response
+          const conversationalResponse = await generateConversationalResponse(
+            anthropic,
+            formattedAnalysis,
+            userMessageContent,
+            conversationHistory
+          )
+          
+          // Save messages to database
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'user',
+            content: userMessage.content,
+          })
+          
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: conversationalResponse,
+          })
+          
+          await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+          
+          // Update question count for non-subscribers
+          if (!subStatus.isSubscribed) {
+            const user = await db.users.findById(session.user.id)
+            if (user) {
+              await db.users.update(session.user.id, { 
+                questionCount: (user.questionCount || 0) + 1
+              })
+            }
+          }
+          
+          return NextResponse.json({ 
+            message: conversationalResponse,
+            questionsRemaining: subStatus.isSubscribed 
+              ? -1 
+              : Math.max(0, subStatus.questionsRemaining - 1)
+          })
+          
+        } else if (playerPropQuestion.type === 'comparison' && playerPropQuestion.players.length >= 2) {
+          // Comparison question: "Compare Giannis rebounds vs Embiid rebounds"
+          const statType = playerPropQuestion.statType || 'points'
+          const statDisplayName = playerPropQuestion.statDisplayName || 'points'
+          
+          const analyses = await Promise.all(playerPropQuestion.players.slice(0, 2).map(async (player) => {
+            // Get player's average for the line
+            const modelResult = await getPlayerPropProbability(player.name, 'NBA', statType, 25)
+            const line = modelResult ? Math.round(modelResult.average * 2) / 2 : 25
+            
+            const analysis = await analyzePlayerProp(player.name, statType, line, 'over', cachedProps)
+            
+            return {
+              playerName: player.name,
+              statType,
+              statDisplayName,
+              line,
+              overUnder: 'over' as const,
+              analysis
+            }
+          }))
+          
+          const formattedAnalysis = formatPlayerPropAnalysis(playerPropQuestion, analyses)
+          
+          // Generate conversational response
+          const conversationalResponse = await generateConversationalResponse(
+            anthropic,
+            formattedAnalysis,
+            userMessageContent,
+            conversationHistory
+          )
+          
+          // Save messages to database
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'user',
+            content: userMessage.content,
+          })
+          
+          await db.messages.create({
+            conversationId: conversation.id,
+            role: 'assistant',
+            content: conversationalResponse,
+          })
+          
+          await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+          
+          // Update question count for non-subscribers
+          if (!subStatus.isSubscribed) {
+            const user = await db.users.findById(session.user.id)
+            if (user) {
+              await db.users.update(session.user.id, { 
+                questionCount: (user.questionCount || 0) + 1
+              })
+            }
+          }
+          
+          return NextResponse.json({ 
+            message: conversationalResponse,
+            questionsRemaining: subStatus.isSubscribed 
+              ? -1 
+              : Math.max(0, subStatus.questionsRemaining - 1)
+          })
+          
+        } else if (playerPropQuestion.type === 'best' || playerPropQuestion.type === 'parlay' || playerPropQuestion.type === 'team') {
+          // Best prop / parlay / team prop questions - use cached best props
+          console.log(`[chat] Handling ${playerPropQuestion.type} player prop question`)
+          
+          // Try to get cached best props
+          const bestPropResult = await getCachedBestProp()
+          
+          if (bestPropResult && bestPropResult.allRankedProps && bestPropResult.allRankedProps.length > 0) {
+            let propsToShow = bestPropResult.allRankedProps
+            
+            // Filter by team if team-specific
+            if (playerPropQuestion.type === 'team' && playerPropQuestion.team) {
+              const teamLower = playerPropQuestion.team.toLowerCase()
+              propsToShow = propsToShow.filter((p: RankedProp) => 
+                p.homeTeam?.toLowerCase().includes(teamLower) || 
+                p.awayTeam?.toLowerCase().includes(teamLower)
+              )
+            }
+            
+            // Limit for parlay
+            if (playerPropQuestion.type === 'parlay') {
+              const count = playerPropQuestion.parlayCount || 3
+              propsToShow = propsToShow.slice(0, count)
+            } else {
+              propsToShow = propsToShow.slice(0, 5)
+            }
+            
+            // Format the response
+            const lines: string[] = []
+            
+            if (playerPropQuestion.type === 'parlay') {
+              lines.push(`## 🎯 PLAYER PROP PARLAY (${propsToShow.length} LEGS)`)
+              lines.push('')
+              
+              let combinedProb = 1
+              for (const prop of propsToShow) {
+                const emoji = prop.modelEdge && prop.modelEdge > 5 ? '✅' : prop.modelEdge && prop.modelEdge > 0 ? '👍' : '🤔'
+                lines.push(`${emoji} **${prop.playerName} Over ${prop.line} ${prop.market.replace('player_', '')}**`)
+                lines.push(`   Projection: ${prop.modelAverage?.toFixed(1) || 'N/A'} | Prob: ${prop.modelProbability?.toFixed(0) || prop.consensusProbability?.toFixed(0)}% | Edge: ${prop.modelEdge ? (prop.modelEdge > 0 ? '+' : '') + prop.modelEdge.toFixed(1) : 'N/A'}%`)
+                lines.push(`   Game: ${prop.awayTeam} @ ${prop.homeTeam}`)
+                lines.push('')
+                
+                if (prop.modelProbability) {
+                  combinedProb *= (prop.modelProbability / 100)
+                } else if (prop.consensusProbability) {
+                  combinedProb *= (prop.consensusProbability / 100)
+                }
+              }
+              
+              lines.push(`**Combined Probability:** ${(combinedProb * 100).toFixed(1)}%`)
+              lines.push('')
+              lines.push(`**Note:** Parlay all legs together for maximum value. Individual legs are ranked by our model's edge calculation.`)
+              
+            } else {
+              const title = playerPropQuestion.type === 'team' 
+                ? `TOP ${playerPropQuestion.team?.toUpperCase()} PLAYER PROPS`
+                : 'TOP PLAYER PROPS TODAY'
+              
+              lines.push(`## 🎯 ${title}`)
+              lines.push('')
+              
+              for (let i = 0; i < propsToShow.length; i++) {
+                const prop = propsToShow[i]
+                const rank = i + 1
+                const emoji = prop.modelEdge && prop.modelEdge > 5 ? '🔥' : prop.modelEdge && prop.modelEdge > 0 ? '✅' : '📊'
+                
+                lines.push(`**${rank}. ${emoji} ${prop.playerName} Over ${prop.line} ${prop.market.replace('player_', '')}**`)
+                lines.push(`   Projection: ${prop.modelAverage?.toFixed(1) || 'N/A'} | Prob: ${prop.modelProbability?.toFixed(0) || prop.consensusProbability?.toFixed(0)}% | Edge: ${prop.modelEdge ? (prop.modelEdge > 0 ? '+' : '') + prop.modelEdge.toFixed(1) : 'N/A'}%`)
+                lines.push(`   Score: ${prop.score?.toFixed(0) || 'N/A'}/100 | Confidence: ${prop.confidence || 'medium'}`)
+                lines.push(`   Game: ${prop.awayTeam} @ ${prop.homeTeam}`)
+                lines.push('')
+              }
+            }
+            
+            const formattedAnalysis = lines.join('\n')
+            
+            // Generate conversational response
+            const conversationalResponse = await generateConversationalResponse(
+              anthropic,
+              formattedAnalysis,
+              userMessageContent,
+              conversationHistory
+            )
+            
+            // Save messages to database
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'user',
+              content: userMessage.content,
+            })
+            
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'assistant',
+              content: conversationalResponse,
+            })
+            
+            await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+            
+            // Update question count for non-subscribers
+            if (!subStatus.isSubscribed) {
+              const user = await db.users.findById(session.user.id)
+              if (user) {
+                await db.users.update(session.user.id, { 
+                  questionCount: (user.questionCount || 0) + 1
+                })
+              }
+            }
+            
+            return NextResponse.json({ 
+              message: conversationalResponse,
+              questionsRemaining: subStatus.isSubscribed 
+                ? -1 
+                : Math.max(0, subStatus.questionsRemaining - 1)
+            })
+          } else {
+            // No cached props available - provide helpful message
+            const noPropsMessage = `## 🎯 PLAYER PROPS
+
+We don't have player props data cached right now. This typically happens when:
+- Props haven't been posted by sportsbooks yet (usually posted morning/early afternoon)
+- The daily props refresh hasn't run yet
+
+**What you can do:**
+- Ask about a specific player: "Should I bet Luka over 28.5 points?"
+- Check back later when props are available
+- Ask about game spreads or totals instead
+
+Our player stats model tracks 1000+ NBA players and can analyze any specific prop you're interested in!`
+            
+            // Generate conversational response
+            const conversationalResponse = await generateConversationalResponse(
+              anthropic,
+              noPropsMessage,
+              userMessageContent,
+              conversationHistory
+            )
+            
+            // Save messages to database
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'user',
+              content: userMessage.content,
+            })
+            
+            await db.messages.create({
+              conversationId: conversation.id,
+              role: 'assistant',
+              content: conversationalResponse,
+            })
+            
+            await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+            
+            // Update question count for non-subscribers
+            if (!subStatus.isSubscribed) {
+              const user = await db.users.findById(session.user.id)
+              if (user) {
+                await db.users.update(session.user.id, { 
+                  questionCount: (user.questionCount || 0) + 1
+                })
+              }
+            }
+            
+            return NextResponse.json({ 
+              message: conversationalResponse,
+              questionsRemaining: subStatus.isSubscribed 
+                ? -1 
+                : Math.max(0, subStatus.questionsRemaining - 1)
+            })
+          }
+        }
+      } catch (err) {
+        console.error('[chat] Error processing player prop question:', err)
+        // Fall through to other detection methods if player prop processing fails
       }
     }
     
