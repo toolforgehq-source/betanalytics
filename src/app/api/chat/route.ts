@@ -1988,6 +1988,33 @@ export async function POST(request: Request) {
         })
       } catch (err) {
         console.error('[chat] Error processing player prop question:', err)
+        const errorPropData = 'PLAYER PROP ANALYSIS\n\nI encountered an error analyzing this player prop. This is a prop-specific question (NOT a team Elo bet). Please tell the user you had trouble loading the prop data and suggest they try again in a moment or ask about a specific player name and stat (e.g. "Anthony Edwards over 25.5 points").'
+        try {
+          const errorResponse = await generateConversationalResponse(
+            anthropic,
+            errorPropData,
+            userMessageContent,
+            conversationHistory
+          )
+          
+          await db.messages.create({ conversationId: conversation.id, role: 'user', content: userMessage.content })
+          await db.messages.create({ conversationId: conversation.id, role: 'assistant', content: errorResponse })
+          await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+          
+          if (!subStatus.isSubscribed) {
+            const user = await db.users.findById(session.user.id)
+            if (user) {
+              await db.users.update(session.user.id, { questionCount: (user.questionCount || 0) + 1 })
+            }
+          }
+          
+          return NextResponse.json({ 
+            message: errorResponse,
+            questionsRemaining: subStatus.isSubscribed ? -1 : Math.max(0, subStatus.questionsRemaining - 1)
+          })
+        } catch (innerErr) {
+          console.error('[chat] Failed to generate error response for prop question:', innerErr)
+        }
       }
     }
     

@@ -75,6 +75,8 @@ export interface PropAnalysisResult {
 
   correlations: PropCorrelation[]
 
+  allPlayerProps: PlayerProp[]
+
   recommendation: {
     pick: 'Over' | 'Under' | null
     confidence: 'high' | 'medium' | 'low'
@@ -268,18 +270,22 @@ export function parsePlayerPropQuery(userMessage: string): PlayerPropQuery {
   }
 
   const namePatterns = [
-    /(?:should\s+(?:i|we)\s+(?:take|bet|play)\s+(?:the\s+)?(?:over|under)\s+(?:on|for)\s+)([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/,
-    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+(?:over|under|o\/u|prop|points?|pts|rebounds?|rebs?|assists?|ast|threes?|passing|rushing|receiving|goals?|shots?|hits?)/,
-    /(?:over|under)\s+[\d.]+\s+\w+\s+(?:for\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/,
-    /([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s+[\d.]+/,
+    /(?:should\s+(?:i|we)\s+(?:take|bet|play)\s+(?:the\s+)?(?:over|under)\s+(?:on|for)\s+)([a-z]+(?:\s+[a-z]+)+)/i,
+    /(?:best|top)\s+([a-z]+(?:\s+[a-z]+)+?)\s+(?:prop|props|over|under)/i,
+    /([a-z]+(?:\s+[a-z]+)+?)\s+(?:over|under|o\/u|prop|props|points?|pts|rebounds?|rebs?|assists?|ast|threes?|passing|rushing|receiving|goals?|shots?|hits?)/i,
+    /(?:over|under)\s+[\d.]+\s+\w+\s+(?:for\s+)?([a-z]+(?:\s+[a-z]+)+)/i,
+    /([a-z]+(?:\s+[a-z]+)+?)\s+[\d.]+/i,
   ]
+
+  const skipWordsLower = ['best', 'player', 'over', 'under', 'should', 'the', 'what', 'whats', 'nba', 'nfl', 'nhl', 'mlb', 'prizepicks', 'underdog', 'draftkings', 'fanduel', 'sleeper', 'top', 'good', 'any', 'today', 'tonight', 'give', 'me', 'bet', 'bets', 'pick', 'picks', 'play', 'prop', 'props', 'is', 'are', 'do', 'you', 'think', 'i', 'we', 'my', 'a', 'an', 'for', 'on', 'in', 'of', 'to', 'and', 'or']
 
   for (const pattern of namePatterns) {
     const match = userMessage.match(pattern)
     if (match && match[1]) {
       const candidate = match[1].trim()
-      const skipWords = ['Best', 'Player', 'Over', 'Under', 'Should', 'The', 'What', 'NBA', 'NFL', 'NHL', 'MLB', 'PrizePicks', 'Underdog', 'DraftKings', 'FanDuel', 'Sleeper']
-      if (!skipWords.includes(candidate.split(' ')[0])) {
+      const words = candidate.toLowerCase().split(/\s+/)
+      const meaningfulWords = words.filter(w => !skipWordsLower.includes(w))
+      if (meaningfulWords.length >= 2 || (meaningfulWords.length === 1 && meaningfulWords[0].length > 3)) {
         playerName = candidate
         break
       }
@@ -298,7 +304,14 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
   const reasons: string[] = []
   const warnings: string[] = []
 
-  const statsData = await getPlayerStatsData()
+  let statsData: Awaited<ReturnType<typeof getPlayerStatsData>> = null
+  try {
+    statsData = await getPlayerStatsData()
+  } catch (err) {
+    console.error('[player-prop-analysis] Failed to fetch player stats data:', err)
+    warnings.push('Player stats data temporarily unavailable')
+  }
+
   let playerData: PlayerStats | null = null
   let detectedSport = query.sport || null
 
@@ -316,9 +329,17 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
     }
   }
 
-  const propsData = await getCachedPlayerProps()
+  let propsData: GamePlayerProps[] | null = null
+  try {
+    propsData = await getCachedPlayerProps()
+  } catch (err) {
+    console.error('[player-prop-analysis] Failed to fetch cached player props:', err)
+    warnings.push('Props market data temporarily unavailable')
+  }
+
   let marketData: PropAnalysisResult['marketData'] = null
   let matchingGame: GamePlayerProps | null = null
+  let allPlayerProps: PlayerProp[] = []
 
   if (propsData && query.playerName) {
     const normalizedName = query.playerName.toLowerCase()
@@ -331,6 +352,7 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
 
       if (playerProps.length > 0) {
         matchingGame = game
+        allPlayerProps = playerProps
         const targetMarket = query.statType ? findMarketForStat(query.statType) : null
         const relevantProps = targetMarket
           ? playerProps.filter(p => p.market === targetMarket)
@@ -382,62 +404,71 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
 
   let modelResult: EnhancedPropProbability | null = null
   if (playerData && query.statType && query.line !== null) {
-    let opponentTeamId: string | undefined
-    let isHomeGame: boolean | undefined
-    let gameContext: { homeTeam?: string; awayTeam?: string; playerTeam?: string } | undefined
+    try {
+      let opponentTeamId: string | undefined
+      let isHomeGame: boolean | undefined
+      let gameContext: { homeTeam?: string; awayTeam?: string; playerTeam?: string } | undefined
 
-    if (matchingGame) {
-      const playerTeam = playerData.teamId
-      isHomeGame = matchingGame.homeTeam.toLowerCase().includes(playerTeam?.toLowerCase() || '')
-      opponentTeamId = isHomeGame ? matchingGame.awayTeam : matchingGame.homeTeam
+      if (matchingGame) {
+        const playerTeam = playerData.teamId
+        isHomeGame = matchingGame.homeTeam.toLowerCase().includes(playerTeam?.toLowerCase() || '')
+        opponentTeamId = isHomeGame ? matchingGame.awayTeam : matchingGame.homeTeam
 
-      gameContext = {
-        homeTeam: matchingGame.homeTeam,
-        awayTeam: matchingGame.awayTeam,
-        playerTeam: isHomeGame ? matchingGame.homeTeam : matchingGame.awayTeam,
+        gameContext = {
+          homeTeam: matchingGame.homeTeam,
+          awayTeam: matchingGame.awayTeam,
+          playerTeam: isHomeGame ? matchingGame.homeTeam : matchingGame.awayTeam,
+        }
       }
-    }
 
-    modelResult = await getPlayerPropProbability(
-      query.playerName,
-      detectedSport || 'NBA',
-      query.statType,
-      query.line,
-      opponentTeamId,
-      isHomeGame,
-      undefined,
-      gameContext
-    )
+      modelResult = await getPlayerPropProbability(
+        query.playerName,
+        detectedSport || 'NBA',
+        query.statType,
+        query.line,
+        opponentTeamId,
+        isHomeGame,
+        undefined,
+        gameContext
+      )
+    } catch (err) {
+      console.error('[player-prop-analysis] Model probability calculation failed:', err)
+      warnings.push('Statistical model unavailable - using market data')
+    }
   }
 
   let matchupAnalysis: MatchupAdjustment | null = null
   let matchupHitRate: { hitRate: number | null; sampleSize: number; notes: string[] } | null = null
 
   if (playerData && matchingGame && query.statType) {
-    const opponent = matchingGame.homeTeam.toLowerCase().includes(playerData.teamId?.toLowerCase() || '')
-      ? matchingGame.awayTeam
-      : matchingGame.homeTeam
+    try {
+      const opponent = matchingGame.homeTeam.toLowerCase().includes(playerData.teamId?.toLowerCase() || '')
+        ? matchingGame.awayTeam
+        : matchingGame.homeTeam
 
-    const matchupStat = mapStatToMatchupStat(query.statType)
-    if (matchupStat) {
-      const avg = (playerData.averages as Record<string, number>)[query.statType] || 0
-      matchupAnalysis = await calculateMatchupAdjustment(
-        playerData.playerId,
-        playerData.playerName,
-        opponent,
-        detectedSport || 'NBA',
-        matchupStat,
-        avg
-      )
-
-      if (query.line !== null) {
-        matchupHitRate = await getMatchupHitRate(
+      const matchupStat = mapStatToMatchupStat(query.statType)
+      if (matchupStat) {
+        const avg = (playerData.averages as Record<string, number>)[query.statType] || 0
+        matchupAnalysis = await calculateMatchupAdjustment(
           playerData.playerId,
+          playerData.playerName,
           opponent,
+          detectedSport || 'NBA',
           matchupStat,
-          query.line
+          avg
         )
+
+        if (query.line !== null) {
+          matchupHitRate = await getMatchupHitRate(
+            playerData.playerId,
+            opponent,
+            matchupStat,
+            query.line
+          )
+        }
       }
+    } catch (err) {
+      console.error('[player-prop-analysis] Matchup analysis failed:', err)
     }
   }
 
@@ -445,22 +476,30 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
   let usageAdj: UsageAdjustment | null = null
 
   if (matchingGame) {
-    paceAdj = await getPaceAdjustment(
-      matchingGame.homeTeam,
-      matchingGame.awayTeam,
-      detectedSport || 'NBA'
-    )
+    try {
+      paceAdj = await getPaceAdjustment(
+        matchingGame.homeTeam,
+        matchingGame.awayTeam,
+        detectedSport || 'NBA'
+      )
+    } catch (err) {
+      console.error('[player-prop-analysis] Pace adjustment failed:', err)
+    }
 
     if (playerData) {
-      const playerTeam = matchingGame.homeTeam.toLowerCase().includes(playerData.teamId?.toLowerCase() || '')
-        ? matchingGame.homeTeam
-        : matchingGame.awayTeam
+      try {
+        const playerTeam = matchingGame.homeTeam.toLowerCase().includes(playerData.teamId?.toLowerCase() || '')
+          ? matchingGame.homeTeam
+          : matchingGame.awayTeam
 
-      usageAdj = await getUsageAdjustment(
-        detectedSport || 'NBA',
-        playerTeam,
-        playerData.position
-      )
+        usageAdj = await getUsageAdjustment(
+          detectedSport || 'NBA',
+          playerTeam,
+          playerData.position
+        )
+      } catch (err) {
+        console.error('[player-prop-analysis] Usage adjustment failed:', err)
+      }
     }
   }
 
@@ -530,6 +569,7 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
     correlations,
     recommendation,
     calculatedAt: now,
+    allPlayerProps,
   }
 }
 
@@ -574,7 +614,7 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     }
 
     for (const [, props] of Array.from(propGroups.entries())) {
-      if (props.length < 2) continue
+      if (props.length < 1) continue
 
       const prop = props[0]
       const statType = MARKET_TO_STAT_TYPE[prop.market]
@@ -816,6 +856,23 @@ export function formatPropAnalysisForContext(analysis: PropAnalysisResult): stri
     lines.push('CORRELATED PROPS:')
     for (const corr of analysis.correlations) {
       lines.push(`  ${corr.prop2.player} ${corr.prop2.direction} ${corr.prop2.stat} (${corr.correlationType} correlation, ${corr.strength}) - ${corr.reason}`)
+    }
+  }
+
+  if (analysis.allPlayerProps.length > 0 && !analysis.marketData) {
+    lines.push('')
+    lines.push('ALL AVAILABLE PROPS FOR THIS PLAYER:')
+    const propsByMarket = new Map<string, PlayerProp[]>()
+    for (const p of analysis.allPlayerProps) {
+      const existing = propsByMarket.get(p.market) || []
+      existing.push(p)
+      propsByMarket.set(p.market, existing)
+    }
+    for (const [market, props] of Array.from(propsByMarket.entries())) {
+      const statType = MARKET_TO_STAT_TYPE[market] || market
+      const display = getStatDisplay(statType)
+      const prop = props[0]
+      lines.push(`  ${display}: Line ${prop.line} | Over ${formatOddsDisplay(prop.overOdds)} / Under ${formatOddsDisplay(prop.underOdds)} (${prop.bookmaker})`)
     }
   }
 
