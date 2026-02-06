@@ -21,6 +21,14 @@
       "schedule": "0 */2 * * *"
     },
     {
+      "path": "/api/cron/fetch-props",
+      "schedule": "0 22-23 * * *"
+    },
+    {
+      "path": "/api/cron/fetch-props",
+      "schedule": "0 0-4 * * *"
+    },
+    {
       "path": "/api/cron/snapshot-odds",
       "schedule": "0 * * * *"
     },

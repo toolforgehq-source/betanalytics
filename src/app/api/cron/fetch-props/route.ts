@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { fetchSportPlayerProps, setCachedPlayerProps, type GamePlayerProps } from "@/lib/odds"
 import { computeBestPropWithModel, cacheBestProp, computeBestPropModelFirst, cacheModelFirstProps } from "@/lib/bet-ranking"
+import { storePropLineSnapshots } from "@/lib/prop-enhancements"
 
 /**
  * Cron endpoint to fetch player props from Odds API (PAID)
@@ -60,6 +61,20 @@ export async function GET(request: Request) {
     
     await setCachedPlayerProps(allProps)
     console.log(`[fetch-props] Cached ${allProps.length} games with player props`)
+
+    const allPropLines = allProps.flatMap(game =>
+      game.props.map(p => ({
+        playerName: p.playerName,
+        market: p.market,
+        line: p.line,
+        overOdds: p.overOdds,
+        underOdds: p.underOdds,
+        bookmaker: p.bookmaker,
+      }))
+    )
+    storePropLineSnapshots(allPropLines).catch(err =>
+      console.error('[fetch-props] Line snapshot store failed:', err)
+    )
     
     console.log("[fetch-props] Computing best prop of the day (with model enhancement)...")
     const bestPropResult = await computeBestPropWithModel(allProps)

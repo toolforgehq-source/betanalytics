@@ -911,3 +911,207 @@ export function formatPropCLVStats(stats: PropCLVStats): string {
   
   return lines.join('\n')
 }
+
+// ============================================
+// 5. PROP LINE MOVEMENT TRACKING
+// ============================================
+
+const PROP_SNAPSHOTS_KEY = 'betanalytics:prop_line_snapshots'
+
+export interface PropLineSnapshot {
+  playerName: string
+  market: string
+  line: number
+  overOdds: number
+  underOdds: number
+  bookmaker: string
+  timestamp: string
+}
+
+export interface PropLineMovement {
+  playerName: string
+  market: string
+  opening: { line: number; overOdds: number; underOdds: number; timestamp: string }
+  current: { line: number; overOdds: number; underOdds: number; timestamp: string }
+  lineChange: number
+  overOddsChange: number
+  underOddsChange: number
+  direction: 'over' | 'under' | 'neutral'
+  magnitude: 'steam' | 'significant' | 'minor' | 'none'
+  sharpSignal: boolean
+}
+
+export async function storePropLineSnapshots(
+  props: Array<{ playerName: string; market: string; line: number; overOdds: number; underOdds: number; bookmaker: string }>
+): Promise<void> {
+  const redis = getRedisClient()
+  if (!redis) return
+
+  const timestamp = new Date().toISOString()
+  const snapshots: PropLineSnapshot[] = props.map(p => ({
+    ...p,
+    timestamp,
+  }))
+
+  try {
+    const existingResponse = await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['GET', PROP_SNAPSHOTS_KEY])
+    })
+
+    let allSnapshots: PropLineSnapshot[] = []
+    if (existingResponse.ok) {
+      const data = await existingResponse.json()
+      if (data.result) {
+        try { allSnapshots = JSON.parse(data.result) } catch { /* empty */ }
+      }
+    }
+
+    allSnapshots.push(...snapshots)
+
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    allSnapshots = allSnapshots.filter(s => s.timestamp > cutoff)
+
+    await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['SET', PROP_SNAPSHOTS_KEY, JSON.stringify(allSnapshots), 'EX', '172800'])
+    })
+
+    console.log(`[PropLineMovement] Stored ${snapshots.length} prop snapshots`)
+  } catch (error) {
+    console.error('[PropLineMovement] Error storing snapshots:', error)
+  }
+}
+
+export async function getPropLineMovement(
+  playerName: string,
+  market?: string
+): Promise<PropLineMovement[]> {
+  const redis = getRedisClient()
+  if (!redis) return []
+
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['GET', PROP_SNAPSHOTS_KEY])
+    })
+
+    if (!response.ok) return []
+    const data = await response.json()
+    if (!data.result) return []
+
+    let allSnapshots: PropLineSnapshot[]
+    try { allSnapshots = JSON.parse(data.result) } catch { return [] }
+
+    const normalizedName = playerName.toLowerCase()
+    const playerSnapshots = allSnapshots.filter(s =>
+      s.playerName.toLowerCase().includes(normalizedName) ||
+      normalizedName.includes(s.playerName.toLowerCase())
+    )
+
+    if (playerSnapshots.length === 0) return []
+
+    const byMarket = new Map<string, PropLineSnapshot[]>()
+    for (const snap of playerSnapshots) {
+      if (market && snap.market !== market) continue
+      const key = `${snap.playerName}_${snap.market}`
+      const existing = byMarket.get(key) || []
+      existing.push(snap)
+      byMarket.set(key, existing)
+    }
+
+    const movements: PropLineMovement[] = []
+
+    for (const [, snaps] of Array.from(byMarket.entries())) {
+      snaps.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      if (snaps.length < 2) continue
+
+      const opening = snaps[0]
+      const current = snaps[snaps.length - 1]
+
+      const lineChange = current.line - opening.line
+      const overOddsChange = current.overOdds - opening.overOdds
+      const underOddsChange = current.underOdds - opening.underOdds
+
+      let direction: PropLineMovement['direction'] = 'neutral'
+      if (lineChange > 0 || (lineChange === 0 && overOddsChange < -10)) {
+        direction = 'over'
+      } else if (lineChange < 0 || (lineChange === 0 && underOddsChange < -10)) {
+        direction = 'under'
+      }
+
+      let magnitude: PropLineMovement['magnitude'] = 'none'
+      const absLineChange = Math.abs(lineChange)
+      const absOddsChange = Math.max(Math.abs(overOddsChange), Math.abs(underOddsChange))
+      if (absLineChange >= 1.5 || absOddsChange >= 30) {
+        magnitude = 'steam'
+      } else if (absLineChange >= 1.0 || absOddsChange >= 20) {
+        magnitude = 'significant'
+      } else if (absLineChange >= 0.5 || absOddsChange >= 10) {
+        magnitude = 'minor'
+      }
+
+      const timeDiffMs = new Date(current.timestamp).getTime() - new Date(opening.timestamp).getTime()
+      const timeDiffHrs = timeDiffMs / (1000 * 60 * 60)
+      const sharpSignal = magnitude === 'steam' || (magnitude === 'significant' && timeDiffHrs < 4)
+
+      movements.push({
+        playerName: opening.playerName,
+        market: opening.market,
+        opening: { line: opening.line, overOdds: opening.overOdds, underOdds: opening.underOdds, timestamp: opening.timestamp },
+        current: { line: current.line, overOdds: current.overOdds, underOdds: current.underOdds, timestamp: current.timestamp },
+        lineChange,
+        overOddsChange,
+        underOddsChange,
+        direction,
+        magnitude,
+        sharpSignal,
+      })
+    }
+
+    return movements
+  } catch (error) {
+    console.error('[PropLineMovement] Error getting movements:', error)
+    return []
+  }
+}
+
+export function formatPropLineMovement(movements: PropLineMovement[]): string {
+  if (movements.length === 0) return ''
+
+  const lines: string[] = ['LINE MOVEMENT:']
+  for (const m of movements) {
+    if (m.magnitude === 'none') continue
+
+    const lineStr = m.lineChange !== 0
+      ? `Line: ${m.opening.line} → ${m.current.line} (${m.lineChange > 0 ? '+' : ''}${m.lineChange})`
+      : `Line: ${m.current.line} (no change)`
+
+    const oddsStr = `Over odds: ${m.opening.overOdds > 0 ? '+' : ''}${m.opening.overOdds} → ${m.current.overOdds > 0 ? '+' : ''}${m.current.overOdds}`
+
+    let signal = ''
+    if (m.sharpSignal) signal = ' [SHARP MONEY]'
+    else if (m.magnitude === 'steam') signal = ' [STEAM MOVE]'
+    else if (m.magnitude === 'significant') signal = ' [SIGNIFICANT]'
+
+    lines.push(`  ${m.market}: ${lineStr} | ${oddsStr}${signal}`)
+
+    if (m.sharpSignal) {
+      lines.push(`    → Sharp action detected moving line ${m.direction === 'over' ? 'UP (favor over)' : m.direction === 'under' ? 'DOWN (favor under)' : 'sideways'}`)
+    }
+  }
+
+  return lines.length > 1 ? lines.join('\n') : ''
+}

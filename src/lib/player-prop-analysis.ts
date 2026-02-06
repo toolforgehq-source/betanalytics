@@ -17,8 +17,8 @@ import { getPlayerPropProbability, getPlayerStatsData, calculateOverProbability 
 import type { EnhancedPropProbability, PlayerStats } from './player-stats'
 import { calculateMatchupAdjustment, getMatchupHitRate, formatMatchupAdjustmentForDisplay } from './player-matchup'
 import type { MatchupAdjustment } from './player-matchup'
-import { getPaceAdjustment, getUsageAdjustment, getCorrelatedProps, storePropCLVRecord, analyzePropParlay } from './prop-enhancements'
-import type { PaceAdjustment, UsageAdjustment, PropCorrelation } from './prop-enhancements'
+import { getPaceAdjustment, getUsageAdjustment, getCorrelatedProps, storePropCLVRecord, analyzePropParlay, getPropLineMovement, formatPropLineMovement } from './prop-enhancements'
+import type { PaceAdjustment, UsageAdjustment, PropCorrelation, PropLineMovement } from './prop-enhancements'
 import { getCachedPlayerProps } from './odds'
 import type { GamePlayerProps, PlayerProp } from './odds'
 import { americanToImpliedProbability } from './bet-ranking'
@@ -74,6 +74,8 @@ export interface PropAnalysisResult {
   } | null
 
   correlations: PropCorrelation[]
+
+  lineMovement: PropLineMovement[]
 
   allPlayerProps: PlayerProp[]
 
@@ -503,6 +505,16 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
     }
   }
 
+  let lineMovement: PropLineMovement[] = []
+  if (query.playerName) {
+    try {
+      const targetMarket = query.statType ? findMarketForStat(query.statType) : undefined
+      lineMovement = await getPropLineMovement(query.playerName, targetMarket || undefined)
+    } catch (err) {
+      console.error('[player-prop-analysis] Line movement lookup failed:', err)
+    }
+  }
+
   const correlations: PropCorrelation[] = []
   if (query.playerName && query.statType && query.direction && detectedSport) {
     const commonStats = ['points', 'rebounds', 'assists', 'threePointersMade', 'passingYards', 'rushingYards', 'receivingYards']
@@ -582,6 +594,7 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
     usageAdjustment: usageAdj,
     marketData,
     correlations,
+    lineMovement,
     recommendation,
     calculatedAt: now,
     allPlayerProps,
@@ -891,6 +904,14 @@ export function formatPropAnalysisForContext(analysis: PropAnalysisResult): stri
       }
     }
     lines.push('')
+  }
+
+  if (analysis.lineMovement && analysis.lineMovement.length > 0) {
+    const movementText = formatPropLineMovement(analysis.lineMovement)
+    if (movementText) {
+      lines.push(movementText)
+      lines.push('')
+    }
   }
 
   if (analysis.paceAdjustment) {
