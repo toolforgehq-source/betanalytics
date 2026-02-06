@@ -17,7 +17,7 @@ import { getPlayerPropProbability, getPlayerStatsData, calculateOverProbability 
 import type { EnhancedPropProbability, PlayerStats } from './player-stats'
 import { calculateMatchupAdjustment, getMatchupHitRate, formatMatchupAdjustmentForDisplay } from './player-matchup'
 import type { MatchupAdjustment } from './player-matchup'
-import { getPaceAdjustment, getUsageAdjustment, getCorrelatedProps } from './prop-enhancements'
+import { getPaceAdjustment, getUsageAdjustment, getCorrelatedProps, storePropCLVRecord, analyzePropParlay } from './prop-enhancements'
 import type { PaceAdjustment, UsageAdjustment, PropCorrelation } from './prop-enhancements'
 import { getCachedPlayerProps } from './odds'
 import type { GamePlayerProps, PlayerProp } from './odds'
@@ -550,6 +550,21 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
     paceAdj, usageAdj, seasonStats, reasons, warnings
   )
 
+  if (recommendation.pick && query.line !== null && query.statType && marketData) {
+    const pickOdds = recommendation.pick === 'Over' ? marketData.bestOverPrice : marketData.bestUnderPrice
+    storePropCLVRecord({
+      playerName: query.playerName,
+      sport: detectedSport || 'NBA',
+      statType: query.statType,
+      line: query.line,
+      direction: recommendation.pick === 'Over' ? 'over' : 'under',
+      pickOdds,
+      pickProbability: recommendation.modelProbability,
+      pickTimestamp: now,
+      gameTimestamp: now,
+    }).catch(err => console.error('[player-prop-analysis] CLV store failed:', err))
+  }
+
   return {
     query,
     player: playerData ? {
@@ -992,6 +1007,27 @@ export function formatMultiPropAnalysisForContext(analyses: PropAnalysisResult[]
     }
 
     lines.push('')
+  }
+
+  const parlayLegs = analyses
+    .filter(a => a.recommendation.pick && a.query.statType && a.player)
+    .map(a => ({
+      player: a.player!.name,
+      stat: a.query.statType!,
+      direction: (a.recommendation.pick === 'Over' ? 'over' : 'under') as 'over' | 'under',
+      team: '',
+    }))
+
+  if (parlayLegs.length >= 2) {
+    const parlayResult = analyzePropParlay(parlayLegs)
+    if (parlayResult.warnings.length > 0) {
+      lines.push('PARLAY CORRELATION WARNINGS:')
+      for (const w of parlayResult.warnings) {
+        lines.push(`  ! ${w}`)
+      }
+      lines.push(`  ${parlayResult.recommendation}`)
+      lines.push('')
+    }
   }
 
   return lines.join('\n')

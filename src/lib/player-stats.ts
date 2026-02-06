@@ -176,6 +176,11 @@ const RECENT_FORM_WINDOW = 5
 // Weight for game i (0 = most recent): weight = RECENCY_DECAY ^ i
 const RECENCY_DECAY = 0.85
 
+const COUNT_STATS = new Set([
+  'threePointersMade', 'passingTouchdowns', 'rushingTouchdowns', 'receivingTouchdowns',
+  'goals', 'homeRuns', 'steals', 'blocks',
+])
+
 // Sport-specific stat mappings
 const SPORT_STATS: Record<string, string[]> = {
   NBA: ['points', 'rebounds', 'assists', 'threePointersMade'],
@@ -763,6 +768,34 @@ export function calculateOverProbability(
   return Math.max(0.15, Math.min(0.85, probability))
 }
 
+function poissonCDF(lambda: number, k: number): number {
+  let sum = 0
+  let term = Math.exp(-lambda)
+  for (let i = 0; i <= k; i++) {
+    if (i > 0) term *= lambda / i
+    sum += term
+  }
+  return sum
+}
+
+export function calculateOverProbabilityPoisson(lambda: number, line: number): number {
+  const k = Math.floor(line)
+  const prob = 1 - poissonCDF(lambda, k)
+  return Math.max(0.15, Math.min(0.85, prob))
+}
+
+function projectMinutes(player: PlayerStats): number | null {
+  const seasonMinutes = player.averages.minutes
+  if (!seasonMinutes || seasonMinutes <= 0) return null
+
+  const recentLogs = player.gameLogs.slice(0, RECENT_FORM_WINDOW)
+  const recentMinValues = recentLogs.map(log => log.minutes).filter(m => m > 0)
+  if (recentMinValues.length < 3) return seasonMinutes
+
+  const recentMinAvg = recentMinValues.reduce((a, b) => a + b, 0) / recentMinValues.length
+  return seasonMinutes * 0.5 + recentMinAvg * 0.5
+}
+
 /**
  * Normal CDF approximation
  */
@@ -905,8 +938,14 @@ export async function getPlayerPropProbability(
     }
   }
   
-  // Calculate adjusted average with all factors
-  const adjustedAverage = avg * opponentAdjustment * homeAwayAdjustment * backToBackAdjustment * paceAdjustment * usageAdjustment
+  let minutesMultiplier = 1.0
+  const projectedMins = projectMinutes(player)
+  const seasonMinutes = player.averages.minutes
+  if (projectedMins && seasonMinutes && seasonMinutes > 0) {
+    minutesMultiplier = Math.max(0.75, Math.min(1.25, projectedMins / seasonMinutes))
+  }
+
+  const adjustedAverage = avg * opponentAdjustment * homeAwayAdjustment * backToBackAdjustment * paceAdjustment * usageAdjustment * minutesMultiplier
 
   const recentLogs = player.gameLogs.slice(0, RECENT_FORM_WINDOW)
   const recentValues = recentLogs
@@ -915,12 +954,15 @@ export async function getPlayerPropProbability(
   const recentAvg = recentValues.length >= 3
     ? recentValues.reduce((a, b) => a + b, 0) / recentValues.length
     : null
+  const allAdjustments = opponentAdjustment * homeAwayAdjustment * backToBackAdjustment * paceAdjustment * usageAdjustment * minutesMultiplier
   const blendedAverage = recentAvg !== null
-    ? (adjustedAverage * 0.6 + recentAvg * opponentAdjustment * homeAwayAdjustment * backToBackAdjustment * paceAdjustment * usageAdjustment * 0.4)
+    ? (adjustedAverage * 0.6 + recentAvg * allAdjustments * 0.4)
     : adjustedAverage
 
-  // Calculate statistical probability using normal distribution
-  const statisticalProb = calculateOverProbability(blendedAverage, stdDev, line, 1.0)
+  const isCountStat = COUNT_STATS.has(statType)
+  const statisticalProb = isCountStat && blendedAverage > 0
+    ? calculateOverProbabilityPoisson(blendedAverage, line)
+    : calculateOverProbability(blendedAverage, stdDev, line, 1.0)
   
   // Get historical hit rate for this stat
   let historicalHitRate = 0.5  // Default to 50%
