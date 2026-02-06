@@ -383,6 +383,7 @@ interface ESPNGameLogEntry {
 /**
  * Search for a player on ESPN by name
  * Returns player ID and basic info if found
+ * Uses multiple search strategies for different sports
  */
 async function searchESPNPlayer(
   playerName: string,
@@ -394,61 +395,126 @@ async function searchESPNPlayer(
     return null
   }
   
+  console.log(`[OnDemand] Searching ESPN for player: ${playerName} in ${sport}`)
+  
+  // Strategy 1: Try the general search API first (works well for NFL, NBA)
   try {
-    // ESPN athlete search API
     const searchUrl = `https://site.web.api.espn.com/apis/common/v3/search?query=${encodeURIComponent(playerName)}&limit=10&type=player`
-    
-    console.log(`[OnDemand] Searching ESPN for player: ${playerName}`)
     
     const response = await fetch(searchUrl, {
       headers: { 'Accept': 'application/json' },
       cache: 'no-store',
     })
     
-    if (!response.ok) {
-      console.log(`[OnDemand] ESPN search failed: ${response.status}`)
-      return null
+    if (response.ok) {
+      const data = await response.json()
+      const players = data.results?.filter((r: { type: string }) => r.type === 'player') || []
+      
+      for (const result of players) {
+        const items = result.contents || []
+        for (const item of items) {
+          const league = item.league?.slug?.toLowerCase() || ''
+          if (league === sportConfig.league || 
+              (sport === 'NBA' && league === 'nba') ||
+              (sport === 'NFL' && league === 'nfl') ||
+              (sport === 'NHL' && league === 'nhl') ||
+              (sport === 'MLB' && league === 'mlb') ||
+              (sport === 'NCAAB' && (league === 'mens-college-basketball' || league === 'ncaam')) ||
+              (sport === 'NCAAF' && (league === 'college-football' || league === 'ncaaf'))) {
+            
+            console.log(`[OnDemand] Found player via general search: ${item.displayName} (ID: ${item.id}) in ${league}`)
+            
+            return {
+              id: item.id,
+              displayName: item.displayName,
+              position: item.position,
+              team: item.team ? {
+                id: item.team.id,
+                displayName: item.team.displayName
+              } : undefined
+            }
+          }
+        }
+      }
     }
+  } catch {
+    console.log(`[OnDemand] General search failed, trying sport-specific search`)
+  }
+  
+  // Strategy 2: Try sport-specific autocomplete API (works better for NHL, MLB)
+  try {
+    const autocompleteUrl = `https://site.web.api.espn.com/apis/common/v3/sports/${sportConfig.sport}/${sportConfig.league}/athletes?limit=10&active=true&search=${encodeURIComponent(playerName)}`
     
-    const data = await response.json()
+    const response = await fetch(autocompleteUrl, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
     
-    // Find matching player in the correct sport
-    const players = data.results?.filter((r: { type: string }) => r.type === 'player') || []
+    if (response.ok) {
+      const data = await response.json()
+      const athletes = data.items || data.athletes || []
+      
+      if (athletes.length > 0) {
+        const athlete = athletes[0]
+        console.log(`[OnDemand] Found player via sport-specific search: ${athlete.displayName || athlete.fullName} (ID: ${athlete.id})`)
+        
+        return {
+          id: athlete.id,
+          displayName: athlete.displayName || athlete.fullName,
+          position: athlete.position?.abbreviation || athlete.position,
+          team: athlete.team ? {
+            id: athlete.team.id,
+            displayName: athlete.team.displayName || athlete.team.name
+          } : undefined
+        }
+      }
+    }
+  } catch {
+    console.log(`[OnDemand] Sport-specific search failed`)
+  }
+  
+  // Strategy 3: Try the site search API with sport filter
+  try {
+    const siteSearchUrl = `https://site.api.espn.com/apis/site/v2/sports/${sportConfig.sport}/${sportConfig.league}/athletes?limit=100`
     
-    for (const result of players) {
-      const items = result.contents || []
-      for (const item of items) {
-        // Check if this player is in the right sport/league
-        const league = item.league?.slug?.toLowerCase() || ''
-        if (league === sportConfig.league || 
-            (sport === 'NBA' && league === 'nba') ||
-            (sport === 'NFL' && league === 'nfl') ||
-            (sport === 'NHL' && league === 'nhl') ||
-            (sport === 'MLB' && league === 'mlb') ||
-            (sport === 'NCAAB' && (league === 'mens-college-basketball' || league === 'ncaam')) ||
-            (sport === 'NCAAF' && (league === 'college-football' || league === 'ncaaf'))) {
+    const response = await fetch(siteSearchUrl, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+    
+    if (response.ok) {
+      const data = await response.json()
+      const athletes = data.items || data.athletes || []
+      
+      // Search for matching player name
+      const normalizedSearch = playerName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      
+      for (const athlete of athletes) {
+        const athleteName = (athlete.displayName || athlete.fullName || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        
+        if (athleteName.includes(normalizedSearch) || normalizedSearch.includes(athleteName) ||
+            athleteName.split(' ').some((part: string) => normalizedSearch.includes(part) || part.includes(normalizedSearch))) {
           
-          console.log(`[OnDemand] Found player: ${item.displayName} (ID: ${item.id}) in ${league}`)
+          console.log(`[OnDemand] Found player via roster search: ${athlete.displayName || athlete.fullName} (ID: ${athlete.id})`)
           
           return {
-            id: item.id,
-            displayName: item.displayName,
-            position: item.position,
-            team: item.team ? {
-              id: item.team.id,
-              displayName: item.team.displayName
+            id: athlete.id,
+            displayName: athlete.displayName || athlete.fullName,
+            position: athlete.position?.abbreviation || athlete.position,
+            team: athlete.team ? {
+              id: athlete.team.id,
+              displayName: athlete.team.displayName || athlete.team.name
             } : undefined
           }
         }
       }
     }
-    
-    console.log(`[OnDemand] No matching player found for ${playerName} in ${sport}`)
-    return null
-  } catch (error) {
-    console.error(`[OnDemand] Error searching for player:`, error)
-    return null
+  } catch {
+    console.log(`[OnDemand] Roster search failed`)
   }
+  
+  console.log(`[OnDemand] No matching player found for ${playerName} in ${sport} after all search strategies`)
+  return null
 }
 
 /**
