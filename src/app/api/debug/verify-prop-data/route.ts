@@ -10,25 +10,26 @@ export async function GET(request: Request) {
   const testPlayer = searchParams.get('player') || 'Luka Doncic'
   const testStat = searchParams.get('stat') || 'points'
   const testLine = parseFloat(searchParams.get('line') || '28.5')
+  const testSport = searchParams.get('sport') || 'NBA'
   
   const results: Record<string, unknown> = {}
   
   // 1. Test getPlayerPropProbability for specific players
   const testCases = [
-    { player: 'Luka Doncic', stat: 'points', line: 28.5 },
-    { player: 'LeBron James', stat: 'points', line: 25.5 },
-    { player: 'Stephen Curry', stat: 'threePointersMade', line: 5 },
-    { player: 'Giannis Antetokounmpo', stat: 'rebounds', line: 11.5 },
-    { player: 'Nikola Jokic', stat: 'assists', line: 8.5 },
-    { player: 'Nickeil Alexander-Walker', stat: 'assists', line: 3.5 },
-    { player: testPlayer, stat: testStat, line: testLine },
+    { player: 'Luka Doncic', stat: 'points', line: 28.5, sport: 'NBA' },
+    { player: 'LeBron James', stat: 'points', line: 25.5, sport: 'NBA' },
+    { player: 'Stephen Curry', stat: 'threePointersMade', line: 5, sport: 'NBA' },
+    { player: 'Giannis Antetokounmpo', stat: 'rebounds', line: 11.5, sport: 'NBA' },
+    { player: 'Nikola Jokic', stat: 'assists', line: 8.5, sport: 'NBA' },
+    { player: 'Nickeil Alexander-Walker', stat: 'assists', line: 3.5, sport: 'NBA' },
+    { player: testPlayer, stat: testStat, line: testLine, sport: testSport },
   ]
   
   const propTests: Record<string, unknown> = {}
   for (const test of testCases) {
-    const key = `${test.player}_${test.stat}_${test.line}`
+    const key = `${test.player}_${test.stat}_${test.line}_${test.sport}`
     try {
-      const result = await getPlayerPropProbability(test.player, 'NBA', test.stat, test.line)
+      const result = await getPlayerPropProbability(test.player, test.sport, test.stat, test.line)
       propTests[key] = result ? {
         probability: result.probability,
         average: result.average,
@@ -36,7 +37,8 @@ export async function GET(request: Request) {
         stdDev: result.stdDev,
         gamesPlayed: result.gamesPlayed,
         confidence: result.confidence,
-        reliabilityScore: result.reliabilityScore
+        reliabilityScore: result.reliabilityScore,
+        sport: test.sport
       } : null
     } catch (err) {
       propTests[key] = { error: String(err) }

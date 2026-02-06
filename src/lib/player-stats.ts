@@ -408,31 +408,33 @@ async function searchESPNPlayer(
     
     if (response.ok) {
       const data = await response.json()
-      const players = data.results?.filter((r: { type: string }) => r.type === 'player') || []
+      // ESPN API returns items at top level, not results
+      const items = data.items || []
       
-      for (const result of players) {
-        const items = result.contents || []
-        for (const item of items) {
-          const league = item.league?.slug?.toLowerCase() || ''
-          if (league === sportConfig.league || 
-              (sport === 'NBA' && league === 'nba') ||
-              (sport === 'NFL' && league === 'nfl') ||
-              (sport === 'NHL' && league === 'nhl') ||
-              (sport === 'MLB' && league === 'mlb') ||
-              (sport === 'NCAAB' && (league === 'mens-college-basketball' || league === 'ncaam')) ||
-              (sport === 'NCAAF' && (league === 'college-football' || league === 'ncaaf'))) {
-            
-            console.log(`[OnDemand] Found player via general search: ${item.displayName} (ID: ${item.id}) in ${league}`)
-            
-            return {
-              id: item.id,
-              displayName: item.displayName,
-              position: item.position,
-              team: item.team ? {
-                id: item.team.id,
-                displayName: item.team.displayName
-              } : undefined
-            }
+      for (const item of items) {
+        // Check if this player is in the right sport/league
+        const league = (item.league || '').toLowerCase()
+        if (league === sportConfig.league || 
+            (sport === 'NBA' && league === 'nba') ||
+            (sport === 'NFL' && league === 'nfl') ||
+            (sport === 'NHL' && league === 'nhl') ||
+            (sport === 'MLB' && league === 'mlb') ||
+            (sport === 'NCAAB' && (league === 'mens-college-basketball' || league === 'ncaam')) ||
+            (sport === 'NCAAF' && (league === 'college-football' || league === 'ncaaf'))) {
+          
+          console.log(`[OnDemand] Found player via general search: ${item.displayName} (ID: ${item.id}) in ${league}`)
+          
+          // Get team info from teamRelationships if available
+          const teamRel = item.teamRelationships?.[0]
+          
+          return {
+            id: item.id,
+            displayName: item.displayName,
+            position: item.position,
+            team: teamRel ? {
+              id: teamRel.id,
+              displayName: teamRel.displayName
+            } : undefined
           }
         }
       }
@@ -548,6 +550,10 @@ async function fetchESPNPlayerGameLogs(
     
     const gameLogs: ESPNGameLogEntry[] = []
     
+    // ESPN API has labels/names at top level, events inside seasonTypes.categories
+    const topLevelNames = data.names || [] // e.g., ['completions', 'passingYards', ...]
+    const topLevelLabels = data.labels || [] // e.g., ['CMP', 'YDS', ...]
+    
     // Parse the game log data - structure varies by sport
     const seasonTypes = data.seasonTypes || []
     
@@ -556,45 +562,49 @@ async function fetchESPNPlayerGameLogs(
       
       for (const category of categories) {
         const events = category.events || []
-        const labels = category.labels || []
         
         for (const event of events) {
           const stats: Record<string, number> = {}
           const eventStats = event.stats || []
           
-          // Map stats to labels
-          for (let i = 0; i < Math.min(labels.length, eventStats.length); i++) {
-            const label = labels[i]?.toLowerCase() || ''
+          // Map stats using top-level names (more reliable than labels)
+          for (let i = 0; i < Math.min(topLevelNames.length, eventStats.length); i++) {
+            const name = (topLevelNames[i] || '').toLowerCase()
+            const label = (topLevelLabels[i] || '').toLowerCase()
             const value = parseFloat(eventStats[i]) || 0
             
-            // Map ESPN labels to our stat names
+            // Map ESPN stat names to our stat names
             if (sport === 'NBA' || sport === 'NCAAB') {
-              if (label === 'pts') stats.points = value
-              else if (label === 'reb') stats.rebounds = value
-              else if (label === 'ast') stats.assists = value
-              else if (label === '3pm') stats.threePointersMade = value
-              else if (label === 'min') stats.minutes = value
+              if (name === 'points' || label === 'pts') stats.points = value
+              else if (name === 'rebounds' || label === 'reb') stats.rebounds = value
+              else if (name === 'assists' || label === 'ast') stats.assists = value
+              else if (name === 'threepointersmade' || label === '3pm') stats.threePointersMade = value
+              else if (name === 'minutes' || label === 'min') stats.minutes = value
+              else if (name === 'steals' || label === 'stl') stats.steals = value
+              else if (name === 'blocks' || label === 'blk') stats.blocks = value
             } else if (sport === 'NFL' || sport === 'NCAAF') {
-              if (label === 'yds' || label === 'pass yds') stats.passingYards = value
-              else if (label === 'rush yds') stats.rushingYards = value
-              else if (label === 'rec yds') stats.receivingYards = value
-              else if (label === 'td' || label === 'pass td') stats.passingTouchdowns = value
-              else if (label === 'rush td') stats.rushingTouchdowns = value
-              else if (label === 'rec td') stats.receivingTouchdowns = value
-              else if (label === 'rec') stats.receptions = value
+              if (name === 'passingyards') stats.passingYards = value
+              else if (name === 'rushingyards') stats.rushingYards = value
+              else if (name === 'receivingyards') stats.receivingYards = value
+              else if (name === 'passingtouchdowns') stats.passingTouchdowns = value
+              else if (name === 'rushingtouchdowns') stats.rushingTouchdowns = value
+              else if (name === 'receivingtouchdowns') stats.receivingTouchdowns = value
+              else if (name === 'receptions') stats.receptions = value
+              else if (name === 'completions') stats.completions = value
+              else if (name === 'interceptions') stats.interceptions = value
             } else if (sport === 'NHL') {
-              if (label === 'g') stats.goals = value
-              else if (label === 'a') stats.hockeyAssists = value
-              else if (label === 's' || label === 'sog') stats.shots = value
-              else if (label === 'sv') stats.saves = value
-              else if (label === 'toi') stats.minutes = value
+              if (name === 'goals' || label === 'g') stats.goals = value
+              else if (name === 'assists' || label === 'a') stats.hockeyAssists = value
+              else if (name === 'shots' || label === 's' || label === 'sog') stats.shots = value
+              else if (name === 'saves' || label === 'sv') stats.saves = value
+              else if (name === 'points' || label === 'pts') stats.points = value
             } else if (sport === 'MLB') {
-              if (label === 'h') stats.hits = value
-              else if (label === 'hr') stats.homeRuns = value
-              else if (label === 'rbi') stats.rbis = value
-              else if (label === 'tb') stats.totalBases = value
-              else if (label === 'k' || label === 'so') stats.strikeouts = value
-              else if (label === 'r') stats.runsScored = value
+              if (name === 'hits' || label === 'h') stats.hits = value
+              else if (name === 'homeruns' || label === 'hr') stats.homeRuns = value
+              else if (name === 'rbi' || label === 'rbi') stats.rbis = value
+              else if (name === 'totalbases' || label === 'tb') stats.totalBases = value
+              else if (name === 'strikeouts' || label === 'k' || label === 'so') stats.strikeouts = value
+              else if (name === 'runs' || label === 'r') stats.runsScored = value
             }
           }
           
@@ -1329,10 +1339,81 @@ export async function getPlayerPropProbability(
     playerTeam?: string
   }
 ): Promise<EnhancedPropProbability | null> {
+  // Normalize stat type: convert snake_case to camelCase
+  const normalizeStatType = (stat: string): string => {
+    // Common mappings
+    const mappings: Record<string, string> = {
+      'passing_yards': 'passingYards',
+      'rushing_yards': 'rushingYards',
+      'receiving_yards': 'receivingYards',
+      'passing_touchdowns': 'passingTouchdowns',
+      'rushing_touchdowns': 'rushingTouchdowns',
+      'receiving_touchdowns': 'receivingTouchdowns',
+      'three_pointers_made': 'threePointersMade',
+      'hockey_assists': 'hockeyAssists',
+      'home_runs': 'homeRuns',
+      'runs_scored': 'runsScored',
+      'total_bases': 'totalBases',
+    }
+    
+    if (mappings[stat.toLowerCase()]) {
+      return mappings[stat.toLowerCase()]
+    }
+    
+    // Convert snake_case to camelCase
+    return stat.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())
+  }
+  
+  const normalizedStatType = normalizeStatType(statType)
+  
   const statsData = await getPlayerStatsData()
+  
+  // Even if Redis is not available, we can still try on-demand fetching
   if (!statsData) {
-    console.log(`[PlayerStats] No stats data available in Redis`)
-    return null
+    console.log(`[PlayerStats] No stats data available in Redis, trying on-demand fetch for ${playerName}`)
+    
+    // Try on-demand fetching from ESPN
+    const onDemandPlayer = await fetchPlayerStatsOnDemand(playerName, sport)
+    if (!onDemandPlayer) {
+      console.log(`[PlayerStats] On-demand fetch failed for ${playerName} - no data available`)
+      return null
+    }
+    
+    // Use the on-demand player data directly
+    const avg = (onDemandPlayer.averages as Record<string, number>)[normalizedStatType]
+    const stdDev = (onDemandPlayer.stdDevs as Record<string, number>)[normalizedStatType]
+    
+    if (avg === undefined) {
+      console.log(`[PlayerStats] Stat type ${normalizedStatType} (from ${statType}) not available for ${playerName}`)
+      return null
+    }
+    
+    // Calculate basic probability without opponent/context adjustments
+    const effectiveStdDev = stdDev || avg * 0.2
+    const probability = calculateOverProbability(avg, effectiveStdDev, line)
+    const hitRateData = (onDemandPlayer.hitRates as Record<string, HitRateData>)?.[normalizedStatType]
+    const historicalHitRate = hitRateData?.hitRate || probability
+    
+    // Determine confidence based on games played
+    let confidence: 'high' | 'medium' | 'low' = 'low'
+    if (onDemandPlayer.gamesPlayed >= 10) confidence = 'high'
+    else if (onDemandPlayer.gamesPlayed >= 5) confidence = 'medium'
+    
+    console.log(`[PlayerStats] Found player via on-demand fetch: ${onDemandPlayer.playerName} (${onDemandPlayer.gamesPlayed} games)`)
+    
+    return {
+      probability,
+      statisticalProb: probability,
+      historicalHitRate,
+      average: avg,
+      stdDev: effectiveStdDev,
+      gamesPlayed: onDemandPlayer.gamesPlayed,
+      reliabilityScore: Math.min(onDemandPlayer.gamesPlayed / 10, 1) * 100,
+      homeAwayAdjustment: 1.0,
+      opponentAdjustment: 1.0,
+      adjustedAverage: avg,
+      confidence
+    }
   }
   
   console.log(`[PlayerStats] Looking for player: "${playerName}" in sport: "${sport}"`)
