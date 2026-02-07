@@ -660,9 +660,11 @@ export async function analyzeAllPlayerProps(playerName: string, sport?: string):
   }
 
   analyses.sort((a, b) => {
-    const edgeA = Math.abs(a.recommendation.edge)
-    const edgeB = Math.abs(b.recommendation.edge)
-    return edgeB - edgeA
+    const edgeA = a.recommendation.edge
+    const edgeB = b.recommendation.edge
+    const warnA = a.recommendation.warnings.some(w => w.includes('average') && w.includes('above the line')) ? -0.05 : 0
+    const warnB = b.recommendation.warnings.some(w => w.includes('average') && w.includes('above the line')) ? -0.05 : 0
+    return (edgeB + warnB) - (edgeA + warnA)
   })
 
   return analyses
@@ -754,7 +756,14 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
         { dir: 'under' as const, prob: underNoVig, bestPrice: bestUnderPrice, implied: underImplied },
       ]
 
+      const playerAvg = modelResult ? modelResult.average : 0
+
       for (const side of sides) {
+        if (playerAvg > 0) {
+          if (side.dir === 'under' && playerAvg > prop.line * 1.05) continue
+          if (side.dir === 'over' && playerAvg < prop.line * 0.90) continue
+        }
+
         let finalProb = side.prob
         let modelProb = 0
 
@@ -767,14 +776,15 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
         let edge = finalProb - side.implied
         const confScale = modelResult ? (CONFIDENCE_EDGE_SCALE[modelResult.confidence] || 0.4) : 0.4
         edge = Math.max(-MAX_REALISTIC_EDGE, Math.min(MAX_REALISTIC_EDGE, edge * confScale))
-        if (edge < 0.01) continue
-        if (finalProb < 0.5) continue
+        if (edge < 0.005) continue
+        if (finalProb < 0.48) continue
 
         let score = finalProb * 60 + edge * 40
         if (modelResult) {
           if (modelResult.reliabilityScore && modelResult.reliabilityScore >= 70) score *= 1.15
           if (modelResult.confidence === 'high') score *= 1.1
         }
+        if (playerAvg > 0 && side.dir === 'over' && playerAvg > prop.line) score *= 1.2
 
         results.push({
           prop: { ...prop, overOdds: side.dir === 'over' ? side.bestPrice : prop.overOdds, underOdds: side.dir === 'under' ? side.bestPrice : prop.underOdds },
@@ -788,11 +798,13 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   }
 
   results.sort((a, b) => b.score - a.score)
-  const topResults = results.slice(0, count)
+  const topResults = results.slice(0, count * 2)
 
   const analyses: PropAnalysisResult[] = []
   for (const r of topResults) {
-    const isOver = r.prop.overOdds > r.prop.underOdds
+    const overImplied = americanToImpliedProbability(r.prop.overOdds)
+    const underImplied = americanToImpliedProbability(r.prop.underOdds)
+    const isOver = overImplied < underImplied
     const analysis = await analyzePlayerProp({
       playerName: r.prop.playerName,
       statType: MARKET_TO_STAT_TYPE[r.prop.market] || null,
@@ -801,7 +813,12 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
       sport: request.sport || null,
       platform: null,
     })
-    analyses.push(analysis)
+    if (analysis.recommendation.edge > 0 && !analysis.recommendation.warnings.some(w => w.includes('average') && (w.includes('above the line') || w.includes('below the line')))) {
+      analyses.push(analysis)
+    } else if (analyses.length < count) {
+      analyses.push(analysis)
+    }
+    if (analyses.length >= count) break
   }
 
   return analyses
