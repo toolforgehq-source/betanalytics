@@ -686,6 +686,7 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     score: number
     modelProb: number
     edge: number
+    direction: 'over' | 'under'
   }> = []
 
   for (const game of propsData) {
@@ -792,36 +793,37 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
           score,
           modelProb: modelProb > 0 ? modelProb : finalProb,
           edge,
+          direction: side.dir,
         })
       }
     }
   }
 
   results.sort((a, b) => b.score - a.score)
-  const topResults = results.slice(0, count * 2)
+  const topResults = results.slice(0, count * 3)
 
   const analyses: PropAnalysisResult[] = []
+  const fallbackAnalyses: PropAnalysisResult[] = []
   for (const r of topResults) {
-    const overImplied = americanToImpliedProbability(r.prop.overOdds)
-    const underImplied = americanToImpliedProbability(r.prop.underOdds)
-    const isOver = overImplied < underImplied
     const analysis = await analyzePlayerProp({
       playerName: r.prop.playerName,
       statType: MARKET_TO_STAT_TYPE[r.prop.market] || null,
       line: r.prop.line,
-      direction: isOver ? 'over' : 'under',
+      direction: r.direction,
       sport: request.sport || null,
       platform: null,
     })
-    if (analysis.recommendation.edge > 0 && !analysis.recommendation.warnings.some(w => w.includes('average') && (w.includes('above the line') || w.includes('below the line')))) {
+    const hasDirectionalWarning = analysis.recommendation.warnings.some(w => w.includes('average') && (w.includes('above the line') || w.includes('below the line')))
+    if (analysis.recommendation.edge > 0 && !hasDirectionalWarning) {
       analyses.push(analysis)
-    } else if (analyses.length < count) {
-      analyses.push(analysis)
+    } else if (fallbackAnalyses.length < count) {
+      fallbackAnalyses.push(analysis)
     }
     if (analyses.length >= count) break
   }
 
-  return analyses
+  if (analyses.length > 0) return analyses
+  return fallbackAnalyses.slice(0, count)
 }
 
 // ============================================
