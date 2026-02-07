@@ -1838,8 +1838,10 @@ export async function POST(request: Request) {
     }
     
     // Check for parlay questions
+    // IMPORTANT: Skip team parlay handler if this is a player prop question
+    // "player prop parlay" should go to the prop pipeline, not the team parlay pipeline
     const parlayDetection = detectParlayQuestion(userMessageContent)
-    if (parlayDetection) {
+    if (parlayDetection && !detectPlayerPropQuestion(userMessageContent)) {
       const { legCount } = parlayDetection
       console.log(`[chat] Detected parlay question - ${legCount} legs requested`)
       try {
@@ -2021,10 +2023,15 @@ export async function POST(request: Request) {
             console.log(`[chat] No cached props found for ${propQuery.playerName} - returning available analysis`)
           }
         } else {
-          const bestProps = await analyzeBestProps({ sport: propQuery.sport || undefined, count: 3 })
+          const propParlayDetection = detectParlayQuestion(userMessageContent)
+          const propCount = propParlayDetection ? propParlayDetection.legCount : 3
+          if (propParlayDetection) {
+            console.log(`[chat] Detected player prop PARLAY request - ${propCount} legs`)
+          }
+          const bestProps = await analyzeBestProps({ sport: propQuery.sport || undefined, count: propCount })
           if (bestProps.length > 0) {
             propAnalysisData = formatMultiPropAnalysisForContext(bestProps)
-            console.log(`[chat] Best props analysis complete: ${bestProps.length} props ranked`)
+            console.log(`[chat] Best props analysis complete: ${bestProps.length} props ranked${propParlayDetection ? ' (parlay mode)' : ''}`)
           } else {
             propAnalysisData = 'PLAYER PROP ANALYSIS\n\nNo player props data available at this time. Props are typically posted by sportsbooks in the morning/early afternoon for evening games. Please check back later.'
             console.log(`[chat] No props data available for analysis`)
