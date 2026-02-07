@@ -1571,6 +1571,38 @@ NEVER:
 
 The Elo analysis is your source of truth. Present it like a professional analyst explaining their methodology and findings.`
 
+const CONVERSATIONAL_PROP_PROMPT = `You are a professional sports betting analyst specializing in player props. Your job is to take the player prop analysis data provided and present it in a measured, analytical tone.
+
+CRITICAL RULES:
+1. You MUST use ONLY the player prop data provided below - do not invent your own analysis or probabilities
+2. All recommendations MUST come from the player stats model analysis - never make up your own picks
+3. Reference the specific model probabilities, edges, averages, and recent form from the data
+4. Be conversational but professional - don't just dump data
+5. When comparing props, use the model data to explain why one is better
+6. Remember context from the conversation
+7. NEVER say "Based on Elo analysis" or "Elo model" or "Elo ratings" - this is a PLAYER STATS MODEL, completely separate from the Elo system
+8. Say "Based on our player stats model" or "Based on our analysis" or "Our model shows" instead
+9. DIRECTIONAL CONSISTENCY: If the data shows a warning about a player's average being above or below the line, acknowledge this prominently and suggest caution
+10. Only recommend "over" when the player's average supports going over. Only recommend "under" when the average is below the line.
+
+TONE GUIDELINES (IMPORTANT):
+- Sound like a professional analyst with data, NOT an excited gambler hyping picks
+- Use measured language: "This represents strong value" instead of "I love this play"
+- Be analytical: "The data shows a significant edge" instead of "absolutely massive edge"
+- Stay objective: "Worth considering based on the metrics" instead of "That's the kind of spot you circle"
+- Confident but not salesy: "Our model favors this side" instead of "This is a lock"
+
+NEVER:
+- Say "Elo" or "Elo-based" or "Elo model" or "Elo analysis" or "Elo rating" - this is player prop analysis
+- Invent probabilities or edges not in the data
+- Recommend bets not supported by the analysis
+- Say "I don't have data" if data is provided
+- Recommend "under" when the player's average is clearly above the line
+- Recommend "over" when the player's average is clearly below the line
+- Use tout-service language that hypes picks
+
+The player prop analysis is your source of truth. Present it like a professional analyst explaining statistical findings.`
+
 /**
  * Generate a conversational response from Elo data using the LLM
  * This keeps Elo as the source of truth while making responses natural
@@ -1581,7 +1613,6 @@ async function generateConversationalResponse(
   userQuestion: string,
   conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>
 ): Promise<string> {
-  // Build the context with Elo data
   const systemPrompt = `${CONVERSATIONAL_BETTING_PROMPT}
 
 ═══════════════════════════════════════════════════════════
@@ -1594,8 +1625,41 @@ ${eloAnalysis}
 
 Now respond to the user's question conversationally, using ONLY the Elo data above for any betting recommendations.`
 
-  // Include recent conversation history for context
-  const recentHistory = conversationHistory.slice(-6) // Last 3 exchanges
+  const recentHistory = conversationHistory.slice(-6)
+  const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
+    ...recentHistory,
+    { role: 'user' as const, content: userQuestion }
+  ]
+
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1500,
+    system: systemPrompt,
+    messages: messages,
+  })
+
+  return response.content[0].type === 'text' ? response.content[0].text : ''
+}
+
+async function generatePropConversationalResponse(
+  anthropic: Anthropic,
+  propAnalysis: string,
+  userQuestion: string,
+  conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }>
+): Promise<string> {
+  const systemPrompt = `${CONVERSATIONAL_PROP_PROMPT}
+
+═══════════════════════════════════════════════════════════
+PLAYER PROP ANALYSIS DATA (USE THIS AS YOUR SOURCE OF TRUTH):
+═══════════════════════════════════════════════════════════
+
+${propAnalysis}
+
+═══════════════════════════════════════════════════════════
+
+Now respond to the user's question conversationally, using ONLY the player prop analysis data above. NEVER reference Elo ratings or Elo analysis - this is player prop analysis from our player stats model.`
+
+  const recentHistory = conversationHistory.slice(-6)
   const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [
     ...recentHistory,
     { role: 'user' as const, content: userQuestion }
@@ -1967,7 +2031,7 @@ export async function POST(request: Request) {
           }
         }
         
-        const conversationalResponse = await generateConversationalResponse(
+        const conversationalResponse = await generatePropConversationalResponse(
           anthropic,
           propAnalysisData,
           userMessageContent,
@@ -2007,7 +2071,7 @@ export async function POST(request: Request) {
         console.error('[chat] Error processing player prop question:', err)
         const errorPropData = 'PLAYER PROP ANALYSIS\n\nI encountered an error analyzing this player prop. This is a prop-specific question (NOT a team Elo bet). Please tell the user you had trouble loading the prop data and suggest they try again in a moment or ask about a specific player name and stat (e.g. "Anthony Edwards over 25.5 points").'
         try {
-          const errorResponse = await generateConversationalResponse(
+          const errorResponse = await generatePropConversationalResponse(
             anthropic,
             errorPropData,
             userMessageContent,
