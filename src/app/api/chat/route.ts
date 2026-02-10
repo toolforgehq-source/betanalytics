@@ -4,10 +4,11 @@ import Anthropic from "@anthropic-ai/sdk"
 import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
-import { getCachedESPNOdds, getCachedESPNData, type ESPNOdds, type ESPNInjury } from "@/lib/espn"
+import { getCachedESPNOdds, getCachedESPNData, cacheESPNOdds, type ESPNOdds, type ESPNOddsData, type ESPNInjury } from "@/lib/espn"
 import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext } from "@/lib/bet-ranking"
 import type { RankedBet, BestBetResult } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
+import { fetchAllOdds } from "@/lib/odds"
 import { storePick, getAllPicks } from "@/lib/pick-tracking"
 import { detectPlayerPropQuestion, parsePlayerPropQuery, analyzePlayerProp, analyzeAllPlayerProps, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
 
@@ -784,8 +785,8 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
     }
   }
   
-  // Get ESPN odds data to find matching games
-  const espnOddsData = await getCachedESPNOdds()
+  // Get ESPN odds data to find matching games (with Odds API fallback)
+  const espnOddsData = await getESPNOddsWithFallback()
   if (!espnOddsData?.games || espnOddsData.games.length === 0) {
     return null
   }
@@ -1305,6 +1306,107 @@ async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] 
   console.log(`[chat] Converted ${enrichedGames.length} games, ${gamesWithInjuries} with injury data`)
   
   return enrichedGames
+}
+
+function convertOddsAPIGameToESPNOdds(game: Game): ESPNOdds {
+  let spread: number | null = null
+  let spreadOdds: { home: number; away: number } | null = null
+  if (game.spreads.length > 0) {
+    const spreadMarket = game.spreads[0]
+    const homeOutcome = spreadMarket.outcomes.find(o => o.name === game.homeTeam)
+    const awayOutcome = spreadMarket.outcomes.find(o => o.name === game.awayTeam)
+    if (homeOutcome?.point !== undefined) {
+      spread = homeOutcome.point
+      spreadOdds = {
+        home: homeOutcome.price,
+        away: awayOutcome?.price ?? -110
+      }
+    }
+  }
+
+  let overUnder: number | null = null
+  let overUnderOdds: { over: number; under: number } | null = null
+  if (game.totals.length > 0) {
+    const totalMarket = game.totals[0]
+    const overOutcome = totalMarket.outcomes.find(o => o.name === 'Over')
+    const underOutcome = totalMarket.outcomes.find(o => o.name === 'Under')
+    if (overOutcome?.point !== undefined) {
+      overUnder = overOutcome.point
+      overUnderOdds = {
+        over: overOutcome.price,
+        under: underOutcome?.price ?? -110
+      }
+    }
+  }
+
+  let moneyline: { home: number; away: number; draw?: number } | null = null
+  if (game.moneylines.length > 0) {
+    const mlMarket = game.moneylines[0]
+    const homeOutcome = mlMarket.outcomes.find(o => o.name === game.homeTeam)
+    const awayOutcome = mlMarket.outcomes.find(o => o.name === game.awayTeam)
+    const drawOutcome = mlMarket.outcomes.find(o => o.name === 'Draw')
+    if (homeOutcome && awayOutcome) {
+      moneyline = {
+        home: homeOutcome.price,
+        away: awayOutcome.price,
+        ...(drawOutcome ? { draw: drawOutcome.price } : {})
+      }
+    }
+  }
+
+  const sportParts = game.sport.split('_')
+  const espnSport = sportParts[0]
+
+  return {
+    gameId: game.id,
+    sport: espnSport,
+    league: game.sportName,
+    homeTeam: game.homeTeam,
+    awayTeam: game.awayTeam,
+    commenceTime: game.commenceTime,
+    provider: game.spreads[0]?.bookmaker || game.moneylines[0]?.bookmaker || 'Odds API',
+    spread,
+    spreadOdds,
+    overUnder,
+    overUnderOdds,
+    moneyline,
+    homeFavorite: spread !== null ? spread < 0 : false,
+    gameStatus: 'pre' as const,
+    statusDetail: ''
+  }
+}
+
+async function getESPNOddsWithFallback(): Promise<ESPNOddsData> {
+  const espnOdds = await getCachedESPNOdds()
+
+  if (espnOdds.games.length > 0) {
+    return espnOdds
+  }
+
+  console.log('[getESPNOddsWithFallback] ESPN returned no games, falling back to Odds API...')
+  try {
+    const oddsData = await fetchAllOdds(true)
+
+    if (oddsData.games.length > 0) {
+      const convertedGames = oddsData.games.map(convertOddsAPIGameToESPNOdds)
+      const fallbackData: ESPNOddsData = {
+        games: convertedGames,
+        lastUpdated: oddsData.lastUpdated,
+        error: null
+      }
+
+      await cacheESPNOdds(fallbackData).catch(err =>
+        console.error('[getESPNOddsWithFallback] Cache write failed:', err)
+      )
+      console.log(`[getESPNOddsWithFallback] Odds API fallback: ${convertedGames.length} games fetched and cached`)
+
+      return fallbackData
+    }
+  } catch (err) {
+    console.error('[getESPNOddsWithFallback] Odds API fallback failed:', err)
+  }
+
+  return espnOdds
 }
 
 /**
@@ -1838,13 +1940,15 @@ export async function POST(request: Request) {
     }
     
     // Check for parlay questions
+    // IMPORTANT: Skip team parlay handler if this is a player prop question
+    // "player prop parlay" should go to the prop pipeline, not the team parlay pipeline
     const parlayDetection = detectParlayQuestion(userMessageContent)
-    if (parlayDetection) {
+    if (parlayDetection && !detectPlayerPropQuestion(userMessageContent)) {
       const { legCount } = parlayDetection
       console.log(`[chat] Detected parlay question - ${legCount} legs requested`)
       try {
         // First try to compute enhanced parlay on-demand with requested leg count
-        const espnOdds = await getCachedESPNOdds()
+        const espnOdds = await getESPNOddsWithFallback()
         
         if (espnOdds.games.length > 0) {
           // Convert ESPN odds to enriched games for parlay computation
@@ -2021,10 +2125,15 @@ export async function POST(request: Request) {
             console.log(`[chat] No cached props found for ${propQuery.playerName} - returning available analysis`)
           }
         } else {
-          const bestProps = await analyzeBestProps({ sport: propQuery.sport || undefined, count: 3 })
+          const propParlayDetection = detectParlayQuestion(userMessageContent)
+          const propCount = propParlayDetection ? propParlayDetection.legCount : 3
+          if (propParlayDetection) {
+            console.log(`[chat] Detected player prop PARLAY request - ${propCount} legs`)
+          }
+          const bestProps = await analyzeBestProps({ sport: propQuery.sport || undefined, count: propCount })
           if (bestProps.length > 0) {
             propAnalysisData = formatMultiPropAnalysisForContext(bestProps)
-            console.log(`[chat] Best props analysis complete: ${bestProps.length} props ranked`)
+            console.log(`[chat] Best props analysis complete: ${bestProps.length} props ranked${propParlayDetection ? ' (parlay mode)' : ''}`)
           } else {
             propAnalysisData = 'PLAYER PROP ANALYSIS\n\nNo player props data available at this time. Props are typically posted by sportsbooks in the morning/early afternoon for evening games. Please check back later.'
             console.log(`[chat] No props data available for analysis`)
@@ -2117,7 +2226,7 @@ export async function POST(request: Request) {
           if (!sportBets) {
             console.log(`[chat] Sport bets cache empty - computing on-demand for filter: ${bestBetFilter.filterDescription}`)
             try {
-              const espnOdds = await getCachedESPNOdds()
+              const espnOdds = await getESPNOddsWithFallback()
               console.log(`[chat] ESPN odds fetched: ${espnOdds.games.length} total games`)
               
               // Log games by sport for debugging
@@ -2272,7 +2381,7 @@ If you're seeing this message persistently, please contact us at contact@betanal
           let bestBetResult: BestBetResult | null = null
           
           try {
-            const espnOdds = await getCachedESPNOdds()
+            const espnOdds = await getESPNOddsWithFallback()
             if (espnOdds.games.length > 0) {
               // CRITICAL: Use enriched games with injury data for proper injury detection
               console.log(`[chat] Converting ESPN odds to enriched games with injury data...`)
@@ -2394,7 +2503,7 @@ If you're seeing this message persistently, please contact us at contact@betanal
         // FALLBACK: If cache is empty, compute best bets on-demand from ESPN data
         if (!bestBetResult) {
           console.log(`[chat] Cache empty for betting question fallback - computing on-demand...`)
-          const espnOdds = await getCachedESPNOdds()
+          const espnOdds = await getESPNOddsWithFallback()
           if (espnOdds.games.length > 0) {
             // CRITICAL: Use enriched games with injury data for proper injury detection
             console.log(`[chat] Converting ESPN odds to enriched games with injury data...`)

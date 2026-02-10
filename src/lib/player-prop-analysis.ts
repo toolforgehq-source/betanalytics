@@ -19,7 +19,7 @@ import { calculateMatchupAdjustment, getMatchupHitRate, formatMatchupAdjustmentF
 import type { MatchupAdjustment } from './player-matchup'
 import { getPaceAdjustment, getUsageAdjustment, getCorrelatedProps, storePropCLVRecord, analyzePropParlay, getPropLineMovement, formatPropLineMovement } from './prop-enhancements'
 import type { PaceAdjustment, UsageAdjustment, PropCorrelation, PropLineMovement } from './prop-enhancements'
-import { getCachedPlayerProps } from './odds'
+import { getCachedPlayerProps, fetchSportPlayerProps, setCachedPlayerProps } from './odds'
 import type { GamePlayerProps, PlayerProp } from './odds'
 import { americanToImpliedProbability } from './bet-ranking'
 
@@ -96,6 +96,59 @@ export interface PropAnalysisResult {
 export interface BestPropsRequest {
   sport?: string
   count?: number
+}
+
+const SPORT_TO_API_KEYS: Record<string, string[]> = {
+  'NBA': ['basketball_nba'],
+  'NFL': ['americanfootball_nfl'],
+  'NHL': ['icehockey_nhl'],
+  'MLB': ['baseball_mlb'],
+  'NCAAB': ['basketball_ncaab'],
+  'NCAAF': ['americanfootball_ncaaf'],
+}
+
+const ALL_PROP_SPORT_KEYS = [
+  'basketball_nba',
+  'americanfootball_nfl',
+  'icehockey_nhl',
+  'basketball_ncaab',
+  'americanfootball_ncaaf',
+]
+
+async function fetchPropsOnDemand(sport?: string | null): Promise<GamePlayerProps[]> {
+  const apiKey = process.env.ODDS_API_KEY
+  if (!apiKey) {
+    console.log('[fetchPropsOnDemand] No ODDS_API_KEY, skipping on-demand fetch')
+    return []
+  }
+
+  const sportKeys = sport && SPORT_TO_API_KEYS[sport]
+    ? SPORT_TO_API_KEYS[sport]
+    : ALL_PROP_SPORT_KEYS
+
+  console.log(`[fetchPropsOnDemand] Fetching props on-demand for: ${sportKeys.join(', ')}`)
+
+  const results = await Promise.all(
+    sportKeys.map(key =>
+      fetchSportPlayerProps(key).catch((e) => {
+        console.error(`[fetchPropsOnDemand] ${key} error:`, e.message)
+        return [] as GamePlayerProps[]
+      })
+    )
+  )
+
+  const allProps = results.flat()
+
+  if (allProps.length > 0) {
+    await setCachedPlayerProps(allProps).catch(err =>
+      console.error('[fetchPropsOnDemand] Cache write failed:', err)
+    )
+    console.log(`[fetchPropsOnDemand] Fetched and cached ${allProps.length} games`)
+  } else {
+    console.log('[fetchPropsOnDemand] No props returned from API')
+  }
+
+  return allProps
 }
 
 // ============================================
@@ -339,9 +392,19 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
     warnings.push('Props market data temporarily unavailable')
   }
 
+  if (!propsData || propsData.length === 0) {
+    console.log('[player-prop-analysis] Cache empty, attempting on-demand fetch')
+    try {
+      propsData = await fetchPropsOnDemand(detectedSport)
+    } catch (err) {
+      console.error('[player-prop-analysis] On-demand fetch failed:', err)
+    }
+  }
+
   let marketData: PropAnalysisResult['marketData'] = null
   let matchingGame: GamePlayerProps | null = null
   let allPlayerProps: PlayerProp[] = []
+  let playerFoundInCache = false
 
   if (propsData && query.playerName) {
     const normalizedName = query.playerName.toLowerCase()
@@ -353,6 +416,7 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
       )
 
       if (playerProps.length > 0) {
+        playerFoundInCache = true
         matchingGame = game
         allPlayerProps = playerProps
         const targetMarket = query.statType ? findMarketForStat(query.statType) : null
@@ -401,6 +465,73 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
         }
         break
       }
+    }
+  }
+
+  if (!playerFoundInCache && query.playerName && propsData && propsData.length > 0) {
+    console.log(`[player-prop-analysis] Player "${query.playerName}" not in cache, fetching fresh props`)
+    try {
+      const freshProps = await fetchPropsOnDemand(detectedSport)
+      if (freshProps.length > 0) {
+        const normalizedName = query.playerName.toLowerCase()
+        for (const game of freshProps) {
+          const playerProps = game.props.filter(p =>
+            p.playerName.toLowerCase().includes(normalizedName) ||
+            normalizedName.includes(p.playerName.toLowerCase())
+          )
+          if (playerProps.length > 0) {
+            matchingGame = game
+            allPlayerProps = playerProps
+            const targetMarket = query.statType ? findMarketForStat(query.statType) : null
+            const relevantProps = targetMarket
+              ? playerProps.filter(p => p.market === targetMarket)
+              : playerProps
+
+            if (relevantProps.length > 0) {
+              const targetLine = query.line || relevantProps[0].line
+              const propsForLine = relevantProps.filter(p => p.line === targetLine)
+              const propsToUse = propsForLine.length > 0 ? propsForLine : [relevantProps[0]]
+
+              const overPrices = propsToUse.map(p => p.overOdds)
+              const underPrices = propsToUse.map(p => p.underOdds)
+
+              const overImpliedProbs = overPrices.map(p => americanToImpliedProbability(p))
+              const underImpliedProbs = underPrices.map(p => americanToImpliedProbability(p))
+              const avgOverImplied = overImpliedProbs.reduce((a, b) => a + b, 0) / overImpliedProbs.length
+              const avgUnderImplied = underImpliedProbs.reduce((a, b) => a + b, 0) / underImpliedProbs.length
+              const totalImplied = avgOverImplied + avgUnderImplied
+
+              const bestOverIdx = overPrices.indexOf(Math.max(...overPrices))
+              const bestUnderIdx = underPrices.indexOf(Math.max(...underPrices))
+
+              marketData = {
+                line: propsToUse[0].line,
+                bestOverPrice: Math.max(...overPrices),
+                bestUnderPrice: Math.max(...underPrices),
+                bestOverBook: propsToUse[bestOverIdx]?.bookmaker || 'Unknown',
+                bestUnderBook: propsToUse[bestUnderIdx]?.bookmaker || 'Unknown',
+                consensusOverProb: Math.round((avgOverImplied / totalImplied) * 1000) / 10,
+                consensusUnderProb: Math.round((avgUnderImplied / totalImplied) * 1000) / 10,
+                booksCount: propsToUse.length,
+                allBookPrices: propsToUse.map(p => ({
+                  book: p.bookmaker,
+                  overPrice: p.overOdds,
+                  underPrice: p.underOdds,
+                })),
+              }
+
+              if (!query.line) query.line = propsToUse[0].line
+              if (!query.statType) {
+                const statMapping = MARKET_TO_STAT_TYPE[propsToUse[0].market]
+                if (statMapping) query.statType = statMapping
+              }
+            }
+            break
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[player-prop-analysis] On-demand player fetch failed:', err)
     }
   }
 
@@ -614,10 +745,18 @@ export async function analyzeAllPlayerProps(playerName: string, sport?: string):
     propsData = await getCachedPlayerProps()
   } catch (err) {
     console.error('[player-prop-analysis] Failed to fetch props for all-prop analysis:', err)
-    return []
   }
 
-  if (!propsData || propsData.length === 0) return []
+  if (!propsData || propsData.length === 0) {
+    console.log('[analyzeAllPlayerProps] Cache empty, attempting on-demand fetch')
+    try {
+      propsData = await fetchPropsOnDemand(sport || null)
+    } catch (err) {
+      console.error('[analyzeAllPlayerProps] On-demand fetch failed:', err)
+      return []
+    }
+    if (!propsData || propsData.length === 0) return []
+  }
 
   const normalizedName = playerName.toLowerCase()
   const uniqueMarkets = new Map<string, { prop: PlayerProp; game: GamePlayerProps }>()
@@ -636,7 +775,27 @@ export async function analyzeAllPlayerProps(playerName: string, sport?: string):
     }
   }
 
-  if (uniqueMarkets.size === 0) return []
+  if (uniqueMarkets.size === 0) {
+    console.log(`[analyzeAllPlayerProps] Player "${playerName}" not in cache, fetching fresh props`)
+    try {
+      const freshProps = await fetchPropsOnDemand(sport || null)
+      for (const game of freshProps) {
+        const freshPlayerProps = game.props.filter(p =>
+          p.playerName.toLowerCase().includes(normalizedName) ||
+          normalizedName.includes(p.playerName.toLowerCase())
+        )
+        for (const prop of freshPlayerProps) {
+          const key = `${prop.market}|${prop.line}`
+          if (!uniqueMarkets.has(key)) {
+            uniqueMarkets.set(key, { prop, game })
+          }
+        }
+      }
+    } catch (err) {
+      console.error('[analyzeAllPlayerProps] On-demand player fetch failed:', err)
+    }
+    if (uniqueMarkets.size === 0) return []
+  }
 
   const analyses: PropAnalysisResult[] = []
 
@@ -676,8 +835,18 @@ export async function analyzeAllPlayerProps(playerName: string, sport?: string):
 
 export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<PropAnalysisResult[]> {
   const count = request.count || 3
-  const propsData = await getCachedPlayerProps()
-  if (!propsData || propsData.length === 0) return []
+  let propsData = await getCachedPlayerProps()
+
+  if (!propsData || propsData.length === 0) {
+    console.log('[analyzeBestProps] Cache empty, attempting on-demand fetch')
+    try {
+      propsData = await fetchPropsOnDemand(request.sport || null)
+    } catch (err) {
+      console.error('[analyzeBestProps] On-demand fetch failed:', err)
+      return []
+    }
+    if (!propsData || propsData.length === 0) return []
+  }
 
   const statsData = await getPlayerStatsData()
   const results: Array<{
