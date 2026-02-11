@@ -12,6 +12,7 @@ export default function Footer() {
         <div className="mt-3 flex justify-center gap-4 flex-wrap">
           <Link href="/methodology" className="hover:text-slate-300 transition-colors">Methodology</Link>
           <Link href="/pricing" className="hover:text-slate-300 transition-colors">Pricing</Link>
+          <Link href="/blog" className="hover:text-slate-300 transition-colors">Blog</Link>
           <Link href="/terms" className="hover:text-slate-300 transition-colors">Terms of Service</Link>
           <Link href="/privacy" className="hover:text-slate-300 transition-colors">Privacy Policy</Link>
           <a href="mailto:contact@betanalytics.ai" className="hover:text-slate-300 transition-colors">contact@betanalytics.ai</a>
