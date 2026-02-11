@@ -7,11 +7,79 @@ import MobileNav from '@/components/MobileNav'
 export const metadata = {
   title: 'Sports Betting AI | Elo-Based Edge Detection - BetAnalytics.ai',
   description: 'AI-powered sports betting analytics using Elo ratings. Find edges where our model disagrees with the market. 692 teams tracked across NBA, NFL, NHL, MLB. 3-day free trial.',
+  alternates: {
+    canonical: 'https://betanalytics.ai',
+  },
+  openGraph: {
+    title: 'Sports Betting AI | Elo-Based Edge Detection - BetAnalytics.ai',
+    description: 'Find edges where our Elo model disagrees with the market. 692 teams, real-time injury adjustments. 3-day free trial.',
+    url: 'https://betanalytics.ai',
+    type: 'website' as const,
+  },
+}
+
+const faqSchema = {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: [
+    {
+      '@type': 'Question',
+      name: 'What is Elo rating in sports betting?',
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: 'Elo is a rating system originally created for chess. Each team starts at 1500. Win games and your rating goes up; lose and it goes down. We use Elo to calculate the probability of one team beating another, independent of what the market thinks.',
+      },
+    },
+    {
+      '@type': 'Question',
+      name: 'How accurate are AI sports picks?',
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: 'We show probabilities, not guarantees. When we say 86%, you should expect to win roughly 86% of similar bets over time. We log every recommendation so you can verify our accuracy.',
+      },
+    },
+    {
+      '@type': 'Question',
+      name: 'What makes this different from other betting tools?',
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: "We don't give opinions. We calculate independent probabilities using Elo ratings, then show you where our model disagrees with the market. Full transparency - you see every calculation, every adjustment, every edge.",
+      },
+    },
+    {
+      '@type': 'Question',
+      name: 'How do injury adjustments work?',
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: 'Real-time ESPN data feeds in automatically. Starting QB out? We subtract 80 Elo points. Star player questionable? We reduce impact to 15%. MLB ace pitching? We add 20 points. All automatic, all quantified.',
+      },
+    },
+    {
+      '@type': 'Question',
+      name: 'What sports do you cover?',
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: 'NBA, NFL, NHL, MLB, College Basketball (NCAAB), College Football (NCAAF), and major soccer leagues including Premier League, La Liga, Bundesliga, Serie A, Ligue 1, MLS, and Champions League.',
+      },
+    },
+    {
+      '@type': 'Question',
+      name: 'Do you guarantee I will win money?',
+      acceptedAnswer: {
+        '@type': 'Answer',
+        text: 'No. Sports betting always involves risk. We show you where our mathematical model finds edges, but even with an edge, individual bets can lose. We recommend only betting what you can afford to lose and focusing on long-term expected value rather than individual outcomes.',
+      },
+    },
+  ],
 }
 
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(faqSchema) }}
+      />
             <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm relative">
               <div className="container mx-auto px-4 py-4">
                 <div className="flex items-center justify-between">

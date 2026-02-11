@@ -6,8 +6,17 @@ import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
 
 export const metadata = {
-  title: 'Elo Rating Methodology | How Our Sports Betting AI Works - BetAnalytics.ai',
+  title: 'Elo Rating Methodology | How Our Sports Betting AI Works',
   description: 'Learn how our Elo rating system calculates sports betting probabilities. Understand injury adjustments, recency weighting, and edge detection methodology.',
+  alternates: {
+    canonical: 'https://betanalytics.ai/methodology',
+  },
+  openGraph: {
+    title: 'Elo Rating Methodology | BetAnalytics.ai',
+    description: 'Full transparency into how we calculate probabilities. Elo ratings, injury adjustments, recency weighting, and edge detection.',
+    url: 'https://betanalytics.ai/methodology',
+    type: 'article' as const,
+  },
 }
 
 export const dynamic = "force-dynamic"
