@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { headers } from "next/headers"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { db } from "@/db"
+import { markUserConverted } from "@/lib/email-sequence"
 import Stripe from "stripe"
 
 export async function POST(request: Request) {
@@ -65,6 +66,10 @@ export async function POST(request: Request) {
         currentPeriodStart: new Date(subscriptionItem.current_period_start * 1000).toISOString(),
         currentPeriodEnd: new Date(subscriptionItem.current_period_end * 1000).toISOString(),
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      })
+
+      markUserConverted(userId).catch((err) => {
+        console.error('[Stripe Webhook] Failed to mark user converted for email sequence:', err)
       })
       break
     }

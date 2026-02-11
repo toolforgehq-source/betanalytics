@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { hash } from "bcryptjs"
 import { db } from "@/db"
+import { sendWelcomeEmail } from "@/lib/email-sequence"
+import { isEmailConfigured } from "@/lib/email"
 
 export async function POST(request: Request) {
   try {
@@ -46,6 +48,12 @@ export async function POST(request: Request) {
       termsAcceptedAt: null,
       questionCount: 0,
     })
+
+    if (isEmailConfigured()) {
+      sendWelcomeEmail(newUser.id, newUser.email, newUser.name).catch((err) => {
+        console.error('[Signup] Failed to send welcome email:', err)
+      })
+    }
 
     return NextResponse.json(
       { message: "User created successfully", userId: newUser.id },
