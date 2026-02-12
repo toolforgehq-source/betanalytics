@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { signOut } from 'next-auth/react'
-import { User, CreditCard, LogOut, ArrowLeft } from 'lucide-react'
+import { User, CreditCard, LogOut, ArrowLeft, Bell } from 'lucide-react'
 import Link from 'next/link'
 import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
@@ -14,14 +14,38 @@ interface AccountPageClientProps {
   }
   isSubscribed: boolean
   questionsRemaining: number
+  edgeAlertsEnabled: boolean
 }
 
 export default function AccountPageClient({ 
   user, 
   isSubscribed,
-  questionsRemaining
+  questionsRemaining,
+  edgeAlertsEnabled
 }: AccountPageClientProps) {
   const [isLoadingPortal, setIsLoadingPortal] = useState(false)
+  const [alertsEnabled, setAlertsEnabled] = useState(edgeAlertsEnabled)
+  const [isTogglingAlerts, setIsTogglingAlerts] = useState(false)
+
+  const handleToggleAlerts = async () => {
+    setIsTogglingAlerts(true)
+    try {
+      const response = await fetch('/api/account/edge-alerts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ subscribed: !alertsEnabled }),
+      })
+      const data = await response.json()
+      if (data.success) {
+        setAlertsEnabled(data.subscribed)
+      }
+    } catch (error) {
+      console.error('Failed to toggle alerts:', error)
+    } finally {
+      setIsTogglingAlerts(false)
+    }
+  }
 
     const handleManageSubscription = async () => {
       setIsLoadingPortal(true)
@@ -160,6 +184,42 @@ export default function AccountPageClient({
               )}
             </div>
           </div>
+
+            {isSubscribed && (
+              <div className="bg-slate-900/30 backdrop-blur-sm border border-slate-800/50 rounded-2xl p-6">
+                <div className="flex items-center gap-3 mb-6">
+                  <Bell className="w-6 h-6 text-blue-400" />
+                  <h2 className="text-xl font-semibold">Notifications</h2>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-slate-200 font-medium">Big Edge Alerts</p>
+                      <p className="text-sm text-slate-400 mt-1">
+                        Get emailed when our model finds an edge above 10%. Max one alert per day.
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleToggleAlerts}
+                      disabled={isTogglingAlerts}
+                      className={`relative w-12 h-7 rounded-full transition-colors ${
+                        alertsEnabled ? 'bg-blue-500' : 'bg-slate-700'
+                      }`}
+                    >
+                      <div
+                        className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-transform ${
+                          alertsEnabled ? 'left-6' : 'left-1'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Also includes seasonal sport transition alerts when leagues wind down.
+                  </p>
+                </div>
+              </div>
+            )}
         </div>
       </main>
 

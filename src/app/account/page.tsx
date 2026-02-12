@@ -1,6 +1,7 @@
 import { auth } from "@/auth"
 import { redirect } from "next/navigation"
 import { checkSubscription } from "@/lib/subscription"
+import { isUserSubscribedToAlerts } from "@/lib/edge-alerts"
 import AccountPageClient from "./AccountPageClient"
 
 // Force dynamic rendering to prevent caching issues with auth
@@ -14,6 +15,7 @@ export default async function AccountPage() {
   }
 
   const subStatus = await checkSubscription()
+  const edgeAlertsEnabled = session.user.id ? await isUserSubscribedToAlerts(session.user.id) : false
 
   return (
     <AccountPageClient 
@@ -23,6 +25,7 @@ export default async function AccountPage() {
       }}
       isSubscribed={subStatus.isSubscribed}
       questionsRemaining={subStatus.questionsRemaining}
+      edgeAlertsEnabled={edgeAlertsEnabled}
     />
   )
 }

@@ -15,6 +15,7 @@ import { getLineMovement } from "@/lib/line-movement"
 import { getCachedTeamScheduleData } from "@/lib/team-schedule"
 import { storeCLVPick } from "@/lib/clv-tracking"
 import { storeCalibrationRecord } from "@/lib/calibration"
+import { checkAndSendEdgeAlerts } from "@/lib/edge-alerts"
 
 // Extended Game type with ESPN data for injury support
 interface EnrichedGame extends Game {
@@ -329,6 +330,14 @@ export async function GET(request: Request) {
       }
     }
     
+    // Check for big edge alerts (10%+ edge) and send to opted-in subscribers
+    console.log("[fetch-odds] Checking for big edge alerts...")
+    const alertResult = await checkAndSendEdgeAlerts(bestBetResult.allRankedBets).catch(err => {
+      console.error("[fetch-odds] Edge alert check failed:", err)
+      return { sent: 0, skipped: 'error' }
+    })
+    console.log(`[fetch-odds] Edge alerts: ${alertResult.sent} sent${alertResult.skipped ? ` (${alertResult.skipped})` : ''}`)
+
     // Auto-grade any pending picks that have completed
     console.log("Auto-grading pending picks...")
     const gradingResult = await autoGradePicks()
@@ -351,6 +360,10 @@ export async function GET(request: Request) {
         picksGraded: gradingResult.graded,
         errors: gradingResult.errors,
         pendingPicks: gradingResult.pending
+      },
+      edgeAlerts: {
+        sent: alertResult.sent,
+        skipped: alertResult.skipped
       },
       message: `ESPN odds: ${espnOddsData.games.length} games (FREE), Best bet: ${bestBetResult.bestBet?.team || 'none'}, Graded: ${gradingResult.graded} picks`
     })

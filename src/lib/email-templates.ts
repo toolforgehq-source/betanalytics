@@ -303,3 +303,115 @@ export function week2Winback(name: string | null): { subject: string; html: stri
     `),
   }
 }
+
+export function bigEdgeAlertEmail(
+  name: string | null,
+  team: string,
+  opponent: string,
+  sport: string,
+  edge: number,
+  modelProbability: number,
+  impliedProbability: number,
+  odds: number,
+  bestBook: string,
+  commenceTime: string
+): { subject: string; html: string } {
+  const greeting = name ? `Hey ${name}` : 'Hey'
+  const oddsStr = odds > 0 ? `+${odds}` : `${odds}`
+  const gameTime = new Date(commenceTime).toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  })
+
+  return {
+    subject: `Big Edge Alert: ${team} (+${edge.toFixed(1)}% edge)`,
+    html: emailWrapper(`
+      <h1 style="color:white;font-size:24px;margin:0 0 16px 0;">${greeting}, we found a big edge</h1>
+      <p style="color:${TEXT_COLOR};font-size:16px;line-height:1.6;margin:0 0 16px 0;">
+        Our Elo model just flagged a matchup with a <strong style="color:${ACCENT_COLOR};">+${edge.toFixed(1)}% edge</strong> — well above our normal threshold. Here are the details:
+      </p>
+
+      <div style="background-color:${BG_COLOR};border-radius:12px;padding:20px;margin:0 0 20px 0;">
+        <p style="color:${ACCENT_COLOR};font-size:14px;font-weight:600;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;">${sport}</p>
+        <p style="color:white;font-size:20px;font-weight:700;margin:0 0 16px 0;">${team} vs ${opponent}</p>
+        <p style="color:${MUTED_COLOR};font-size:14px;margin:0 0 16px 0;">${gameTime} ET</p>
+        <table cellpadding="0" cellspacing="0" width="100%">
+          <tr>
+            <td style="color:${MUTED_COLOR};font-size:14px;padding:6px 0;">Our Elo Model</td>
+            <td style="color:white;font-size:14px;padding:6px 0;text-align:right;font-weight:700;">${modelProbability.toFixed(1)}%</td>
+          </tr>
+          <tr>
+            <td style="color:${MUTED_COLOR};font-size:14px;padding:6px 0;">Market Implied</td>
+            <td style="color:white;font-size:14px;padding:6px 0;text-align:right;font-weight:700;">${impliedProbability.toFixed(1)}%</td>
+          </tr>
+          <tr>
+            <td colspan="2" style="border-top:1px solid ${MUTED_COLOR};padding-top:8px;"></td>
+          </tr>
+          <tr>
+            <td style="color:${MUTED_COLOR};font-size:14px;padding:6px 0;">Edge</td>
+            <td style="color:${ACCENT_COLOR};font-size:14px;padding:6px 0;text-align:right;font-weight:700;">+${edge.toFixed(1)}%</td>
+          </tr>
+          <tr>
+            <td style="color:${MUTED_COLOR};font-size:14px;padding:6px 0;">Best Odds</td>
+            <td style="color:white;font-size:14px;padding:6px 0;text-align:right;font-weight:700;">${oddsStr} (${bestBook})</td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="color:${TEXT_COLOR};font-size:16px;line-height:1.6;margin:0 0 8px 0;">
+        Open BetAnalytics for the full breakdown including injury adjustments, rest days, and situational factors.
+      </p>
+
+      ${ctaButton('View Full Analysis', 'https://betanalytics.ai/chat')}
+      <p style="color:${MUTED_COLOR};font-size:12px;margin:0;">
+        You're receiving this because you opted into Big Edge Alerts. You can turn this off in your <a href="https://betanalytics.ai/account" style="color:${ACCENT_COLOR};text-decoration:underline;">account settings</a>.
+      </p>
+    `),
+  }
+}
+
+export function seasonalNudgeEmail(
+  name: string | null,
+  endingSports: string[],
+  activeSports: { name: string; gameCount: number }[]
+): { subject: string; html: string } {
+  const greeting = name ? `Hey ${name}` : 'Hey'
+  const endingList = endingSports.join(' and ')
+  const topActive = activeSports.slice(0, 3)
+
+  return {
+    subject: `${endingList} winding down — here's where the edges are now`,
+    html: emailWrapper(`
+      <h1 style="color:white;font-size:24px;margin:0 0 16px 0;">${greeting}, the sports calendar is shifting</h1>
+      <p style="color:${TEXT_COLOR};font-size:16px;line-height:1.6;margin:0 0 16px 0;">
+        ${endingList} ${endingSports.length === 1 ? 'is' : 'are'} winding down for the season, but our Elo model is still finding edges in other sports. Here's what's active right now:
+      </p>
+
+      <div style="background-color:${BG_COLOR};border-radius:12px;padding:20px;margin:0 0 20px 0;">
+        <p style="color:${ACCENT_COLOR};font-size:14px;font-weight:600;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;">Active Sports This Week</p>
+        <table cellpadding="0" cellspacing="0" width="100%">
+          ${topActive.map(s => `
+          <tr>
+            <td style="padding:8px 0;color:white;font-size:15px;font-weight:600;">${s.name}</td>
+            <td style="padding:8px 0;color:${ACCENT_COLOR};font-size:15px;text-align:right;">${s.gameCount} games this week</td>
+          </tr>
+          `).join('')}
+        </table>
+      </div>
+
+      <p style="color:${TEXT_COLOR};font-size:16px;line-height:1.6;margin:0 0 8px 0;">
+        Our model covers all of these with the same Elo-based edge detection. Ask about any matchup and we'll show you where the market might be wrong.
+      </p>
+
+      ${ctaButton('Find This Week\'s Edges', 'https://betanalytics.ai/chat')}
+      <p style="color:${MUTED_COLOR};font-size:12px;margin:0;">
+        You're receiving this because you opted into sport alerts. You can turn this off in your <a href="https://betanalytics.ai/account" style="color:${ACCENT_COLOR};text-decoration:underline;">account settings</a>.
+      </p>
+    `),
+  }
+}
