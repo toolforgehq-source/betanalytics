@@ -22,6 +22,7 @@ import type { PaceAdjustment, UsageAdjustment, PropCorrelation, PropLineMovement
 import { getCachedPlayerProps, fetchSportPlayerProps, setCachedPlayerProps } from './odds'
 import type { GamePlayerProps, PlayerProp } from './odds'
 import { americanToImpliedProbability } from './bet-ranking'
+import { getCachedTeamScheduleData, normalizeTeamName as normalizeScheduleTeamName, isBackToBack } from './team-schedule'
 
 // ============================================
 // TYPES
@@ -554,6 +555,20 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
         }
       }
 
+      let backToBack: boolean | undefined
+      if (gameContext?.playerTeam) {
+        try {
+          const scheduleData = await getCachedTeamScheduleData()
+          if (scheduleData) {
+            const teamKey = normalizeScheduleTeamName(gameContext.playerTeam)
+            const lastGameDate = scheduleData.teams[teamKey]?.lastGameDate || null
+            backToBack = isBackToBack(lastGameDate)
+          }
+        } catch (err) {
+          console.error('[player-prop-analysis] Failed to check back-to-back status:', err)
+        }
+      }
+
       modelResult = await getPlayerPropProbability(
         query.playerName,
         detectedSport || 'NBA',
@@ -561,7 +576,7 @@ export async function analyzePlayerProp(query: PlayerPropQuery): Promise<PropAna
         query.line,
         opponentTeamId,
         isHomeGame,
-        undefined,
+        backToBack,
         gameContext
       )
     } catch (err) {

@@ -1016,7 +1016,8 @@ export async function analyzeGame(
       teamLastGameDate || undefined,  // lastGameDate from schedule data
       opponentLastGameDate || undefined,  // opponentLastGameDate from schedule data
       weather,   // Weather data for outdoor sports
-      lineMovement  // Line movement data for sharp money detection
+      lineMovement,  // Line movement data for sharp money detection
+      game.commenceTime ? new Date(game.commenceTime) : null
     )
     
     const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational, team, opponentName)
@@ -1258,7 +1259,8 @@ export async function analyzeGame(
         spreadTeamLastGameDate || undefined,  // lastGameDate from schedule data
         spreadOpponentLastGameDate || undefined,  // opponentLastGameDate from schedule data
         weather,   // Weather data for outdoor sports
-        lineMovement  // Line movement data for sharp money detection
+        lineMovement,  // Line movement data for sharp money detection
+        game.commenceTime ? new Date(game.commenceTime) : null
       )
       const spreadSituationalAdj = calculateSituationalAdjustment(spreadSituationalFactors, eloLeague, teamName, opponentName)
       const eloCoverProb = applyAdjustment(baseEloCoverProb, spreadSituationalAdj.totalAdjustment)
@@ -1435,7 +1437,8 @@ export async function analyzeGame(
         homeLastGameDate || undefined,  // lastGameDate from schedule data (home team)
         awayLastGameDate || undefined,  // opponentLastGameDate from schedule data (away team)
         weather,   // Weather data - critical for outdoor sports totals
-        lineMovement  // Line movement data for sharp money detection
+        lineMovement,  // Line movement data for sharp money detection
+        game.commenceTime ? new Date(game.commenceTime) : null
       )
       const totalSituationalAdj = calculateSituationalAdjustment(totalSituationalFactors, eloLeague, game.homeTeam, game.awayTeam)
       
@@ -1681,7 +1684,7 @@ export async function analyzeGame(
  * IMPORTANT: This function now analyzes ALL bet types (moneylines, spreads, totals)
  * to ensure sport-specific queries return the truly best bet, not just the best moneyline.
  */
-async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Promise<RankedBet[]> {
+async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], homeLastGameDate?: string | null, awayLastGameDate?: string | null): Promise<RankedBet[]> {
   const rankedBets: RankedBet[] = []
   const now = new Date().toISOString()
   
@@ -1791,7 +1794,28 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
     
     const isHomeTeam = team === game.homeTeam
     const eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
-    const modelProbability = eloProbability
+    let modelProbability = eloProbability
+    
+    const eloLeagueForSituational = SPORT_TO_ELO_LEAGUE[game.sport] || game.sport
+    const opponentName = isHomeTeam ? game.awayTeam : game.homeTeam
+    const teamLastGameDate = isHomeTeam ? homeLastGameDate : awayLastGameDate
+    const opponentLastGameDateForTeam = isHomeTeam ? awayLastGameDate : homeLastGameDate
+    
+    const situationalFactors = calculateSituationalFactors(
+      team,
+      opponentName,
+      eloLeagueForSituational,
+      isHomeTeam,
+      undefined,
+      teamLastGameDate || undefined,
+      opponentLastGameDateForTeam || undefined,
+      null,
+      null,
+      game.commenceTime ? new Date(game.commenceTime) : null
+    )
+    
+    const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational, team, opponentName)
+    modelProbability = applyAdjustment(modelProbability, situationalAdj.totalAdjustment)
     
     const edge = modelProbability - bestPrice.impliedProb
     const ev = calculateExpectedValue(bestPrice.price, modelProbability)
@@ -1824,6 +1848,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[]): Pr
         impliedProb: Math.round(b.impliedProb * 1000) / 10
       })),
       score,
+      situationalAdjustment: situationalAdj.totalAdjustment !== 0 ? Math.round(situationalAdj.totalAdjustment * 1000) / 10 : undefined,
+      situationalNotes: situationalAdj.notes.length > 0 ? situationalAdj.notes : undefined,
       calculatedAt: now
     })
   }
@@ -2278,7 +2304,7 @@ export async function computeBestBets(
     
     // Collect ALL Elo bets (without strict filters) for sport-specific queries
     // This ensures "best NHL bet" works even if no NHL bets pass strict filters
-    const eloBets = await analyzeGameForSportQuery(game, injuries)
+    const eloBets = await analyzeGameForSportQuery(game, injuries, homeLastGameDate, awayLastGameDate)
     allEloBets.push(...eloBets)
   }
   

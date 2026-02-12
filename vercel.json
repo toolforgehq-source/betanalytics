@@ -45,6 +45,10 @@
       "schedule": "0 11 * * *"
     },
     {
+      "path": "/api/cron/update-team-schedules",
+      "schedule": "0 5 * * *"
+    },
+    {
       "path": "/api/cron/email-sequence",
       "schedule": "0 14 * * *"
     }

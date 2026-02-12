@@ -437,6 +437,7 @@ function calculateWinPct(record: { wins: number; losses: number; ties?: number }
  * @param opponentLastGameDate - Date of opponent's last game
  * @param weather - Weather data (for outdoor sports)
  * @param lineMovement - Line movement data
+ * @param gameDate - The game's commence time (used for rest day calc instead of current time)
  */
 export function calculateSituationalFactors(
   teamName: string,
@@ -447,22 +448,32 @@ export function calculateSituationalFactors(
   lastGameDate?: string | null,
   opponentLastGameDate?: string | null,
   weather?: WeatherData | null,
-  lineMovement?: LineMovement | null
+  lineMovement?: LineMovement | null,
+  gameDate?: Date | null
 ): SituationalFactors {
-  const now = new Date()
+  const now = gameDate || new Date()
   
   // Calculate rest days
-  let restDays = 3  // Default if unknown
+  let restDays = 3  // Default if unknown — see restDataMissing flag below
   let opponentRestDays = 3
+  let restDataMissing = false
   
   if (lastGameDate) {
     const lastGame = new Date(lastGameDate)
     restDays = Math.floor((now.getTime() - lastGame.getTime()) / (1000 * 60 * 60 * 24))
+  } else {
+    restDataMissing = true
   }
   
   if (opponentLastGameDate) {
     const oppLastGame = new Date(opponentLastGameDate)
     opponentRestDays = Math.floor((now.getTime() - oppLastGame.getTime()) / (1000 * 60 * 60 * 24))
+  } else {
+    restDataMissing = true
+  }
+  
+  if (restDataMissing) {
+    console.log(`[situational-factors] Rest data missing for ${teamName} vs ${opponentName} — defaulting to ${restDays}/${opponentRestDays} rest days`)
   }
   
   const isBackToBack = restDays <= 1
