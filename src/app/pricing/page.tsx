@@ -73,7 +73,7 @@ export default async function PricingPage() {
             <div className="text-center mb-8">
               <h2 className="text-2xl font-bold mb-2">Betanalytics.ai Premium</h2>
               <div className="text-5xl font-bold mb-2">
-                $29<span className="text-xl text-slate-400">/month</span>
+                $39<span className="text-xl text-slate-400">/month</span>
               </div>
               <p className="text-slate-400">Billed monthly. Cancel anytime.</p>
             </div>
@@ -105,7 +105,7 @@ export default async function PricingPage() {
               />
               <FAQ 
                 question="How does the free trial work?"
-                answer="You get a 3-day free trial with full access to all features. No credit card required. After that, you'll need to subscribe at $29/month to continue."
+                answer="You get a 3-day free trial with full access to all features. No credit card required. After that, you'll need to subscribe at $39/month to continue."
               />
               <FAQ 
                 question="Can I cancel anytime?"

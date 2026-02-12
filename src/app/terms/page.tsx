@@ -96,7 +96,7 @@ export default function TermsPage() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">7. Subscription and Billing</h2>
               <p className="text-slate-300">
-                The Service is offered on a subscription basis at $29 per month. Subscriptions automatically renew unless canceled. You may cancel at any time through your account settings or by contacting support.
+                The Service is offered on a subscription basis at $39 per month. Subscriptions automatically renew unless canceled. You may cancel at any time through your account settings or by contacting support.
               </p>
             </section>
 

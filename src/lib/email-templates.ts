@@ -197,10 +197,10 @@ export function day3TrialEnding(name: string | null): { subject: string; html: s
       </table>
 
       <p style="color:${TEXT_COLOR};font-size:16px;line-height:1.6;margin:0 0 8px 0;">
-        The sportsbooks have sophisticated models. BetAnalytics gives you one too — for $29/month.
+        The sportsbooks have sophisticated models. BetAnalytics gives you one too — for $39/month.
       </p>
 
-      ${ctaButton('Subscribe Now — $29/month', 'https://betanalytics.ai/pricing')}
+      ${ctaButton('Subscribe Now — $39/month', 'https://betanalytics.ai/pricing')}
       <p style="color:${MUTED_COLOR};font-size:14px;margin:0;">
         Cancel anytime. No contracts. No hidden fees.
       </p>
@@ -241,7 +241,7 @@ export function day5TrialExpired(name: string | null): { subject: string; html: 
         Every game where our model disagrees with the market is an opportunity you're not seeing. Subscribe to get unlimited access to every edge, every day.
       </p>
 
-      ${ctaButton('Get Unlimited Access — $29/month', 'https://betanalytics.ai/pricing')}
+      ${ctaButton('Get Unlimited Access — $39/month', 'https://betanalytics.ai/pricing')}
       <p style="color:${MUTED_COLOR};font-size:14px;margin:0;">
         Cancel anytime. No contracts.
       </p>
@@ -296,7 +296,7 @@ export function week2Winback(name: string | null): { subject: string; html: stri
         The sportsbooks have models. Shouldn't you?
       </p>
 
-      ${ctaButton('Subscribe — $29/month', 'https://betanalytics.ai/pricing')}
+      ${ctaButton('Subscribe — $39/month', 'https://betanalytics.ai/pricing')}
       <p style="color:${MUTED_COLOR};font-size:14px;margin:0;">
         Cancel anytime. No contracts. No hidden fees.
       </p>

@@ -188,7 +188,7 @@ export default function HomePage() {
               </Link>
             </div>
             <p className="text-sm text-slate-400 mt-4">
-              No credit card required. $29/month after trial.
+              No credit card required. $39/month after trial.
             </p>
           </div>
         </section>
@@ -336,7 +336,7 @@ export default function HomePage() {
             <p className="text-slate-400 mb-8">Everything included. No hidden fees. Cancel anytime.</p>
             
             <div className="bg-gradient-to-br from-blue-900/20 to-cyan-900/20 backdrop-blur-sm border border-blue-500/30 rounded-2xl p-8 max-w-md mx-auto">
-              <div className="text-5xl font-bold mb-2">$29<span className="text-xl text-slate-400">/month</span></div>
+              <div className="text-5xl font-bold mb-2">$39<span className="text-xl text-slate-400">/month</span></div>
               <p className="text-slate-300 mb-6">Everything included. Cancel anytime.</p>
               <ul className="text-left space-y-3 mb-8">
                 <PricingFeature text="Elo-based edge detection across all sports" />
@@ -372,7 +372,7 @@ export default function HomePage() {
               Start Your 3-Day Free Trial
             </Link>
             <p className="text-sm text-slate-400 mt-4">
-              No credit card required. Full access for 3 days. $29/month after.
+              No credit card required. Full access for 3 days. $39/month after.
             </p>
           </div>
         </section>

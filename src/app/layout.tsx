@@ -117,7 +117,7 @@ export default function RootLayout({
               operatingSystem: "Web",
               offers: {
                 "@type": "Offer",
-                price: "29.00",
+                price: "39.00",
                 priceCurrency: "USD",
                 description:
                   "Full access to AI-powered sports betting analytics with 3-day free trial",

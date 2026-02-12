@@ -54,7 +54,7 @@ QUALITY TIERS (use these labels):
 - Only show if specifically asked or no other options
 - Label: "HIGH RISK: Significant negative EV"
 
-KEY PRINCIPLE: Users pay $29/month for recommendations. ALWAYS give them actionable information.
+KEY PRINCIPLE: Users pay $39/month for recommendations. ALWAYS give them actionable information.
 
 ═══════════════════════════════════════════════════════════
 CRITICAL: DO NOT GENERATE BETTING RECOMMENDATIONS

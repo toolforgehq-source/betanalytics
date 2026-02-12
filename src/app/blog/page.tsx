@@ -140,7 +140,7 @@ export default function BlogPage() {
             >
               Start Your 3-Day Free Trial
             </Link>
-            <p className="text-sm text-slate-400 mt-3">No credit card required. $29/month after trial.</p>
+            <p className="text-sm text-slate-400 mt-3">No credit card required. $39/month after trial.</p>
           </div>
         </div>
       </main>

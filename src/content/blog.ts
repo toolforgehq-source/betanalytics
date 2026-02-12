@@ -1279,7 +1279,7 @@ Does the platform publish historical results? Can you verify their claimed accur
 - Player prop analysis with historical performance data
 - Hourly odds updates
 
-**Pricing:** $29/month with 3-day free trial
+**Pricing:** $39/month with 3-day free trial
 
 **Strengths:** Complete transparency. You see exactly why each bet is recommended. Injury adjustments are quantified (QB out = -80 Elo points), not subjective. Covers all major sports with consistent methodology.
 
