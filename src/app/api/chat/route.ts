@@ -12,7 +12,33 @@ import { fetchAllOdds } from "@/lib/odds"
 import { storePick, getAllPicks } from "@/lib/pick-tracking"
 import { detectPlayerPropQuestion, parsePlayerPropQuery, analyzePlayerProp, analyzeAllPlayerProps, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
 
-const SYSTEM_PROMPT = `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
+async function withOverloadRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      const status = (err as { status?: number }).status
+      if ((status === 529 || status === 429) && i < retries) {
+        const delay = Math.min(2000 * Math.pow(2, i), 16000)
+        console.log(`[chat] Anthropic API returned ${status}, retrying in ${delay}ms (attempt ${i + 1}/${retries})`)
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+      throw err
+    }
+  }
+  throw new Error("All retry attempts exhausted")
+}
+
+function formatAnthropicError(err: unknown): string {
+  const status = (err as { status?: number }).status
+  if (status === 529 || status === 429) {
+    return "Our AI service is experiencing high demand right now. Please try again in a minute."
+  }
+  return "I encountered an error while processing your question. Please try again in a moment."
+}
+
+const SYSTEM_PROMPT= `You are an expert AI sports betting analyst for Betanalytics.ai. Your goal is to help users WIN BETS - not just find mathematical edge.
 
 ═══════════════════════════════════════════════════════════
 UNIVERSAL RECOMMENDATION RULE (MOST IMPORTANT)
@@ -1733,12 +1759,12 @@ Now respond to the user's question conversationally, using ONLY the Elo data abo
     { role: 'user' as const, content: userQuestion }
   ]
 
-  const response = await anthropic.messages.create({
+  const response = await withOverloadRetry(() => anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 1500,
     system: systemPrompt,
     messages: messages,
-  })
+  }))
 
   return response.content[0].type === 'text' ? response.content[0].text : ''
 }
@@ -1767,12 +1793,12 @@ Now respond to the user's question conversationally, using ONLY the player prop 
     { role: 'user' as const, content: userQuestion }
   ]
 
-  const response = await anthropic.messages.create({
+  const response = await withOverloadRetry(() => anthropic.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 1500,
     system: systemPrompt,
     messages: messages,
-  })
+  }))
 
   return response.content[0].type === 'text' ? response.content[0].text : ''
 }
@@ -1788,6 +1814,7 @@ export async function POST(request: Request) {
     // Initialize Anthropic client inside handler to ensure API key is available
     const anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
+      maxRetries: 5,
     })
 
     const session = await auth()
@@ -2465,7 +2492,7 @@ If you're seeing this message persistently, please contact us at contact@betanal
         console.error('[chat] Error processing best bet question:', err)
         // CRITICAL: Do NOT fall through to LLM for betting questions
         // Return a proper error message instead of letting LLM generate potentially wrong data
-        const errorMessage = `I encountered an error while processing your betting question. Please try again in a moment, or ask about a specific game or sport.\n\nError details: ${err instanceof Error ? err.message : 'Unknown error'}`
+        const errorMessage = formatAnthropicError(err)
         
         await db.messages.create({
           conversationId: conversation.id,
@@ -2603,7 +2630,7 @@ Our Elo ratings are our edge - we won't give you a recommendation without them.`
         }
       } catch (err) {
         console.error('[chat] Error in betting question fallback:', err)
-        const errorMessage = `I encountered an error while processing your betting question. Please try again in a moment, or ask about a specific game or sport.\n\nError details: ${err instanceof Error ? err.message : 'Unknown error'}`
+        const errorMessage = formatAnthropicError(err)
         
         await db.messages.create({
           conversationId: conversation.id,
@@ -2669,12 +2696,12 @@ When discussing player props, focus on:
 - The specific line being offered
 - DO NOT reference teammates unless they appear in today's data`
 
-    const response = await anthropic.messages.create({
+    const response = await withOverloadRetry(() => anthropic.messages.create({
       model: "claude-sonnet-4-20250514",
       max_tokens: 2000,
       system: systemPromptWithData,
       messages: chatMessages,
-    })
+    }))
 
     const assistantMessage = response.content[0].type === 'text' 
       ? response.content[0].text 
@@ -2713,9 +2740,15 @@ When discussing player props, focus on:
 
   } catch (error) {
     console.error("Chat API error:", error)
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    const status = (error as { status?: number }).status
+    if (status === 529 || status === 429) {
+      return NextResponse.json(
+        { error: "Our AI service is experiencing high demand. Please try again in a minute." },
+        { status: 503 }
+      )
+    }
     return NextResponse.json(
-      { error: "Failed to process message", details: errorMessage },
+      { error: "Failed to process message" },
       { status: 500 }
     )
   }
