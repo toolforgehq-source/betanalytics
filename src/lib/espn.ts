@@ -451,6 +451,59 @@ export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
 }
 
 /**
+ * Search ESPN scoreboard for a specific game by team name tokens, then fetch its odds.
+ * Used as an on-demand fallback when a user asks about a game that isn't in the cache.
+ */
+export async function searchESPNGameByTeams(teamTokens: string[]): Promise<ESPNOdds | null> {
+  if (teamTokens.length === 0) return null
+  console.log(`[ESPN] On-demand search for teams: ${teamTokens.join(', ')}`)
+
+  const today = new Date()
+
+  const normalize = (name: string) =>
+    name.toLowerCase().replace(/[^a-z0-9 ]/g, '').split(/\s+/).filter(t => t.length >= 3)
+
+  const matchesTokens = (eventName: string) => {
+    const nameTokens = normalize(eventName)
+    return teamTokens.some(qt =>
+      nameTokens.some(nt => nt === qt || (nt.length >= 4 && qt.length >= 4 && (nt.includes(qt) || qt.includes(nt))))
+    )
+  }
+
+  for (const { sport, league, name: leagueName } of ESPN_ODDS_SPORTS) {
+    try {
+      const dateStr = getESPNDateString(today)
+      const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard?dates=${dateStr}`
+      const response = await fetch(url, { headers: { 'Accept': 'application/json' }, cache: 'no-store' })
+      if (!response.ok) continue
+
+      const data = await response.json()
+      if (!data.events || !Array.isArray(data.events)) continue
+
+      for (const event of data.events) {
+        const eventName: string = event.name || ''
+        const shortName: string = event.shortName || ''
+        if (matchesTokens(eventName) || matchesTokens(shortName)) {
+          const completed = event.status?.type?.completed
+          if (completed) {
+            console.log(`[ESPN] Found ${eventName} but game is completed`)
+            continue
+          }
+          console.log(`[ESPN] On-demand match found: ${eventName} (${leagueName})`)
+          const odds = await fetchESPNGameOdds(sport, league, event.id, leagueName)
+          if (odds) return odds
+        }
+      }
+    } catch (err) {
+      console.error(`[ESPN] Error searching ${leagueName} scoreboard:`, err)
+    }
+  }
+
+  console.log(`[ESPN] On-demand search: no matching game found`)
+  return null
+}
+
+/**
  * Get cached ESPN odds - first try Redis, then in-memory, then fetch fresh
  */
 export async function getCachedESPNOdds(): Promise<ESPNOddsData> {

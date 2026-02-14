@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { formatCombinedDataForContext } from "@/lib/combined-data"
-import { getCachedESPNOdds, getCachedESPNData, cacheESPNOdds, type ESPNOdds, type ESPNOddsData, type ESPNInjury } from "@/lib/espn"
+import { getCachedESPNOdds, getCachedESPNData, cacheESPNOdds, searchESPNGameByTeams, type ESPNOdds, type ESPNOddsData, type ESPNInjury } from "@/lib/espn"
 import { analyzeSpecificGame, formatGameAnalysisForContext, getCachedSportBets, getFilteredBestBetWithElo, formatFilteredBestBetResponse, getCachedBestBet, formatBestBetForContext, getCachedParlay, formatParlayForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext } from "@/lib/bet-ranking"
 import type { RankedBet, BestBetResult } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
@@ -1001,6 +1001,77 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
     return game
   }
   
+  console.log(`[detectGameQuestion] No match in cached data. Searching ESPN on-demand...`)
+  const searchTokens = messageTokens.filter(t => t.length >= 4)
+  if (searchTokens.length > 0) {
+    try {
+      const onDemandOdds = await searchESPNGameByTeams(searchTokens)
+      if (onDemandOdds) {
+        const sportKeyMap: Record<string, string> = {
+          'NBA': 'basketball_nba',
+          'NFL': 'americanfootball_nfl',
+          'NHL': 'icehockey_nhl',
+          'MLB': 'baseball_mlb',
+          'NCAAB': 'basketball_ncaab',
+          'NCAAF': 'americanfootball_ncaaf',
+          'English Premier League': 'soccer_epl',
+          'La Liga': 'soccer_spain_la_liga',
+          'Bundesliga': 'soccer_germany_bundesliga',
+          'Serie A': 'soccer_italy_serie_a',
+          'Ligue 1': 'soccer_france_ligue_one',
+          'MLS': 'soccer_usa_mls',
+          'UEFA Champions League': 'soccer_uefa_champs_league',
+        }
+
+        const game: Game = {
+          id: onDemandOdds.gameId,
+          sport: sportKeyMap[onDemandOdds.league] || onDemandOdds.league.toLowerCase(),
+          sportName: onDemandOdds.league,
+          homeTeam: onDemandOdds.homeTeam,
+          awayTeam: onDemandOdds.awayTeam,
+          commenceTime: onDemandOdds.commenceTime,
+          moneylines: onDemandOdds.moneyline ? [{
+            bookmaker: 'espn',
+            market: 'h2h',
+            outcomes: [
+              { name: onDemandOdds.homeTeam, price: onDemandOdds.moneyline.home },
+              { name: onDemandOdds.awayTeam, price: onDemandOdds.moneyline.away }
+            ]
+          }] : [],
+          spreads: onDemandOdds.spread !== null ? [{
+            bookmaker: 'espn',
+            market: 'spreads',
+            outcomes: [
+              { 
+                name: onDemandOdds.homeTeam, 
+                price: onDemandOdds.spreadOdds?.home ?? -110, 
+                point: onDemandOdds.homeFavorite ? -Math.abs(onDemandOdds.spread) : Math.abs(onDemandOdds.spread) 
+              },
+              { 
+                name: onDemandOdds.awayTeam, 
+                price: onDemandOdds.spreadOdds?.away ?? -110, 
+                point: onDemandOdds.homeFavorite ? Math.abs(onDemandOdds.spread) : -Math.abs(onDemandOdds.spread) 
+              }
+            ]
+          }] : [],
+          totals: onDemandOdds.overUnder !== null ? [{
+            bookmaker: 'espn',
+            market: 'totals',
+            outcomes: [
+              { name: 'Over', price: onDemandOdds.overUnderOdds?.over ?? -110, point: onDemandOdds.overUnder },
+              { name: 'Under', price: onDemandOdds.overUnderOdds?.under ?? -110, point: onDemandOdds.overUnder }
+            ]
+          }] : []
+        }
+
+        console.log(`[detectGameQuestion] On-demand ESPN fetch found: ${onDemandOdds.awayTeam} @ ${onDemandOdds.homeTeam}`)
+        return game
+      }
+    } catch (err) {
+      console.error('[detectGameQuestion] On-demand ESPN search failed:', err)
+    }
+  }
+
   return null
 }
 
