@@ -405,10 +405,12 @@ export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
     }
   }
   
-  // Fetch odds for each game (limit to 15 games per sport to include both days)
+  const COLLEGE_LEAGUES = new Set(['mens-college-basketball', 'college-football'])
+  
   for (const entry of Array.from(sportGameMap.values())) {
     const { sport, league, name, gameIds } = entry
-    const uniqueGameIds = Array.from(gameIds).slice(0, 15)
+    const maxGames = COLLEGE_LEAGUES.has(league) ? 80 : 20
+    const uniqueGameIds = Array.from(gameIds).slice(0, maxGames)
     
     if (uniqueGameIds.length === 0) {
       console.log(`📊 ${name}: No upcoming games`)
