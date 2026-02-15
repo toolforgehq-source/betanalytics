@@ -2125,88 +2125,6 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
   return rankedBets
 }
 
-/**
- * Analyze a single game WITHOUT strict filters - returns all bets with scores and filter status
- * Used for:
- * 1. Computing fallback data when no bets pass strict filters
- * 2. Finding VALUE PLAY candidates (48%+ prob, 5%+ ROI)
- * 3. Progressive fallback selection
- */
-function analyzeGameUnfiltered(game: Game): FallbackBet[] {
-  const fallbackBets: FallbackBet[] = []
-  
-  // Skip games that have already started
-  if (new Date(game.commenceTime) < new Date()) {
-    return []
-  }
-  
-  // Must have moneyline odds
-  if (!game.moneylines || game.moneylines.length === 0) {
-    return []
-  }
-  
-  // Skip 3-way markets (soccer) for now
-  if (isThreeWayMarket(game)) {
-    return []
-  }
-  
-  // Analyze both teams
-  for (const team of [game.homeTeam, game.awayTeam]) {
-    const consensus = calculateConsensusProbability(game, team)
-    if (!consensus) continue
-    
-    const bestPrice = findBestPrice(game, team)
-    if (!bestPrice) continue
-    
-    const edge = consensus.consensusProb - bestPrice.impliedProb
-    
-    // Calculate Expected Value and ROI
-    const ev = calculateExpectedValue(bestPrice.price, consensus.consensusProb)
-    const roi = calculateROI(ev)
-    
-    // Calculate unified score using new 45/35/20 formula
-    const score = calculateBetScore(consensus.consensusProb, edge, roi)
-    
-    // Check if this qualifies as a VALUE PLAY (48%+ prob, 5%+ ROI)
-    const isValuePlay = consensus.consensusProb >= VALUE_PLAY_MIN_PROB && roi >= VALUE_PLAY_MIN_ROI
-    
-    const disqualifyReasons: string[] = []
-    
-    // Check against NEW unified filters (odds -250, prob 52%, ROI -4.5%)
-    if (bestPrice.price < MAX_JUICE_ODDS) {
-      disqualifyReasons.push(`Odds ${bestPrice.price} worse than -250 limit`)
-    }
-    if (consensus.consensusProb < MIN_PROBABILITY && !isValuePlay) {
-      // VALUE PLAY exception: 48%+ prob is OK if ROI >= 5%
-      disqualifyReasons.push(`Probability ${(consensus.consensusProb * 100).toFixed(1)}% < 52% min`)
-    }
-    if (roi < MIN_ROI) {
-      disqualifyReasons.push(`ROI ${roi.toFixed(1)}% worse than -4.5% floor`)
-    }
-    
-    fallbackBets.push({
-      gameId: game.id,
-      sport: game.sport,
-      sportName: game.sportName,
-      homeTeam: game.homeTeam,
-      awayTeam: game.awayTeam,
-      commenceTime: game.commenceTime,
-      team,
-      consensusProbability: Math.round(consensus.consensusProb * 1000) / 10,
-      bestPrice: bestPrice.price,
-      bestBook: bestPrice.book,
-      impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
-      edge: Math.round(edge * 1000) / 10,
-      expectedValue: Math.round(ev * 100) / 100,
-      roi: Math.round(roi * 100) / 100,
-      score,
-      disqualifyReasons,
-      isValuePlay
-    })
-  }
-  
-  return fallbackBets
-}
 
 /**
  * Check if a bet passes the unified filters
@@ -2254,7 +2172,6 @@ export async function computeBestBets(
 ): Promise<BestBetResult> {
   const now = new Date().toISOString()
   const allRankedBets: RankedBet[] = []
-  const allUnfilteredBets: FallbackBet[] = []
   const allEloBets: RankedBet[] = []  // ALL bets with Elo data (for sport-specific queries)
   
   // Analyze all games (now async to fetch Elo data)
@@ -2297,10 +2214,6 @@ export async function computeBestBets(
     
     const bets = await analyzeGame(game, injuries, gameWeather, gameLineMovement, homeLastGameDate, awayLastGameDate)
     allRankedBets.push(...bets)
-    
-    // Also collect unfiltered bets for fallback/scoring
-    const unfilteredBets = analyzeGameUnfiltered(game)
-    allUnfilteredBets.push(...unfilteredBets)
     
     // Collect ALL Elo bets (without strict filters) for sport-specific queries
     // This ensures "best NHL bet" works even if no NHL bets pass strict filters
@@ -2359,8 +2272,48 @@ export async function computeBestBets(
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   
-  // Sort ALL unfiltered bets by score for fallback selection
-  allUnfilteredBets.sort((a, b) => {
+  // Build Elo-powered fallback bets from filteredEloBets
+  // This ensures fallback recommendations are also backed by our Elo model
+  const eloFallbackBets: FallbackBet[] = filteredEloBets.map(bet => {
+    const prob = bet.eloProbability !== undefined ? bet.eloProbability / 100 : bet.consensusProbability / 100
+    const disqualifyReasons: string[] = []
+    if (bet.bestPrice < MAX_JUICE_ODDS) {
+      disqualifyReasons.push(`Odds ${bet.bestPrice} worse than -250 limit`)
+    }
+    if (prob < MIN_PROBABILITY) {
+      disqualifyReasons.push(`Probability ${(prob * 100).toFixed(1)}% < 52% min`)
+    }
+    if (bet.roi < MIN_ROI) {
+      disqualifyReasons.push(`ROI ${bet.roi.toFixed(1)}% worse than -4.5% floor`)
+    }
+    const isValuePlay = prob >= VALUE_PLAY_MIN_PROB && bet.roi >= VALUE_PLAY_MIN_ROI
+    return {
+      gameId: bet.gameId,
+      sport: bet.sport,
+      sportName: bet.sportName,
+      homeTeam: bet.homeTeam,
+      awayTeam: bet.awayTeam,
+      commenceTime: bet.commenceTime,
+      team: bet.team,
+      consensusProbability: bet.consensusProbability,
+      bestPrice: bet.bestPrice,
+      bestBook: bet.bestBook,
+      impliedProbability: bet.impliedProbability,
+      edge: bet.edge,
+      expectedValue: bet.expectedValue,
+      roi: bet.roi,
+      score: bet.score,
+      disqualifyReasons,
+      isValuePlay,
+      eloProbability: bet.eloProbability,
+      eloConfidence: bet.eloConfidence,
+      homeElo: bet.homeElo,
+      awayElo: bet.awayElo,
+    }
+  })
+
+  // Sort Elo-powered fallback bets by score for fallback selection
+  eloFallbackBets.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
@@ -2401,35 +2354,35 @@ export async function computeBestBets(
   let closestMisses: FallbackBet[] = []
   let mostLikelyWinners: FallbackBet[] = []
   
-  if (!bestBet && allUnfilteredBets.length > 0) {
+  if (!bestBet && eloFallbackBets.length > 0) {
     // Attempt 1: Standard filters - find bets that pass all filters
-    let passingBets = allUnfilteredBets.filter(b => passesFilters(b, false, MIN_ROI, false))
+    let passingBets = eloFallbackBets.filter(b => passesFilters(b, false, MIN_ROI, false))
     
     // Attempt 2: Relax ROI to -6%
     if (passingBets.length === 0) {
-      passingBets = allUnfilteredBets.filter(b => passesFilters(b, false, FALLBACK_ROI_RELAXED_1, false))
+      passingBets = eloFallbackBets.filter(b => passesFilters(b, false, FALLBACK_ROI_RELAXED_1, false))
     }
     
     // Attempt 3: Relax ROI to -8%
     if (passingBets.length === 0) {
-      passingBets = allUnfilteredBets.filter(b => passesFilters(b, false, FALLBACK_ROI_RELAXED_2, false))
+      passingBets = eloFallbackBets.filter(b => passesFilters(b, false, FALLBACK_ROI_RELAXED_2, false))
     }
     
     // Attempt 4: Relax odds to -300
     if (passingBets.length === 0) {
-      passingBets = allUnfilteredBets.filter(b => passesFilters(b, true, FALLBACK_ROI_RELAXED_2, false))
+      passingBets = eloFallbackBets.filter(b => passesFilters(b, true, FALLBACK_ROI_RELAXED_2, false))
     }
     
     // Attempt 5: Relax prob to 50%
     if (passingBets.length === 0) {
-      passingBets = allUnfilteredBets.filter(b => passesFilters(b, true, FALLBACK_ROI_RELAXED_2, true))
+      passingBets = eloFallbackBets.filter(b => passesFilters(b, true, FALLBACK_ROI_RELAXED_2, true))
     }
     
     // closestMisses = bets that passed progressive filters, sorted by score
     closestMisses = passingBets.slice(0, 5)
     
     // mostLikelyWinners = highest probability bets (for context)
-    mostLikelyWinners = allUnfilteredBets
+    mostLikelyWinners = eloFallbackBets
       .filter(b => b.bestPrice >= MAX_JUICE_ODDS)
       .sort((a, b) => b.consensusProbability - a.consensusProbability)
       .slice(0, 5)
