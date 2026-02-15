@@ -197,6 +197,8 @@ export interface ESPNOddsData {
   games: ESPNOdds[]
   lastUpdated: string
   error: string | null
+  scoreboardGamesToday?: number
+  scoreboardGamesTomorrow?: number
 }
 
 // Extended ESPN sports list for odds (includes more sports)
@@ -405,6 +407,14 @@ export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
     }
   }
   
+  let scoreboardGamesToday = 0
+  let scoreboardGamesTomorrow = 0
+  for (const { gameIds, day } of sportsWithGameIds) {
+    if (day === 'today') scoreboardGamesToday += gameIds.length
+    else scoreboardGamesTomorrow += gameIds.length
+  }
+  console.log(`📅 Total scoreboard games: ${scoreboardGamesToday} today, ${scoreboardGamesTomorrow} tomorrow`)
+  
   const COLLEGE_LEAGUES = new Set(['mens-college-basketball', 'college-football'])
   
   for (const entry of Array.from(sportGameMap.values())) {
@@ -438,7 +448,9 @@ export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
   const oddsData: ESPNOddsData = {
     games: allOdds,
     lastUpdated: new Date().toISOString(),
-    error: null
+    error: null,
+    scoreboardGamesToday,
+    scoreboardGamesTomorrow
   }
   
   // Update cache
