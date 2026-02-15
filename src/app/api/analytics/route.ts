@@ -49,21 +49,24 @@ export async function GET() {
       sportCounts[league] = (sportCounts[league] || 0) + 1
     }
     
-    // Separate today vs tomorrow games
-    const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-    const tomorrowDate = new Date()
-    tomorrowDate.setDate(tomorrowDate.getDate() + 1)
-    const tomorrowET = tomorrowDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    // Use scoreboard game counts (all games on ESPN, not just ones with odds)
+    // Falls back to counting from odds data if scoreboard counts aren't available
+    let gamesToday = espnData.scoreboardGamesToday ?? 0
+    let gamesTomorrow = espnData.scoreboardGamesTomorrow ?? 0
     
-    let gamesToday = 0
-    let gamesTomorrow = 0
-    
-    for (const game of espnData.games) {
-      const gameDate = new Date(game.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-      if (gameDate === todayET) {
-        gamesToday++
-      } else if (gameDate === tomorrowET) {
-        gamesTomorrow++
+    if (!espnData.scoreboardGamesToday && !espnData.scoreboardGamesTomorrow) {
+      const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+      const tomorrowDate = new Date()
+      tomorrowDate.setDate(tomorrowDate.getDate() + 1)
+      const tomorrowET = tomorrowDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+      
+      for (const game of espnData.games) {
+        const gameDate = new Date(game.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+        if (gameDate === todayET) {
+          gamesToday++
+        } else if (gameDate === tomorrowET) {
+          gamesTomorrow++
+        }
       }
     }
     
