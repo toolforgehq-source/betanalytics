@@ -2575,7 +2575,7 @@ export function formatBestBetForContext(result: BestBetResult): string {
         lines.push('')
         for (let i = 1; i < Math.min(4, closestMisses.length); i++) {
           const alt = closestMisses[i]
-          lines.push(`#${i + 1}: ${alt.team} @ ${formatOdds(alt.bestPrice)} (Score: ${alt.score}/100, ${alt.consensusProbability}% prob)`)
+          lines.push(`#${i + 1}: ${alt.team} @ ${formatOdds(alt.bestPrice)} | ${alt.awayTeam} @ ${alt.homeTeam} | ${alt.sportName} (Score: ${alt.score}/100, ${alt.consensusProbability}% prob)`)
         }
         lines.push('')
       }
@@ -2739,7 +2739,7 @@ export function formatBestBetForContext(result: BestBetResult): string {
         altPickDisplay = `${alt.team} ML @ ${formatOdds(alt.bestPrice)}`
       }
       const sportEmoji = getSportEmoji(alt.sportName)
-      lines.push(`#${i + 2}: ${sportEmoji} ${altPickDisplay} | ${alt.sportName} | Score: ${alt.score}/100 | ${alt.eloProbability || alt.consensusProbability}% prob | ${alt.bestBook}`)
+      lines.push(`#${i + 2}: ${sportEmoji} ${altPickDisplay} | ${alt.awayTeam} @ ${alt.homeTeam} | ${alt.sportName} | Score: ${alt.score}/100 | ${alt.eloProbability || alt.consensusProbability}% prob | ${alt.bestBook}`)
     }
     lines.push('')
     lines.push('*Use these alternatives if user says they can\'t bet the top pick, wants a different sport, or asks "what else?"*')
@@ -3566,7 +3566,7 @@ export function formatParlayForContext(parlay: ParlayResult): string {
       const leg = parlay.aggressiveParlay[i]
       const emoji = getSportEmoji(leg.sportName)
       const modelProb = getModelProb(leg)
-      lines.push(`${emoji} Leg ${i + 1}: ${formatBetDisplay(leg)} @ ${formatOdds(leg.bestPrice)} (${modelProb}%)`)
+      lines.push(`${emoji} Leg ${i + 1}: ${formatBetDisplay(leg)} @ ${formatOdds(leg.bestPrice)} | ${leg.awayTeam} @ ${leg.homeTeam} (${modelProb}%)`)
     }
     lines.push('')
   }
@@ -3852,7 +3852,7 @@ export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription:
         altPickDisplay = `${alt.team} ML @ ${formatOdds(alt.bestPrice)}`
       }
       const sportEmoji = getSportEmoji(alt.sportName)
-      lines.push(`#${i + 2}: ${sportEmoji} ${altPickDisplay} | ${alt.sportName} | Score: ${alt.score}/100 | ${alt.eloProbability || alt.consensusProbability}% prob | ${alt.bestBook}`)
+      lines.push(`#${i + 2}: ${sportEmoji} ${altPickDisplay} | ${alt.awayTeam} @ ${alt.homeTeam} | ${alt.sportName} | Score: ${alt.score}/100 | ${alt.eloProbability || alt.consensusProbability}% prob | ${alt.bestBook}`)
     }
     lines.push('')
     lines.push('*Use these alternatives if user says they can\'t bet the top pick, wants a different sport, or asks "what else?"*')
