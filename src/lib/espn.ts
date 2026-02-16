@@ -225,6 +225,16 @@ const ESPN_ODDS_SPORTS = [
   { sport: 'tennis', league: 'atp', name: 'ATP Tennis' },
 ]
 
+const COLLEGE_GROUPS: Record<string, string> = {
+  'mens-college-basketball': '50',
+  'college-football': '80',
+}
+
+function getScoreboardParams(league: string, dateStr: string): string {
+  const group = COLLEGE_GROUPS[league]
+  return group ? `?dates=${dateStr}&groups=${group}` : `?dates=${dateStr}`
+}
+
 // Cache for ESPN odds (15 minutes - can refresh more often since it's free)
 const ESPN_ODDS_CACHE_EXPIRY_MS = 15 * 60 * 1000
 let espnOddsCache: ESPNOddsData | null = null
@@ -331,10 +341,9 @@ async function fetchESPNGameIds(sport: string, league: string, date?: Date): Pro
   try {
     let url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard`
     
-    // Add date parameter if provided
     if (date) {
       const dateStr = getESPNDateString(date)
-      url += `?dates=${dateStr}`
+      url += getScoreboardParams(league, dateStr)
     }
     
     const response = await fetch(url, {
@@ -485,7 +494,7 @@ export async function searchESPNGameByTeams(teamTokens: string[]): Promise<ESPNO
   for (const { sport, league, name: leagueName } of ESPN_ODDS_SPORTS) {
     try {
       const dateStr = getESPNDateString(today)
-      const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard?dates=${dateStr}`
+      const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard${getScoreboardParams(league, dateStr)}`
       const response = await fetch(url, { headers: { 'Accept': 'application/json' }, cache: 'no-store' })
       if (!response.ok) continue
 
@@ -885,9 +894,7 @@ async function fetchESPNScoreboard(sport: string, league: string, leagueName: st
       (etDate.getMonth() + 1).toString().padStart(2, '0') + 
       etDate.getDate().toString().padStart(2, '0')
     
-    // CRITICAL: Pass dates parameter to get TODAY's games
-    // Without this, ESPN returns yesterday's games (all "Final")
-    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard?dates=${dateStr}`
+    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard${getScoreboardParams(league, dateStr)}`
     console.log(`[fetchESPNScoreboard] Fetching ${leagueName} games for date ${dateStr}: ${url}`)
     
     const response = await fetch(url, {
