@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import { Activity, Shield, BarChart3, CheckCircle, Clock, Target, Zap, ChevronDown, TrendingUp, User } from 'lucide-react'
+import { Activity, Shield, BarChart3, CheckCircle, Clock, Target, Zap, ChevronDown, TrendingUp, User, MessageSquare } from 'lucide-react'
 import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
 
@@ -193,8 +193,88 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* How It Works Section */}
+        {/* Chat Interface Highlight Section */}
         <section className="py-16 px-4 bg-slate-900/30">
+          <div className="container mx-auto max-w-6xl">
+            <div className="grid md:grid-cols-2 gap-10 items-center">
+              <div>
+                <div className="inline-flex items-center gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-full px-4 py-1.5 mb-6">
+                  <MessageSquare className="w-4 h-4 text-cyan-400" />
+                  <span className="text-sm text-cyan-400 font-medium">AI Chat Interface</span>
+                </div>
+                <h2 className="text-3xl font-bold mb-4">
+                  They Give You Picks.{' '}
+                  <span className="bg-gradient-to-r from-blue-400 to-cyan-300 bg-clip-text text-transparent">
+                    We Give You a Conversation With The Math.
+                  </span>
+                </h2>
+                <p className="text-slate-300 text-lg mb-6">
+                  Ask questions about any game, any team, any matchup. Our AI doesn&apos;t just hand you a list &mdash; it walks you through the Elo ratings, injury adjustments, and edge calculations in real time.
+                </p>
+                <ul className="space-y-3 mb-8">
+                  <li className="flex items-start gap-3">
+                    <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+                    <span className="text-slate-300">&ldquo;What&apos;s the best bet tonight?&rdquo; &mdash; get a full breakdown, not just a name</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+                    <span className="text-slate-300">&ldquo;Should I take Lakers -5.5?&rdquo; &mdash; see the exact Elo edge for or against</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <CheckCircle className="w-5 h-5 text-green-400 flex-shrink-0 mt-0.5" />
+                    <span className="text-slate-300">&ldquo;How does the injury affect the line?&rdquo; &mdash; quantified impact, not guesswork</span>
+                  </li>
+                </ul>
+                <Link
+                  href="/signup"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
+                >
+                  <MessageSquare className="w-5 h-5" />
+                  Try the AI Chat Free
+                </Link>
+              </div>
+
+              <div className="bg-slate-950/60 backdrop-blur-sm border border-slate-700/50 rounded-2xl p-5 shadow-2xl">
+                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-800">
+                  <div className="w-3 h-3 rounded-full bg-red-500/60"></div>
+                  <div className="w-3 h-3 rounded-full bg-yellow-500/60"></div>
+                  <div className="w-3 h-3 rounded-full bg-green-500/60"></div>
+                  <span className="text-xs text-slate-500 ml-2">BetAnalytics AI Chat</span>
+                </div>
+                <div className="space-y-4">
+                  <div className="flex justify-end">
+                    <div className="bg-gradient-to-br from-blue-500 to-cyan-400 text-white rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[80%] text-sm">
+                      What&apos;s the best NBA bet tonight?
+                    </div>
+                  </div>
+                  <div className="flex justify-start">
+                    <div className="bg-slate-800/70 text-slate-100 rounded-2xl rounded-bl-sm px-4 py-3 max-w-[90%] text-sm space-y-2">
+                      <p className="font-semibold text-blue-300">Celtics vs Knicks &mdash; Edge Found</p>
+                      <p className="text-slate-300">Our Elo model gives Celtics a <span className="text-white font-semibold">78.3%</span> win probability.</p>
+                      <p className="text-slate-300">Market implies <span className="text-slate-400">64.1%</span>.</p>
+                      <p className="text-green-400 font-semibold">That&apos;s a +14.2% edge.</p>
+                      <p className="text-slate-400 text-xs">Injury adj: Knicks missing starting PG (-20 Elo)</p>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <div className="bg-gradient-to-br from-blue-500 to-cyan-400 text-white rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[80%] text-sm">
+                      How confident is the model?
+                    </div>
+                  </div>
+                  <div className="flex justify-start">
+                    <div className="bg-slate-800/70 text-slate-100 rounded-2xl rounded-bl-sm px-4 py-3 max-w-[90%] text-sm space-y-1">
+                      <p className="text-slate-300">Celtics Elo: <span className="text-white font-semibold">1847</span> vs Knicks: <span className="text-white font-semibold">1692</span></p>
+                      <p className="text-slate-300">155-point gap + injury factor = high confidence edge.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* How It Works Section */}
+        <section className="py-16 px-4">
           <div className="container mx-auto max-w-5xl">
             <h2 className="text-3xl font-bold text-center mb-4">
               How Our AI Sports Picks Work
@@ -311,7 +391,7 @@ export default function HomePage() {
               />
               <FAQItem 
                 question="What makes this different from other betting tools?"
-                answer="We don't give opinions. We calculate independent probabilities using Elo ratings, then show you where our model disagrees with the market. Full transparency - you see every calculation, every adjustment, every edge."
+                answer="Most tools give you a list of picks and say 'trust us.' We give you an AI chat interface where you can ask about any game, any matchup, and get a full Elo breakdown in real time. We calculate independent probabilities using Elo ratings, then show you where our model disagrees with the market. Full transparency - you see every calculation, every adjustment, every edge."
               />
               <FAQItem 
                 question="How do injury adjustments work?"
@@ -342,7 +422,7 @@ export default function HomePage() {
                 <PricingFeature text="Elo-based edge detection across all sports" />
                 <PricingFeature text="Real-time injury-adjusted probabilities" />
                 <PricingFeature text="Full methodology transparency" />
-                <PricingFeature text="Unlimited queries" />
+                <PricingFeature text="AI chat interface — ask about any game" />
                 <PricingFeature text="All major sports covered" />
                 <PricingFeature text="Player props analysis" />
                 <PricingFeature text="Hourly data updates" />
