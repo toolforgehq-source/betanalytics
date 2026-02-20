@@ -3169,25 +3169,8 @@ export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult 
     return bValue - aValue
   })
   
-  // Build safe parlay (2 legs) - pick top 2 VALUE bets from different games
-  const safeParlay: RankedBet[] = []
-  const usedGameIds = new Set<string>()
-  
-  for (const bet of sortedBets) {
-    if (usedGameIds.has(bet.gameId)) continue
-    safeParlay.push(bet)
-    usedGameIds.add(bet.gameId)
-    if (safeParlay.length === 2) break
-  }
-  
-  // Build aggressive parlay (3 legs) - continue from safe parlay
-  const aggressiveParlay = [...safeParlay]
-  for (const bet of sortedBets) {
-    if (usedGameIds.has(bet.gameId)) continue
-    aggressiveParlay.push(bet)
-    usedGameIds.add(bet.gameId)
-    if (aggressiveParlay.length === 3) break
-  }
+  const safeParlay = buildParlayWithLegs(sortedBets, 2) || []
+  const aggressiveParlay = buildParlayWithLegs(sortedBets, 3) || []
   
   // Calculate combined probability using MODEL probability (Elo when available)
   const safeCombinedProb = safeParlay.length === 2
@@ -3249,6 +3232,8 @@ function calculatePayout(americanOdds: number): number {
  * Build a parlay with specified number of legs from ranked bets
  * Returns null if not enough qualifying bets available
  */
+const MAX_UNDERDOG_LEGS = 2
+
 function buildParlayWithLegs(
   sortedBets: RankedBet[], 
   legCount: number, 
@@ -3256,13 +3241,17 @@ function buildParlayWithLegs(
 ): RankedBet[] | null {
   const parlay: RankedBet[] = []
   const localUsedGameIds = new Set(usedGameIds)
+  let underdogCount = 0
   
   for (const bet of sortedBets) {
-    // Skip if we already have a bet from this game (correlation check)
     if (localUsedGameIds.has(bet.gameId)) continue
+    
+    const isUnderdog = bet.bestPrice > 0
+    if (isUnderdog && underdogCount >= MAX_UNDERDOG_LEGS && legCount >= 3) continue
     
     parlay.push(bet)
     localUsedGameIds.add(bet.gameId)
+    if (isUnderdog) underdogCount++
     
     if (parlay.length === legCount) break
   }
