@@ -2426,7 +2426,7 @@ export async function computeBestBets(
   return {
     bestBet,
     runnerUp,
-    allRankedBets: eloPoweredBets.slice(0, 10),  // Only Elo-powered bets
+    allRankedBets: eloPoweredBets,  // All Elo-powered bets (used for parlays + alternatives)
     allEloBets: filteredEloBets,  // Filtered bets with Elo data for sport-specific queries (star player filter applied)
     calculatedAt: now,
     gamesAnalyzed: games.length,

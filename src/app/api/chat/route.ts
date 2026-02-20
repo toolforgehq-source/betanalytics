@@ -2053,9 +2053,8 @@ export async function POST(request: Request) {
           const enrichedGames = await convertESPNOddsToEnrichedGames(espnOdds)
           const bestBetResult = await computeBestBets(enrichedGames)
           
-          if (bestBetResult.allEloBets && bestBetResult.allEloBets.length >= legCount) {
-            // Compute enhanced parlay with requested leg count
-            const enhancedParlay = computeEnhancedParlay(bestBetResult.allEloBets, legCount, true)
+          if (bestBetResult.allRankedBets && bestBetResult.allRankedBets.length >= legCount) {
+            const enhancedParlay = computeEnhancedParlay(bestBetResult.allRankedBets, legCount, true)
             
             if (enhancedParlay) {
               // Track each parlay leg for outcome tracking
