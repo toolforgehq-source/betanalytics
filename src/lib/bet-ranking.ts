@@ -1084,7 +1084,7 @@ export async function analyzeGame(
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
       edge: Math.round(edge * 1000) / 10, // Now based on Elo + situational vs market
-      eloProbability: eloProbability ? Math.round(eloProbability * 1000) / 10 : undefined,
+      eloProbability: eloProbability ? Math.round(adjustedModelProbability * 1000) / 10 : undefined,
       eloConfidence,
       homeElo,
       awayElo,
@@ -1864,7 +1864,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
       edge: Math.round(edge * 1000) / 10,
-      eloProbability: Math.round(eloProbability * 1000) / 10,
+      eloProbability: Math.round(modelProbability * 1000) / 10,
       eloConfidence: eloResult.confidence,
       homeElo: eloResult.homeRating,
       awayElo: eloResult.awayRating,
