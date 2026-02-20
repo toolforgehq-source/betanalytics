@@ -68,21 +68,24 @@ const RECENCY_DECAY: Record<string, number> = {
 }
 
 // Home advantage in Elo points (added to home team's rating for prediction)
+// Calibrated to match real-world home win rates:
+//   55 pts → 57.8%  (modern NBA)
+//   80 pts → 61.3%  (college basketball)
+//   60 pts → 58.5%  (European soccer)
 const HOME_ADVANTAGE: Record<string, number> = {
-  'NBA': 100,
-  'NFL': 48,      // ~2.5 points spread equivalent
-  'NHL': 30,      // ~54-55% home win rate, ~0.3 goals expected margin
-  'MLB': 40,
-  'NCAAB': 100,
-  'NCAAF': 80,
-  // Soccer - home advantage is significant
-  'soccer_epl': 80,
-  'soccer_spain_la_liga': 80,
-  'soccer_germany_bundesliga': 80,
-  'soccer_italy_serie_a': 80,
-  'soccer_france_ligue_one': 80,
-  'soccer_usa_mls': 70,
-  'soccer_uefa_champs_league': 60,  // Neutral-ish venues in later rounds
+  'NBA': 55,       // Modern NBA home win rate ~56-58% (was 100, way too high → 64%)
+  'NFL': 48,       // ~2.5 points spread equivalent, ~57% home win rate
+  'NHL': 30,       // ~54-55% home win rate, ~0.3 goals expected margin
+  'MLB': 40,       // ~54-56% home win rate
+  'NCAAB': 80,     // College home court is strong ~61-63% (was 100)
+  'NCAAF': 65,     // College home field ~59-61% (was 80)
+  'soccer_epl': 60,           // EPL home win rate ~55-58% (was 80)
+  'soccer_spain_la_liga': 60, // La Liga similar to EPL (was 80)
+  'soccer_germany_bundesliga': 60, // Bundesliga similar (was 80)
+  'soccer_italy_serie_a': 60,      // Serie A similar (was 80)
+  'soccer_france_ligue_one': 60,   // Ligue 1 similar (was 80)
+  'soccer_usa_mls': 55,       // MLS slightly lower (was 70)
+  'soccer_uefa_champs_league': 45, // Neutral-ish venues in later rounds (was 60)
 }
 
 // ============================================
