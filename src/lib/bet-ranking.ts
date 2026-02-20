@@ -219,6 +219,31 @@ const MIN_SPREAD_ROI = 0.5           // 0.5% minimum ROI for spreads
 const MAX_SANE_EDGE = 0.25           // 25% maximum edge - anything higher is flagged as suspicious
 
 // ============================================
+// ELO CONFIDENCE BLENDING
+// ============================================
+// When the Elo model has low confidence (few games processed), the ratings are unreliable.
+// A team at default ~1500 + home advantage creates ~64% win probability regardless of actual strength.
+// This creates absurd "edges" (50%+) against market odds for underdogs the model knows nothing about.
+//
+// Fix: Blend Elo probability with market consensus based on confidence level.
+// High confidence = trust Elo heavily. Low confidence = lean on market pricing.
+const ELO_CONFIDENCE_WEIGHTS: Record<string, number> = {
+  'high': 0.90,      // >= 20 games: 90% Elo, 10% market
+  'medium': 0.70,    // >= 10 games: 70% Elo, 30% market
+  'low': 0.40,       // >= 5 games:  40% Elo, 60% market
+  'very_low': 0.20,  // < 5 games:   20% Elo, 80% market
+}
+
+function blendWithMarket(
+  eloProbability: number,
+  marketProbability: number,
+  confidence: string
+): number {
+  const eloWeight = ELO_CONFIDENCE_WEIGHTS[confidence] ?? 0.50
+  return eloWeight * eloProbability + (1 - eloWeight) * marketProbability
+}
+
+// ============================================
 // IMPROVED SPREAD BETTING PARAMETERS (System-wide)
 // ============================================
 // These improvements apply to ALL bet analysis functions, not just backtest
@@ -982,19 +1007,15 @@ export async function analyzeGame(
     let awayElo: number | undefined
     
     if (eloResult) {
-      // Elo returns home team win probability, so flip for away team
       eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
       eloConfidence = eloResult.confidence
       homeElo = eloResult.homeRating
       awayElo = eloResult.awayRating
       
-      // Use Elo as the model probability for edge calculation
-      // Note: We now use Elo even with 'very_low' confidence to ensure all sports have Elo-based recommendations
-      // The confidence level is still tracked and displayed to users
-      modelProbability = eloProbability
+      modelProbability = blendWithMarket(eloProbability, consensus.consensusProb, eloResult.confidence)
       
-      if (eloResult.confidence === 'very_low') {
-        console.log(`[analyzeGame] Using Elo with very_low confidence for ${game.homeTeam} vs ${game.awayTeam} (${game.sportName})`)
+      if (eloResult.confidence === 'very_low' || eloResult.confidence === 'low') {
+        console.log(`[analyzeGame] Blending Elo (${(eloProbability * 100).toFixed(1)}%) with market (${(consensus.consensusProb * 100).toFixed(1)}%) at ${eloResult.confidence} confidence → ${(modelProbability * 100).toFixed(1)}% for ${team} in ${game.homeTeam} vs ${game.awayTeam}`)
       }
     }
     
@@ -1031,22 +1052,19 @@ export async function analyzeGame(
       situationalAdj.notes.forEach(note => console.log(`  - ${note}`))
     }
     
-    // Calculate edge: adjusted model probability - implied probability from best price
-    // This is the key change: edge is now based on our Elo model + situational factors vs market
     const edge = adjustedModelProbability - bestPrice.impliedProb
     
-    // Calculate Expected Value and ROI using ADJUSTED probability (Elo + situational factors)
+    if (edge > MAX_SANE_EDGE) {
+      console.warn(`[analyzeGame] SANITY CHECK FAILED: ${team} ML has edge ${(edge * 100).toFixed(1)}% > 25% max. Skipping.`)
+      continue
+    }
+    
     const ev = calculateExpectedValue(bestPrice.price, adjustedModelProbability)
     const roi = calculateROI(ev)
     
-    // Check minimum thresholds using ADJUSTED probability
     if (adjustedModelProbability < MIN_PROBABILITY) continue
     if (edge < MIN_EDGE) continue
-    
-    // Also require positive EV
     if (ev <= 0) continue
-    
-    // Require minimum ROI of 1% to avoid tiny-edge heavy favorites
     if (roi < 1) continue
     
     // Calculate score using EV-based scoring system with adjusted probability
@@ -1794,7 +1812,11 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     
     const isHomeTeam = team === game.homeTeam
     const eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
-    let modelProbability = eloProbability
+    let modelProbability = blendWithMarket(eloProbability, consensusProb, eloResult.confidence)
+    
+    if (eloResult.confidence === 'very_low' || eloResult.confidence === 'low') {
+      console.log(`[analyzeGameForSportQuery] Blending Elo (${(eloProbability * 100).toFixed(1)}%) with market (${(consensusProb * 100).toFixed(1)}%) at ${eloResult.confidence} confidence → ${(modelProbability * 100).toFixed(1)}% for ${team}`)
+    }
     
     const eloLeagueForSituational = SPORT_TO_ELO_LEAGUE[game.sport] || game.sport
     const opponentName = isHomeTeam ? game.awayTeam : game.homeTeam
@@ -1818,6 +1840,12 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     modelProbability = applyAdjustment(modelProbability, situationalAdj.totalAdjustment)
     
     const edge = modelProbability - bestPrice.impliedProb
+    
+    if (edge > MAX_SANE_EDGE) {
+      console.warn(`[analyzeGameForSportQuery] SANITY CHECK FAILED: ${team} ML has edge ${(edge * 100).toFixed(1)}% > 25% max. Skipping.`)
+      continue
+    }
+    
     const ev = calculateExpectedValue(bestPrice.price, modelProbability)
     const roi = calculateROI(ev)
     const score = calculateBetScore(modelProbability, edge, roi)
