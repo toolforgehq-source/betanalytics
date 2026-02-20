@@ -3083,19 +3083,6 @@ export async function getCachedBestBet(): Promise<BestBetResult | null> {
  * 
  * This prioritizes VALUE over raw probability, avoiding -1800 favorites
  */
-function calculateParlayValueScore(bet: RankedBet): number {
-  const modelProb = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
-  
-  // Edge is the key metric - how much better is our model vs the market?
-  const edge = bet.edge
-  
-  // Small probability bonus (0-0.3) to slightly prefer higher probability when edges are similar
-  const probabilityBonus = Math.min(0.3, (modelProb - 50) / 100)
-  
-  // Value score: prioritize edge, with small probability bonus
-  // A bet with 5% edge and 60% prob scores higher than 0% edge and 95% prob
-  return edge * (1 + probabilityBonus)
-}
 
 /**
  * Minimum odds threshold for parlay legs
@@ -3161,13 +3148,7 @@ export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult 
     betsToUse = moderateBets.length >= 2 ? moderateBets : moneylineBets
   }
   
-  // STEP 3: Sort by VALUE SCORE (not raw probability)
-  // This prioritizes bets where our model has edge over the market
-  const sortedBets = [...betsToUse].sort((a, b) => {
-    const aValue = calculateParlayValueScore(a)
-    const bValue = calculateParlayValueScore(b)
-    return bValue - aValue
-  })
+  const sortedBets = [...betsToUse].sort((a, b) => b.edge - a.edge)
   
   const safeParlay = buildParlayWithLegs(sortedBets, 2) || []
   const aggressiveParlay = buildParlayWithLegs(sortedBets, 3) || []
@@ -3232,8 +3213,6 @@ function calculatePayout(americanOdds: number): number {
  * Build a parlay with specified number of legs from ranked bets
  * Returns null if not enough qualifying bets available
  */
-const MAX_UNDERDOG_LEGS = 2
-
 function buildParlayWithLegs(
   sortedBets: RankedBet[], 
   legCount: number, 
@@ -3241,17 +3220,12 @@ function buildParlayWithLegs(
 ): RankedBet[] | null {
   const parlay: RankedBet[] = []
   const localUsedGameIds = new Set(usedGameIds)
-  let underdogCount = 0
   
   for (const bet of sortedBets) {
     if (localUsedGameIds.has(bet.gameId)) continue
     
-    const isUnderdog = bet.bestPrice > 0
-    if (isUnderdog && underdogCount >= MAX_UNDERDOG_LEGS && legCount >= 3) continue
-    
     parlay.push(bet)
     localUsedGameIds.add(bet.gameId)
-    if (isUnderdog) underdogCount++
     
     if (parlay.length === legCount) break
   }
@@ -3351,12 +3325,7 @@ export function computeEnhancedParlay(
     betsToUse = moderateBets.length >= requestedLegs ? moderateBets : moneylineBets
   }
   
-  // Sort by value score (prioritizes edge over raw probability)
-  const sortedBets = [...betsToUse].sort((a, b) => {
-    const aValue = calculateParlayValueScore(a)
-    const bValue = calculateParlayValueScore(b)
-    return bValue - aValue
-  })
+  const sortedBets = [...betsToUse].sort((a, b) => b.edge - a.edge)
   
   // Build the requested parlay
   const mainParlay = buildParlayWithLegs(sortedBets, requestedLegs)
