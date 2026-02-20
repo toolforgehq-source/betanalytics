@@ -1003,9 +1003,19 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   candidatePool.sort((a, b) => b.score - a.score)
   const topResults = candidatePool.slice(0, count * 3)
 
+  if (topResults.length === 0) {
+    console.log('[analyzeBestProps] No candidates at all, returning empty')
+    return []
+  }
+
   const analyses: PropAnalysisResult[] = []
   const fallbackAnalyses: PropAnalysisResult[] = []
+  const seenPlayers = new Set<string>()
+
   for (const r of topResults) {
+    if (seenPlayers.has(r.prop.playerName)) continue
+    seenPlayers.add(r.prop.playerName)
+
     const analysis = await analyzePlayerProp({
       playerName: r.prop.playerName,
       statType: MARKET_TO_STAT_TYPE[r.prop.market] || null,
@@ -1014,16 +1024,50 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
       sport: request.sport || null,
       platform: null,
     })
+
+    if (!analysis.player) {
+      const sportNameMap: Record<string, string> = {
+        'basketball_nba': 'NBA', 'basketball_ncaab': 'NCAAB',
+        'americanfootball_nfl': 'NFL', 'americanfootball_ncaaf': 'NCAAF',
+        'icehockey_nhl': 'NHL', 'baseball_mlb': 'MLB',
+      }
+      analysis.player = {
+        name: r.prop.playerName,
+        sport: sportNameMap[r.game.sport] || r.game.sport,
+        position: '',
+        gamesPlayed: 0,
+        reliabilityScore: 0,
+      }
+    }
+
+    if (!analysis.recommendation.pick && analysis.marketData) {
+      const overProb = analysis.marketData.consensusOverProb / 100
+      const underProb = analysis.marketData.consensusUnderProb / 100
+      if (r.direction === 'over') {
+        analysis.recommendation.pick = 'Over'
+        analysis.recommendation.modelProbability = overProb
+        analysis.recommendation.marketImpliedProbability = overProb
+      } else {
+        analysis.recommendation.pick = 'Under'
+        analysis.recommendation.modelProbability = underProb
+        analysis.recommendation.marketImpliedProbability = underProb
+      }
+      analysis.recommendation.confidence = 'low'
+      if (!analysis.recommendation.reasons.length) {
+        analysis.recommendation.reasons.push(`Market consensus: ${(analysis.recommendation.modelProbability * 100).toFixed(1)}% probability`)
+      }
+    }
+
     const hasDirectionalWarning = analysis.recommendation.warnings.some(w => w.includes('average') && (w.includes('above the line') || w.includes('below the line')))
     if (analysis.recommendation.edge > 0 && !hasDirectionalWarning) {
       analyses.push(analysis)
-    } else if (fallbackAnalyses.length < count) {
+    } else if (analysis.recommendation.pick) {
       fallbackAnalyses.push(analysis)
     }
     if (analyses.length >= count) break
   }
 
-  if (analyses.length > 0) return analyses
+  if (analyses.length > 0) return analyses.slice(0, count)
   return fallbackAnalyses.slice(0, count)
 }
 
@@ -1223,6 +1267,8 @@ export function formatMultiPropAnalysisForContext(analyses: PropAnalysisResult[]
     lines.push(`--- #${i + 1} ---`)
     if (a.player) {
       lines.push(`${a.player.name} (${a.player.sport})`)
+    } else if (a.query.playerName) {
+      lines.push(`${a.query.playerName}`)
     }
 
     if (rec.pick && a.query.line !== null) {
@@ -1251,7 +1297,7 @@ export function formatMultiPropAnalysisForContext(analyses: PropAnalysisResult[]
   }
 
   const parlayLegs = analyses
-    .filter(a => a.recommendation.pick && a.query.statType && a.player)
+    .filter(a => a.recommendation.pick && a.query.statType)
     .map(a => ({
       player: a.player!.name,
       stat: a.query.statType!,
@@ -1418,7 +1464,31 @@ function buildRecommendation(
     reasons.push(usageAdj.description)
   }
 
-  if (!modelResult && !seasonStats) {
+  if (!modelResult && !seasonStats && marketData && query.line !== null) {
+    if (query.direction === 'over') {
+      pick = 'Over'
+      modelProbability = marketData.consensusOverProb / 100
+      marketImpliedProbability = modelProbability
+    } else if (query.direction === 'under') {
+      pick = 'Under'
+      modelProbability = marketData.consensusUnderProb / 100
+      marketImpliedProbability = modelProbability
+    } else {
+      const overProb = marketData.consensusOverProb / 100
+      const underProb = marketData.consensusUnderProb / 100
+      if (overProb >= underProb) {
+        pick = 'Over'
+        modelProbability = overProb
+      } else {
+        pick = 'Under'
+        modelProbability = underProb
+      }
+      marketImpliedProbability = modelProbability
+    }
+    confidence = 'low'
+    reasons.push(`Market consensus: ${(modelProbability * 100).toFixed(1)}% probability`)
+    warnings.push('Using market data only — player stats model not available')
+  } else if (!modelResult && !seasonStats) {
     warnings.push('No player stats data available — recommendation based on market data only')
   }
 
