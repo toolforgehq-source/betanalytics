@@ -864,14 +864,19 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   }
 
   const statsData = await getPlayerStatsData()
-  const results: Array<{
+  const hasModelData = !!statsData
+  console.log(`[analyzeBestProps] Props data: ${propsData.length} games, model data: ${hasModelData}`)
+
+  type ScoredProp = {
     prop: PlayerProp
     game: GamePlayerProps
     score: number
     modelProb: number
     edge: number
     direction: 'over' | 'under'
-  }> = []
+  }
+  const results: ScoredProp[] = []
+  const marketFallbacks: ScoredProp[] = []
 
   for (const game of propsData) {
     if (request.sport) {
@@ -961,30 +966,42 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
         let edge = finalProb - side.implied
         const confScale = modelResult ? (CONFIDENCE_EDGE_SCALE[modelResult.confidence] || 0.4) : 0.4
         edge = Math.max(-MAX_REALISTIC_EDGE, Math.min(MAX_REALISTIC_EDGE, edge * confScale))
-        if (edge < 0.005) continue
-        if (finalProb < 0.48) continue
 
-        let score = finalProb * 60 + edge * 40
-        if (modelResult) {
-          if (modelResult.reliabilityScore && modelResult.reliabilityScore >= 70) score *= 1.15
-          if (modelResult.confidence === 'high') score *= 1.1
-        }
-        if (playerAvg > 0 && side.dir === 'over' && playerAvg > prop.line) score *= 1.2
-
-        results.push({
+        const candidate: ScoredProp = {
           prop: { ...prop, overOdds: side.dir === 'over' ? side.bestPrice : prop.overOdds, underOdds: side.dir === 'under' ? side.bestPrice : prop.underOdds },
           game,
-          score,
+          score: finalProb * 60 + Math.max(edge, 0) * 40,
           modelProb: modelProb > 0 ? modelProb : finalProb,
           edge,
           direction: side.dir,
-        })
+        }
+
+        if (edge >= 0.005 && finalProb >= 0.48) {
+          let score = finalProb * 60 + edge * 40
+          if (modelResult) {
+            if (modelResult.reliabilityScore && modelResult.reliabilityScore >= 70) score *= 1.15
+            if (modelResult.confidence === 'high') score *= 1.1
+          }
+          if (playerAvg > 0 && side.dir === 'over' && playerAvg > prop.line) score *= 1.2
+          candidate.score = score
+          results.push(candidate)
+        } else if (finalProb >= 0.48) {
+          marketFallbacks.push(candidate)
+        }
       }
     }
   }
 
-  results.sort((a, b) => b.score - a.score)
-  const topResults = results.slice(0, count * 3)
+  console.log(`[analyzeBestProps] Edge-filtered results: ${results.length}, market fallbacks: ${marketFallbacks.length}`)
+
+  let candidatePool = results
+  if (results.length === 0 && marketFallbacks.length > 0) {
+    console.log('[analyzeBestProps] No props passed edge filter, using market-data fallback')
+    candidatePool = marketFallbacks
+  }
+
+  candidatePool.sort((a, b) => b.score - a.score)
+  const topResults = candidatePool.slice(0, count * 3)
 
   const analyses: PropAnalysisResult[] = []
   const fallbackAnalyses: PropAnalysisResult[] = []
