@@ -3148,7 +3148,7 @@ export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult 
     betsToUse = moderateBets.length >= 2 ? moderateBets : moneylineBets
   }
   
-  const sortedBets = [...betsToUse].sort((a, b) => b.edge - a.edge)
+  const sortedBets = [...betsToUse].sort((a, b) => b.score - a.score)
   
   const safeParlay = buildParlayWithLegs(sortedBets, 2) || []
   const aggressiveParlay = buildParlayWithLegs(sortedBets, 3) || []
@@ -3325,7 +3325,7 @@ export function computeEnhancedParlay(
     betsToUse = moderateBets.length >= requestedLegs ? moderateBets : moneylineBets
   }
   
-  const sortedBets = [...betsToUse].sort((a, b) => b.edge - a.edge)
+  const sortedBets = [...betsToUse].sort((a, b) => b.score - a.score)
   
   // Build the requested parlay
   const mainParlay = buildParlayWithLegs(sortedBets, requestedLegs)
