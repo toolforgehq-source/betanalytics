@@ -3105,47 +3105,40 @@ const PARLAY_MAX_PROBABILITY = 85
 export function computeParlayOfTheDay(allRankedBets: RankedBet[]): ParlayResult {
   const now = new Date().toISOString()
   
-  // Filter to only moneyline bets WITH Elo data for parlays
-  // Elo is our core differentiator - every parlay leg must be Elo-powered
-  const moneylineBets = allRankedBets.filter(bet => 
-    bet.betType === 'moneyline' && bet.eloProbability !== undefined
-  )
+  const eloBets = allRankedBets.filter(bet => bet.eloProbability !== undefined)
   
-  if (moneylineBets.length < 2) {
+  if (eloBets.length < 2) {
     return {
       safeParlay: null,
       aggressiveParlay: null,
       combinedProbability: null,
       calculatedAt: now,
-      reason: 'Not enough Elo-powered moneyline bets available for a parlay (need at least 2 from different games)'
+      reason: 'Not enough Elo-powered bets available for a parlay (need at least 2 from different games)'
     }
   }
   
-  // Get model probability for a bet (always Elo since we filtered above)
   const getModelProb = (bet: RankedBet) => bet.eloProbability!
   
   // STEP 1: Filter out extreme favorites (poor parlay value)
   // Bets worse than -400 odds or >85% probability are excluded
-  const valueBets = moneylineBets.filter(bet => {
+  const valueBets = eloBets.filter(bet => {
     const prob = getModelProb(bet)
-    const hasReasonableOdds = bet.bestPrice >= PARLAY_MIN_ODDS  // -400 or better (e.g., -300, -150, +100)
+    const hasReasonableOdds = bet.bestPrice >= PARLAY_MIN_ODDS
     const hasReasonableProb = prob >= PARLAY_MIN_PROBABILITY && prob <= PARLAY_MAX_PROBABILITY
-    const hasPositiveEdge = bet.edge > 0  // Our model sees value
+    const hasPositiveEdge = bet.edge > 0
     
     return hasReasonableOdds && hasReasonableProb && hasPositiveEdge
   })
   
-  // STEP 2: If not enough value bets, fall back to moderate favorites (but still exclude extreme)
   let betsToUse = valueBets
   if (valueBets.length < 3) {
-    // Relax the edge requirement but keep the odds/probability filters
-    const moderateBets = moneylineBets.filter(bet => {
+    const moderateBets = eloBets.filter(bet => {
       const prob = getModelProb(bet)
       const hasReasonableOdds = bet.bestPrice >= PARLAY_MIN_ODDS
       const hasReasonableProb = prob >= PARLAY_MIN_PROBABILITY && prob <= PARLAY_MAX_PROBABILITY
       return hasReasonableOdds && hasReasonableProb
     })
-    betsToUse = moderateBets.length >= 2 ? moderateBets : moneylineBets
+    betsToUse = moderateBets.length >= 2 ? moderateBets : eloBets
   }
   
   const sortedBets = [...betsToUse].sort((a, b) => b.score - a.score)
@@ -3293,19 +3286,15 @@ export function computeEnhancedParlay(
 ): EnhancedParlayResult | null {
   const now = new Date().toISOString()
   
-  // Filter to only moneyline bets WITH Elo data for parlays
-  const moneylineBets = allRankedBets.filter(bet => 
-    bet.betType === 'moneyline' && bet.eloProbability !== undefined
-  )
+  const eloBets = allRankedBets.filter(bet => bet.eloProbability !== undefined)
   
-  if (moneylineBets.length < requestedLegs) {
+  if (eloBets.length < requestedLegs) {
     return null
   }
   
   const getModelProb = (bet: RankedBet) => bet.eloProbability!
   
-  // Filter to value bets (reasonable odds, probability, positive edge)
-  const valueBets = moneylineBets.filter(bet => {
+  const valueBets = eloBets.filter(bet => {
     const prob = getModelProb(bet)
     const hasReasonableOdds = bet.bestPrice >= PARLAY_MIN_ODDS
     const hasReasonableProb = prob >= PARLAY_MIN_PROBABILITY && prob <= PARLAY_MAX_PROBABILITY
@@ -3313,16 +3302,15 @@ export function computeEnhancedParlay(
     return hasReasonableOdds && hasReasonableProb && hasPositiveEdge
   })
   
-  // Fall back to moderate bets if not enough value bets
   let betsToUse = valueBets
   if (valueBets.length < requestedLegs) {
-    const moderateBets = moneylineBets.filter(bet => {
+    const moderateBets = eloBets.filter(bet => {
       const prob = getModelProb(bet)
       const hasReasonableOdds = bet.bestPrice >= PARLAY_MIN_ODDS
       const hasReasonableProb = prob >= PARLAY_MIN_PROBABILITY && prob <= PARLAY_MAX_PROBABILITY
       return hasReasonableOdds && hasReasonableProb
     })
-    betsToUse = moderateBets.length >= requestedLegs ? moderateBets : moneylineBets
+    betsToUse = moderateBets.length >= requestedLegs ? moderateBets : eloBets
   }
   
   const sortedBets = [...betsToUse].sort((a, b) => b.score - a.score)
