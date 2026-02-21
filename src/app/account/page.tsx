@@ -24,7 +24,7 @@ export default async function AccountPage() {
         name: session.user.name || '',
       }}
       isSubscribed={subStatus.isSubscribed}
-      questionsRemaining={subStatus.questionsRemaining}
+      trialDaysRemaining={subStatus.trialDaysRemaining}
       edgeAlertsEnabled={edgeAlertsEnabled}
     />
   )

@@ -15,6 +15,7 @@ import { getTodaysLesson, getCurrentDayName } from '@/lib/education'
 interface ChatPageClientProps {
   isSubscribed: boolean
   questionsRemaining: number
+  trialDaysRemaining: number
   termsAccepted: boolean
   checkoutSessionId?: string
 }
@@ -34,6 +35,7 @@ interface SystemStatusData {
 export default function ChatPageClient({ 
   isSubscribed: initialIsSubscribed, 
   questionsRemaining,
+  trialDaysRemaining,
   termsAccepted: initialTermsAccepted,
   checkoutSessionId
 }: ChatPageClientProps) {
@@ -257,6 +259,7 @@ export default function ChatPageClient({
                 ref={chatRef}
                 isSubscribed={isSubscribed}
                 questionsRemaining={questionsRemaining}
+                trialDaysRemaining={trialDaysRemaining}
               />
             )}
           </div>

@@ -23,6 +23,7 @@ export default async function ChatPage({ searchParams }: { searchParams: Promise
     <ChatPageClient 
       isSubscribed={subStatus.isSubscribed}
       questionsRemaining={subStatus.questionsRemaining}
+      trialDaysRemaining={subStatus.trialDaysRemaining}
       termsAccepted={termsAccepted}
       checkoutSessionId={isPostCheckout && !subStatus.isSubscribed ? params.session_id : undefined}
     />

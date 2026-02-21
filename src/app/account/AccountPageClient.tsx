@@ -13,14 +13,14 @@ interface AccountPageClientProps {
     name: string
   }
   isSubscribed: boolean
-  questionsRemaining: number
+  trialDaysRemaining: number
   edgeAlertsEnabled: boolean
 }
 
 export default function AccountPageClient({ 
   user, 
   isSubscribed,
-  questionsRemaining,
+  trialDaysRemaining,
   edgeAlertsEnabled
 }: AccountPageClientProps) {
   const [isLoadingPortal, setIsLoadingPortal] = useState(false)
@@ -160,11 +160,16 @@ export default function AccountPageClient({
               ) : (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
-                    <span className="text-yellow-400 font-semibold">Free Trial</span>
+                    <div className={`w-3 h-3 ${trialDaysRemaining > 0 ? 'bg-yellow-400' : 'bg-red-400'} rounded-full`}></div>
+                    <span className={`${trialDaysRemaining > 0 ? 'text-yellow-400' : 'text-red-400'} font-semibold`}>
+                      {trialDaysRemaining > 0 ? 'Free Trial' : 'Trial Expired'}
+                    </span>
                   </div>
                   <p className="text-slate-300">
-                    You have {questionsRemaining} free question{questionsRemaining !== 1 ? 's' : ''} remaining.
+                    {trialDaysRemaining > 0 
+                      ? `You have ${trialDaysRemaining} day${trialDaysRemaining !== 1 ? 's' : ''} remaining in your free trial.`
+                      : 'Your free trial has expired. Subscribe to continue.'
+                    }
                   </p>
                   <div className="bg-gradient-to-br from-blue-900/20 to-cyan-900/20 border border-blue-500/30 rounded-xl p-4">
                     <p className="text-sm text-slate-300 mb-3">

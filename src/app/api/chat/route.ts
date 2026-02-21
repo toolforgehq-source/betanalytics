@@ -1957,7 +1957,7 @@ export async function POST(request: Request) {
 
     const subStatus = await checkSubscription()
     
-    if (!subStatus.isSubscribed && subStatus.questionsRemaining <= 0) {
+    if (!subStatus.isSubscribed && !subStatus.isFreeTrialAvailable) {
       return NextResponse.json(
         { error: "Subscription required", requiresSubscription: true },
         { status: 403 }
@@ -2075,22 +2075,10 @@ export async function POST(request: Request) {
         
         await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
         
-        // Update question count for non-subscribers
-        if (!subStatus.isSubscribed) {
-          const user = await db.users.findById(session.user.id)
-          if (user) {
-            await db.users.update(session.user.id, { 
-              questionCount: (user.questionCount || 0) + 1
-            })
-          }
-        }
-        
         // Return conversational response
         return NextResponse.json({ 
           message: conversationalResponse,
-          questionsRemaining: subStatus.isSubscribed 
-            ? -1 
-            : Math.max(0, subStatus.questionsRemaining - 1)
+          questionsRemaining: subStatus.questionsRemaining
         })
       } catch (err) {
         console.error('[chat] Error running game analysis:', err)
@@ -2181,22 +2169,10 @@ export async function POST(request: Request) {
               
               await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
               
-              // Update question count for non-subscribers
-              if (!subStatus.isSubscribed) {
-                const user = await db.users.findById(session.user.id)
-                if (user) {
-                  await db.users.update(session.user.id, { 
-                    questionCount: (user.questionCount || 0) + 1
-                  })
-                }
-              }
-              
               // Return conversational response
               return NextResponse.json({ 
                 message: conversationalResponse,
-                questionsRemaining: subStatus.isSubscribed 
-                  ? -1 
-                  : Math.max(0, subStatus.questionsRemaining - 1)
+                questionsRemaining: subStatus.questionsRemaining
               })
             }
           }
@@ -2232,22 +2208,10 @@ export async function POST(request: Request) {
           
           await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
           
-          // Update question count for non-subscribers
-          if (!subStatus.isSubscribed) {
-            const user = await db.users.findById(session.user.id)
-            if (user) {
-              await db.users.update(session.user.id, { 
-                questionCount: (user.questionCount || 0) + 1
-              })
-            }
-          }
-          
           // Return conversational response
           return NextResponse.json({ 
             message: conversationalResponse,
-            questionsRemaining: subStatus.isSubscribed 
-              ? -1 
-              : Math.max(0, subStatus.questionsRemaining - 1)
+            questionsRemaining: subStatus.questionsRemaining
           })
         }
       } catch (err) {
@@ -2319,20 +2283,9 @@ export async function POST(request: Request) {
         
         await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
         
-        if (!subStatus.isSubscribed) {
-          const user = await db.users.findById(session.user.id)
-          if (user) {
-            await db.users.update(session.user.id, { 
-              questionCount: (user.questionCount || 0) + 1
-            })
-          }
-        }
-        
         return NextResponse.json({ 
           message: conversationalResponse,
-          questionsRemaining: subStatus.isSubscribed 
-            ? -1 
-            : Math.max(0, subStatus.questionsRemaining - 1)
+          questionsRemaining: subStatus.questionsRemaining
         })
       } catch (err) {
         console.error('[chat] Error processing player prop question:', err)
@@ -2349,16 +2302,9 @@ export async function POST(request: Request) {
           await db.messages.create({ conversationId: conversation.id, role: 'assistant', content: errorResponse })
           await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
           
-          if (!subStatus.isSubscribed) {
-            const user = await db.users.findById(session.user.id)
-            if (user) {
-              await db.users.update(session.user.id, { questionCount: (user.questionCount || 0) + 1 })
-            }
-          }
-          
           return NextResponse.json({ 
             message: errorResponse,
-            questionsRemaining: subStatus.isSubscribed ? -1 : Math.max(0, subStatus.questionsRemaining - 1)
+            questionsRemaining: subStatus.questionsRemaining
           })
         } catch (innerErr) {
           console.error('[chat] Failed to generate error response for prop question:', innerErr)
@@ -2601,22 +2547,10 @@ If you're seeing this message persistently, please contact us at contact@betanal
           
           await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
           
-          // Update question count for non-subscribers
-          if (!subStatus.isSubscribed) {
-            const user = await db.users.findById(session.user.id)
-            if (user) {
-              await db.users.update(session.user.id, { 
-                questionCount: (user.questionCount || 0) + 1
-              })
-            }
-          }
-          
           // Return conversational response
           return NextResponse.json({ 
             message: conversationalResponse,
-            questionsRemaining: subStatus.isSubscribed 
-              ? -1 
-              : Math.max(0, subStatus.questionsRemaining - 1)
+            questionsRemaining: subStatus.questionsRemaining
           })
         }
       } catch (err) {
@@ -2641,9 +2575,7 @@ If you're seeing this message persistently, please contact us at contact@betanal
         
         return NextResponse.json({ 
           message: errorMessage,
-          questionsRemaining: subStatus.isSubscribed 
-            ? -1 
-            : Math.max(0, subStatus.questionsRemaining - 1)
+          questionsRemaining: subStatus.questionsRemaining
         })
       }
     }
@@ -2702,21 +2634,9 @@ If you're seeing this message persistently, please contact us at contact@betanal
           
           await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
           
-          // Update question count for non-subscribers
-          if (!subStatus.isSubscribed) {
-            const user = await db.users.findById(session.user.id)
-            if (user) {
-              await db.users.update(session.user.id, { 
-                questionCount: (user.questionCount || 0) + 1
-              })
-            }
-          }
-          
           return NextResponse.json({ 
             message: conversationalResponse,
-            questionsRemaining: subStatus.isSubscribed 
-              ? -1 
-              : Math.max(0, subStatus.questionsRemaining - 1)
+            questionsRemaining: subStatus.questionsRemaining
           })
         } else {
           // No Elo data available - return clear message instead of LLM fallback
@@ -2754,9 +2674,7 @@ Our Elo ratings are our edge - we won't give you a recommendation without them.`
           
           return NextResponse.json({ 
             message: noDataMessage,
-            questionsRemaining: subStatus.isSubscribed 
-              ? -1 
-              : Math.max(0, subStatus.questionsRemaining - 1)
+            questionsRemaining: subStatus.questionsRemaining
           })
         }
       } catch (err) {
@@ -2779,9 +2697,7 @@ Our Elo ratings are our edge - we won't give you a recommendation without them.`
         
         return NextResponse.json({ 
           message: errorMessage,
-          questionsRemaining: subStatus.isSubscribed 
-            ? -1 
-            : Math.max(0, subStatus.questionsRemaining - 1)
+          questionsRemaining: subStatus.questionsRemaining
         })
       }
     }
@@ -2853,20 +2769,9 @@ When discussing player props, focus on:
 
     await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
 
-    if (!subStatus.isSubscribed) {
-      const user = await db.users.findById(session.user.id)
-      if (user) {
-        await db.users.update(session.user.id, { 
-          questionCount: (user.questionCount || 0) + 1
-        })
-      }
-    }
-
     return NextResponse.json({ 
       message: assistantMessage,
-      questionsRemaining: subStatus.isSubscribed 
-        ? -1 // -1 means unlimited (Infinity is not JSON-serializable)
-        : Math.max(0, subStatus.questionsRemaining - 1)
+      questionsRemaining: subStatus.questionsRemaining
     })
 
   } catch (error) {

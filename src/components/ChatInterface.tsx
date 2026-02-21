@@ -15,6 +15,7 @@ interface Message {
 interface ChatInterfaceProps {
   isSubscribed: boolean
   questionsRemaining: number
+  trialDaysRemaining: number
 }
 
 export interface ChatInterfaceRef {
@@ -36,7 +37,8 @@ I'll show you the Elo ratings, edge calculation, and exactly where the edge come
 
 const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function ChatInterface({ 
   isSubscribed, 
-  questionsRemaining: initialQuestionsRemaining 
+  questionsRemaining: initialQuestionsRemaining,
+  trialDaysRemaining
 }, ref) {
   const router = useRouter()
   const [messages, setMessages] = useState<Message[]>([])
@@ -196,10 +198,16 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
               <AlertTriangle className="w-5 h-5 text-yellow-400" />
               <div>
                 <p className="text-sm font-semibold text-white">
-                  Free Trial: {questionsRemaining} question{questionsRemaining !== 1 ? 's' : ''} remaining
+                  {trialDaysRemaining > 0 
+                    ? `Free Trial: ${trialDaysRemaining} day${trialDaysRemaining !== 1 ? 's' : ''} remaining`
+                    : 'Free trial expired'
+                  }
                 </p>
                 <p className="text-xs text-slate-300">
-                  Upgrade to Premium for unlimited questions
+                  {trialDaysRemaining > 0 
+                    ? 'Upgrade to Premium for unlimited access'
+                    : 'Subscribe to continue asking questions'
+                  }
                 </p>
               </div>
             </div>

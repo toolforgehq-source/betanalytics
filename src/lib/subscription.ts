@@ -70,6 +70,7 @@ export async function checkSubscription() {
       isSubscribed: false,
       isFreeTrialAvailable: false,
       questionsRemaining: 0,
+      trialDaysRemaining: 0,
     }
   }
 
@@ -79,7 +80,8 @@ export async function checkSubscription() {
     return {
       isSubscribed: true,
       isFreeTrialAvailable: false,
-      questionsRemaining: -1, // -1 means unlimited (Infinity is not JSON-serializable)
+      questionsRemaining: -1,
+      trialDaysRemaining: 0,
     }
   }
 
@@ -90,18 +92,23 @@ export async function checkSubscription() {
         isSubscribed: true,
         isFreeTrialAvailable: false,
         questionsRemaining: -1,
+        trialDaysRemaining: 0,
       }
     }
   }
 
   const user = await db.users.findById(session.user.id)
-  const questionsUsed = user?.questionCount || 0
-  const questionsRemaining = Math.max(0, 3 - questionsUsed)
+  const createdAt = user?.createdAt ? new Date(user.createdAt) : new Date()
+  const now = new Date()
+  const trialEndDate = new Date(createdAt.getTime() + 3 * 24 * 60 * 60 * 1000)
+  const trialDaysRemaining = Math.max(0, Math.ceil((trialEndDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))
+  const isInTrial = trialDaysRemaining > 0
 
   return {
     isSubscribed: false,
-    isFreeTrialAvailable: questionsRemaining > 0,
-    questionsRemaining,
+    isFreeTrialAvailable: isInTrial,
+    questionsRemaining: isInTrial ? -1 : 0,
+    trialDaysRemaining,
   }
 }
 
