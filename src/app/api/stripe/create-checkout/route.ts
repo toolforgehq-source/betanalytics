@@ -40,7 +40,7 @@ export async function POST() {
         },
       ],
       mode: 'subscription',
-      success_url: `${process.env.NEXTAUTH_URL}/chat?success=true`,
+      success_url: `${process.env.NEXTAUTH_URL}/chat?success=true&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.NEXTAUTH_URL}/pricing?canceled=true`,
       metadata: {
         userId: session.user.id,

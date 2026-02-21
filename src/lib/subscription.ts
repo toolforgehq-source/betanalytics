@@ -14,7 +14,7 @@ export async function checkSubscription() {
 
   const sub = await db.subscriptions.findByUserId(session.user.id)
 
-  if (sub && sub.status === 'active') {
+  if (sub && (sub.status === 'active' || sub.status === 'trialing')) {
     return {
       isSubscribed: true,
       isFreeTrialAvailable: false,

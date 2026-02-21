@@ -16,6 +16,7 @@ interface ChatPageClientProps {
   isSubscribed: boolean
   questionsRemaining: number
   termsAccepted: boolean
+  checkoutSessionId?: string
 }
 
 interface SystemStatusData {
@@ -31,11 +32,13 @@ interface SystemStatusData {
 }
 
 export default function ChatPageClient({ 
-  isSubscribed, 
+  isSubscribed: initialIsSubscribed, 
   questionsRemaining,
-  termsAccepted: initialTermsAccepted
+  termsAccepted: initialTermsAccepted,
+  checkoutSessionId
 }: ChatPageClientProps) {
   const router = useRouter()
+  const [isSubscribed, setIsSubscribed] = useState(initialIsSubscribed)
   const [showHedgeCalculator, setShowHedgeCalculator] = useState(false)
   const [termsAccepted, setTermsAccepted] = useState(initialTermsAccepted)
   const [showLessonModal, setShowLessonModal] = useState(false)
@@ -43,6 +46,31 @@ export default function ChatPageClient({
   const [systemStatus, setSystemStatus] = useState<SystemStatusData | null>(null)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const chatRef = useRef<ChatInterfaceRef>(null)
+
+  useEffect(() => {
+    if (!checkoutSessionId || isSubscribed) return
+    const verifyCheckout = async () => {
+      try {
+        const apiUrl = new URL('/api/stripe/verify-checkout', window.location.origin).toString()
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ sessionId: checkoutSessionId }),
+        })
+        if (response.ok) {
+          const data = await response.json()
+          if (data.verified) {
+            setIsSubscribed(true)
+            window.history.replaceState({}, '', '/chat')
+          }
+        }
+      } catch (error) {
+        console.error('Failed to verify checkout:', error)
+      }
+    }
+    verifyCheckout()
+  }, [checkoutSessionId, isSubscribed])
 
   // Get today's lesson
   const todaysLesson = getTodaysLesson()
