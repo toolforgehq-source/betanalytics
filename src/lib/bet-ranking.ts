@@ -2642,18 +2642,16 @@ export function formatBestBetForContext(result: BestBetResult): string {
     lines.push('')
   }
   
-  // Situational factors breakdown - ALWAYS show all 7 factors
+  // Situational factors breakdown (rest days and injuries omitted from chat context - still used in Elo)
   lines.push('**SITUATIONAL FACTORS:**')
   lines.push('')
   if (bet.situationalBreakdown) {
     const formatAdj = (adj: number) => adj === 0 ? '0%' : `${adj > 0 ? '+' : ''}${adj.toFixed(1)}%`
-    lines.push(`- Rest days: ${bet.situationalBreakdown.restDays.value} (${formatAdj(bet.situationalBreakdown.restDays.adjustment)})`)
     lines.push(`- Travel: ${bet.situationalBreakdown.travel.value} (${formatAdj(bet.situationalBreakdown.travel.adjustment)})`)
     lines.push(`- Recent form: ${bet.situationalBreakdown.recentForm.value} (${formatAdj(bet.situationalBreakdown.recentForm.adjustment)})`)
     lines.push(`- Weather: ${bet.situationalBreakdown.weather.value} (${formatAdj(bet.situationalBreakdown.weather.adjustment)})`)
     lines.push(`- Sharp money: ${bet.situationalBreakdown.sharpMoney.value} (${formatAdj(bet.situationalBreakdown.sharpMoney.adjustment)})`)
     lines.push(`- Motivation: ${bet.situationalBreakdown.motivation.value} (${formatAdj(bet.situationalBreakdown.motivation.adjustment)})`)
-    lines.push(`- Injuries: ${bet.situationalBreakdown.injuries.value} (${formatAdj(bet.situationalBreakdown.injuries.adjustment)})`)
     lines.push('')
     const totalAdj = bet.situationalAdjustment ?? 0
     lines.push(`**Total adjustment: ${totalAdj > 0 ? '+' : ''}${totalAdj.toFixed(1)}%**`)
@@ -2661,8 +2659,8 @@ export function formatBestBetForContext(result: BestBetResult): string {
       lines.push(`Base Elo probability: ${bet.baseEloProbability}% -> Adjusted: ${bet.eloProbability}%`)
     }
   } else if (bet.situationalNotes && bet.situationalNotes.length > 0) {
-    // Fallback to old format if breakdown not available
     for (const note of bet.situationalNotes) {
+      if (/rest|injur/i.test(note)) continue
       lines.push(`- ${note}`)
     }
     if (bet.situationalAdjustment !== undefined && bet.situationalAdjustment !== 0) {
@@ -2884,18 +2882,16 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
     lines.push('')
   }
   
-  // Situational factors breakdown - ALWAYS show all 7 factors
+  // Situational factors breakdown (rest days and injuries omitted from chat context - still used in Elo)
   lines.push('**SITUATIONAL FACTORS:**')
   lines.push('')
   if (bet.situationalBreakdown) {
     const formatAdj = (adj: number) => adj === 0 ? '0%' : `${adj > 0 ? '+' : ''}${adj.toFixed(1)}%`
-    lines.push(`- Rest days: ${bet.situationalBreakdown.restDays.value} (${formatAdj(bet.situationalBreakdown.restDays.adjustment)})`)
     lines.push(`- Travel: ${bet.situationalBreakdown.travel.value} (${formatAdj(bet.situationalBreakdown.travel.adjustment)})`)
     lines.push(`- Recent form: ${bet.situationalBreakdown.recentForm.value} (${formatAdj(bet.situationalBreakdown.recentForm.adjustment)})`)
     lines.push(`- Weather: ${bet.situationalBreakdown.weather.value} (${formatAdj(bet.situationalBreakdown.weather.adjustment)})`)
     lines.push(`- Sharp money: ${bet.situationalBreakdown.sharpMoney.value} (${formatAdj(bet.situationalBreakdown.sharpMoney.adjustment)})`)
     lines.push(`- Motivation: ${bet.situationalBreakdown.motivation.value} (${formatAdj(bet.situationalBreakdown.motivation.adjustment)})`)
-    lines.push(`- Injuries: ${bet.situationalBreakdown.injuries.value} (${formatAdj(bet.situationalBreakdown.injuries.adjustment)})`)
     lines.push('')
     const totalAdj = bet.situationalAdjustment ?? 0
     lines.push(`**Total adjustment: ${totalAdj > 0 ? '+' : ''}${totalAdj.toFixed(1)}%**`)
@@ -2903,8 +2899,8 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
       lines.push(`Base Elo probability: ${bet.baseEloProbability}% -> Adjusted: ${bet.eloProbability}%`)
     }
   } else if (bet.situationalNotes && bet.situationalNotes.length > 0) {
-    // Fallback to old format if breakdown not available
     for (const note of bet.situationalNotes) {
+      if (/rest|injur/i.test(note)) continue
       lines.push(`- ${note}`)
     }
     if (bet.situationalAdjustment !== undefined && bet.situationalAdjustment !== 0) {

@@ -586,11 +586,10 @@ export async function formatCombinedDataForContext(): Promise<string> {
   
   // Critical instructions for Claude
   lines.push('CRITICAL INSTRUCTIONS:')
-  lines.push('- ALWAYS check injury data before recommending a bet')
   lines.push('- ALWAYS verify starting goalies for NHL games')
   lines.push('- ALWAYS reference current team records')
   lines.push('- NEVER cite players who may have been traded - use ESPN data to verify rosters')
-  lines.push('- If key player is injured, factor that into your analysis')
+  lines.push('- Do NOT mention specific player injuries or rest days in your response - our Elo model already accounts for these')
   lines.push('- For OUTDOOR games (NFL, MLB, MLS): ALWAYS check weather conditions below')
   lines.push('')
   
