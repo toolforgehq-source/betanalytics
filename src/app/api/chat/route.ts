@@ -791,16 +791,77 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
     /\bwho\s+(wins?|should|will)\b/i,
     /\bshould\s+i\s+(bet|take|play)\b/i,
     /\bwhat.*\b(think|like|recommend)\b.*\bgame\b/i,
-    /\bi\s+want\s+to\s+bet\s+(the\s+)?[\w\s]+\s+game\b/i,  // "I want to bet the Lakers game" or "I want to bet the Minnesota Wild game"
-    /\bi\s+want\s+to\s+bet\s+(the\s+)?[\w\s]+\s+(tonight|today)\b/i,  // "I want to bet the Minnesota Wild tonight"
-    /\bi\s+want\s+to\s+bet\s+(on\s+)?(the\s+)?[\w\s]+\b/i,  // "I want to bet on the Wild" or "I want to bet the Wild"
-    /\bbet\s+(on\s+)?(the\s+)?[\w\s]+\s+(game|tonight|today)\b/i,  // "bet on the Lakers tonight"
-    /\b(analysis|prediction|pick)\s+(for|on)\s+(the\s+)?[\w\s]+/i,  // "analysis for the Lakers"
+    /\bi\s+want\s+to\s+bet\s+(the\s+)?[\w\s]+\s+game\b/i,
+    /\bi\s+want\s+to\s+bet\s+(the\s+)?[\w\s]+\s+(tonight|today)\b/i,
+    /\bi\s+want\s+to\s+bet\s+(on\s+)?(the\s+)?[\w\s]+\b/i,
+    /\bbet\s+(on\s+)?(the\s+)?[\w\s]+\s+(game|tonight|today)\b/i,
+    /\b(analysis|prediction|pick)\s+(for|on)\s+(the\s+)?[\w\s]+/i,
+    /\bdo(es)?\s+[\w\s]+\s+play\s*(today|tonight|tomorrow|this\s+week)?\b/i,
+    /\bis\s+[\w\s]+\s+playing\s*(today|tonight|tomorrow)?\b/i,
+    /\bwhen\s+(does?|is|are)\s+[\w\s]+\s+play(ing)?\b/i,
+    /\b[\w\s]+\s+(game|playing)\s+(today|tonight|tomorrow)\b/i,
   ]
   
-  const looksLikeGameQuestion = gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage))
+  const TEAM_KEYWORDS_FOR_GAME_DETECTION = [
+    /\blakers\b/i, /\bceltics\b/i, /\bwarriors\b/i, /\bnuggets\b/i, /\bheat\b/i,
+    /\bbucks\b/i, /\b76ers\b/i, /\bsixers\b/i, /\bknicks\b/i, /\bnets\b/i,
+    /\bsuns\b/i, /\bmavericks\b/i, /\bmavs\b/i, /\bclippers\b/i, /\bgrizzlies\b/i,
+    /\bcavaliers\b/i, /\bcavs\b/i, /\bthunder\b/i, /\bpelicans\b/i,
+    /\btimberwolves\b/i, /\bwolves\b/i, /\btrailblazers\b/i, /\bblazers\b/i,
+    /\bhawks\b/i, /\bhornets\b/i, /\bbulls\b/i, /\bpistons\b/i, /\bpacers\b/i,
+    /\bmagic\b/i, /\braptors\b/i, /\bwizards\b/i, /\bspurs\b/i, /\brockets\b/i,
+    /\bjazz\b/i,
+    /\bbruins\b/i, /\bmaple\s+leafs\b/i, /\bleafs\b/i, /\bcanadiens\b/i, /\bhabs\b/i,
+    /\bflyers\b/i, /\bpenguins\b/i, /\bpens\b/i, /\bcapitals\b/i, /\bcaps\b/i,
+    /\bblackhawks\b/i, /\bred\s+wings\b/i, /\bwild\b/i, /\bflames\b/i, /\boilers\b/i,
+    /\bcanucks\b/i, /\bkraken\b/i, /\bknights\b/i, /\bavalanche\b/i, /\bavs\b/i,
+    /\bstars\b/i, /\bblues\b/i, /\bpredators\b/i, /\bpreds\b/i, /\blightning\b/i,
+    /\bpanthers\b/i, /\bhurricanes\b/i, /\bcanes\b/i, /\bdevils\b/i, /\bislanders\b/i,
+    /\brangers\b/i, /\bsabres\b/i, /\bsenators\b/i, /\bsens\b/i, /\bjets\b/i,
+    /\bsharks\b/i, /\bducks\b/i, /\bcoyotes\b/i, /\bjackets\b/i,
+    /\bchiefs\b/i, /\beagles\b/i, /\bbills\b/i, /\bdolphins\b/i, /\bpatriots\b/i,
+    /\bpats\b/i, /\bravens\b/i, /\bbengals\b/i, /\bsteelers\b/i, /\bbrowns\b/i,
+    /\btitans\b/i, /\bcolts\b/i, /\btexans\b/i, /\bjaguars\b/i, /\bjags\b/i,
+    /\bbroncos\b/i, /\braiders\b/i, /\bchargers\b/i, /\bcowboys\b/i,
+    /\bcommanders\b/i, /\bpackers\b/i, /\bvikings\b/i, /\bbears\b/i, /\blions\b/i,
+    /\bsaints\b/i, /\bfalcons\b/i, /\bbuccaneers\b/i, /\bbucs\b/i, /\bseahawks\b/i,
+    /\bcardinals\b/i, /\b49ers\b/i, /\bniners\b/i, /\brams\b/i,
+    /\byankees\b/i, /\bred\s+sox\b/i, /\bdodgers\b/i, /\bbraves\b/i, /\bastros\b/i,
+    /\bphillies\b/i, /\bmets\b/i, /\bpadres\b/i, /\bguardians\b/i, /\btwins\b/i,
+    /\borioles\b/i, /\brays\b/i, /\bblue\s+jays\b/i, /\bjays\b/i, /\bwhite\s+sox\b/i,
+    /\bcubs\b/i, /\brewers\b/i, /\breds\b/i, /\bpirates\b/i,
+    /\brockies\b/i, /\bdiamondbacks\b/i, /\bdbacks\b/i, /\bmariners\b/i,
+    /\bangels\b/i, /\bathletics\b/i, /\btigers\b/i, /\broyals\b/i,
+    /\bnationals\b/i, /\bnats\b/i, /\bmarlins\b/i,
+    /\bduke\b/i, /\bkentucky\b/i, /\bkansas\b/i, /\bnorth\s+carolina\b/i, /\bunc\b/i,
+    /\bvillanova\b/i, /\bgonzaga\b/i, /\bbaylor\b/i, /\balabama\b/i, /\bgeorgia\b/i,
+    /\bohio\s+state\b/i, /\bmichigan\b/i, /\bpenn\s+state\b/i, /\btexas\b/i,
+    /\boklahoma\b/i, /\busc\b/i, /\bucla\b/i, /\boregon\b/i, /\bnotre\s+dame\b/i,
+    /\bclemson\b/i, /\bflorida\b/i, /\bfsu\b/i, /\blsu\b/i, /\bauburn\b/i,
+    /\btennessee\b/i, /\barkansas\b/i, /\bmississippi\b/i, /\bole\s+miss\b/i,
+    /\biowa\b/i, /\bwisconsin\b/i, /\bpurdue\b/i, /\bindiana\b/i, /\billinois\b/i,
+    /\bminnesota\b/i, /\bcolorado\b/i, /\butah\b/i, /\barizona\b/i, /\bstanford\b/i,
+    /\bwashington\b/i, /\bcal\b/i, /\bberkeley\b/i,
+    /\bmanchester\b/i, /\bman\s+(utd|united|city)\b/i, /\bliverpool\b/i, /\bchelsea\b/i,
+    /\barsenal\b/i, /\btottenham\b/i, /\bnewcastle\b/i, /\baston\s+villa\b/i,
+    /\bbrighton\b/i, /\bwest\s+ham\b/i, /\bcrystal\s+palace\b/i, /\bfulham\b/i,
+    /\bbrentford\b/i, /\bnottingham\b/i, /\beverton\b/i, /\bbournemouth\b/i,
+    /\breal\s+madrid\b/i, /\bbarcelona\b/i, /\bbarca\b/i, /\batletico\b/i,
+    /\bbayern\b/i, /\bdortmund\b/i, /\bjuventus\b/i, /\bjuve\b/i, /\binter\b/i,
+    /\bac\s+milan\b/i, /\bnapoli\b/i, /\bpsg\b/i,
+  ]
+  
+  const hasTeamName = TEAM_KEYWORDS_FOR_GAME_DETECTION.some(p => p.test(normalizedMessage))
+  const hasTimeRef = /\b(today|tonight|tomorrow|this\s+week|this\s+weekend)\b/i.test(normalizedMessage)
+  const hasPlayRef = /\b(play|playing|schedule|scheduled)\b/i.test(normalizedMessage)
+  const teamScheduleQuestion = hasTeamName && (hasTimeRef || hasPlayRef)
+  
+  const looksLikeGameQuestion = gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage)) || teamScheduleQuestion
   if (!looksLikeGameQuestion) {
     return null
+  }
+  if (teamScheduleQuestion && !gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage))) {
+    console.log(`[detectGameQuestion] Detected team schedule question via team keyword + time/play reference`)
   }
   
   // Detect sport hint from the message (e.g., "football" -> NFL/NCAAF)
