@@ -1,5 +1,66 @@
 import { auth } from "@/auth"
 import { db } from "@/db"
+import { stripe, isStripeConfigured } from "@/lib/stripe"
+import Stripe from "stripe"
+
+async function syncSubscriptionFromStripe(userId: string, email: string): Promise<boolean> {
+  if (!isStripeConfigured() || !stripe) return false
+
+  try {
+    const customers = await stripe.customers.list({ email: email.toLowerCase(), limit: 1 })
+    if (customers.data.length === 0) return false
+
+    const customer = customers.data[0]
+    const subscriptions = await stripe.subscriptions.list({
+      customer: customer.id,
+      status: 'active',
+      limit: 1,
+    })
+
+    if (subscriptions.data.length === 0) {
+      const trialingSubs = await stripe.subscriptions.list({
+        customer: customer.id,
+        status: 'trialing',
+        limit: 1,
+      })
+      if (trialingSubs.data.length === 0) return false
+      subscriptions.data = trialingSubs.data
+    }
+
+    const subscription = subscriptions.data[0] as Stripe.Subscription
+    const subscriptionItem = subscription.items.data[0]
+
+    const existingSub = await db.subscriptions.findByUserId(userId)
+    if (existingSub) {
+      await db.subscriptions.update(existingSub.id, {
+        stripeCustomerId: customer.id,
+        stripeSubscriptionId: subscription.id,
+        stripePriceId: subscriptionItem.price.id,
+        status: subscription.status,
+        currentPeriodStart: new Date(subscriptionItem.current_period_start * 1000).toISOString(),
+        currentPeriodEnd: new Date(subscriptionItem.current_period_end * 1000).toISOString(),
+        cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      })
+    } else {
+      await db.subscriptions.create({
+        userId,
+        stripeCustomerId: customer.id,
+        stripeSubscriptionId: subscription.id,
+        stripePriceId: subscriptionItem.price.id,
+        status: subscription.status,
+        currentPeriodStart: new Date(subscriptionItem.current_period_start * 1000).toISOString(),
+        currentPeriodEnd: new Date(subscriptionItem.current_period_end * 1000).toISOString(),
+        cancelAtPeriodEnd: subscription.cancel_at_period_end,
+      })
+    }
+
+    console.log(`[subscription] Synced subscription from Stripe for user ${userId}, status: ${subscription.status}`)
+    return true
+  } catch (error) {
+    console.error('[subscription] Failed to sync from Stripe:', error)
+    return false
+  }
+}
 
 export async function checkSubscription() {
   const session = await auth()
@@ -19,6 +80,17 @@ export async function checkSubscription() {
       isSubscribed: true,
       isFreeTrialAvailable: false,
       questionsRemaining: -1, // -1 means unlimited (Infinity is not JSON-serializable)
+    }
+  }
+
+  if (session.user.email) {
+    const synced = await syncSubscriptionFromStripe(session.user.id, session.user.email)
+    if (synced) {
+      return {
+        isSubscribed: true,
+        isFreeTrialAvailable: false,
+        questionsRemaining: -1,
+      }
     }
   }
 
