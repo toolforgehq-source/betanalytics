@@ -599,7 +599,8 @@ const ESPN_TO_ELO_LEAGUE: Record<string, string> = {
 }
 
 // Type for Elo ratings map passed to formatter
-export type EloRatingsMap = Record<string, { rating: number; gamesPlayed: number }> | null
+// The actual data from Redis uses keys like "league:teamId" and values include teamName/league fields
+export type EloRatingsMap = Record<string, { rating: number; gamesPlayed: number; teamName?: string; league?: string }> | null
 
 /**
  * Format ESPN odds for Claude's context
@@ -674,14 +675,17 @@ export function formatESPNOddsForContext(oddsData: ESPNOddsData, eloRatings?: El
           let awayElo: number | null = null
           
           for (const [key, data] of Object.entries(eloRatings)) {
-            const [keyLeague, keyTeam] = key.split(':')
-            if (keyLeague !== eloLeague) continue
+            // FIX: Use data.league and data.teamName when available (from full TeamRating objects)
+            // Previously used key splitting which gave numeric team IDs that never matched team names
+            const teamLeague = data.league || key.split(':')[0]
+            if (teamLeague !== eloLeague) continue
             
-            const keyNorm = normalizeForElo(keyTeam)
-            if (keyNorm.includes(homeNorm) || homeNorm.includes(keyNorm)) {
+            const teamName = data.teamName || key.split(':')[1] || ''
+            const teamNorm = normalizeForElo(teamName)
+            if (teamNorm.includes(homeNorm) || homeNorm.includes(teamNorm)) {
               homeElo = data.rating
             }
-            if (keyNorm.includes(awayNorm) || awayNorm.includes(keyNorm)) {
+            if (teamNorm.includes(awayNorm) || awayNorm.includes(teamNorm)) {
               awayElo = data.rating
             }
           }
