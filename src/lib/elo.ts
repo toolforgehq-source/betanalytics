@@ -1850,7 +1850,8 @@ export function calculateSpreadCoverProbability(
 export function calculateExpectedTotal(
   homeElo: number,
   awayElo: number,
-  league: string
+  league: string,
+  marketLine?: number
 ): number {
   const baseline = TOTAL_BASELINE[league] || 200
   const eloFactor = TOTAL_ELO_FACTOR[league] || 0.01
@@ -1859,9 +1860,25 @@ export function calculateExpectedTotal(
   const avgElo = (homeElo + awayElo) / 2
   const eloAboveAverage = avgElo - 1500
   
-  // Higher combined Elo → slightly higher expected total
-  // (Better teams tend to score more)
-  return baseline + eloFactor * eloAboveAverage
+  // Pure Elo-based expected total (league baseline + small Elo adjustment)
+  const eloExpectedTotal = baseline + eloFactor * eloAboveAverage
+  
+  // FIX: If we have a market line, anchor to it instead of using the crude baseline
+  // The market line already accounts for matchup-specific context (pace, offense/defense, etc.)
+  // We use the market line as our primary anchor and only apply a small Elo-based adjustment
+  // This prevents the model from creating artificial edges by disagreeing with matchup-specific lines
+  if (marketLine !== undefined && marketLine > 0) {
+    // Calculate how much our Elo model thinks the total should deviate from the league baseline
+    const eloDeviation = eloExpectedTotal - baseline
+    
+    // Apply only the Elo deviation (not the full baseline disagreement) to the market line
+    // Weight: 85% market line, 15% Elo adjustment — market is much better at setting game-specific totals
+    const eloAdjustment = eloDeviation * 0.15
+    return marketLine + eloAdjustment
+  }
+  
+  // Fallback: no market line available, use pure Elo estimate
+  return eloExpectedTotal
 }
 
 /**
@@ -1882,7 +1899,8 @@ export function calculateTotalProbability(
   isOver: boolean = true
 ): { probability: number; expectedTotal: number; confidence: string } {
   const sigma = TOTAL_SIGMA[league] || 15
-  const expectedTotal = calculateExpectedTotal(homeElo, awayElo, league)
+  // FIX 3: Pass the market line to anchor expected total to matchup-specific context
+  const expectedTotal = calculateExpectedTotal(homeElo, awayElo, league, totalLine)
   
   // P(over) = P(total > line) = 1 - NormalCDF((line - expectedTotal) / sigma)
   // P(under) = P(total < line) = NormalCDF((line - expectedTotal) / sigma)

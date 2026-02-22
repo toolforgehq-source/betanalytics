@@ -214,6 +214,11 @@ const MIN_SPREAD_PROBABILITY = 0.48  // 48% minimum for spreads (they're designe
 const MIN_SPREAD_EDGE = 0.01         // 1% minimum edge for spreads (edges are smaller from line shopping)
 const MIN_SPREAD_ROI = 0.5           // 0.5% minimum ROI for spreads
 
+// Total-specific thresholds (FIX 2: tighter filters to prevent inflated totals edges from dominating)
+const MIN_TOTAL_PROBABILITY = 0.52   // 52% minimum for totals — same as moneyline, prevents weak picks
+const MIN_TOTAL_EDGE = 0.02          // 2% minimum edge for totals — between spread (1%) and moneyline (3%)
+const MIN_TOTAL_ROI = 1.0            // 1% minimum ROI for totals — same as moneyline
+
 // SANITY CHECK: Maximum edge threshold - edges > 25% are almost certainly calculation errors
 // Real market inefficiencies rarely exceed 5-10%, and even sharp bettors rarely find 15%+ edges
 const MAX_SANE_EDGE = 0.25           // 25% maximum edge - anything higher is flagged as suspicious
@@ -1469,23 +1474,30 @@ export async function analyzeGame(
         // Calculate Elo-based over probability and apply situational adjustment
         const overResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, true)
         const baseEloOverProb = overResult.probability
-        const eloOverProb = applyAdjustment(baseEloOverProb, totalSituationalAdj.totalAdjustment)
+        
+        // FIX 1: Blend totals probability with market consensus (like moneylines do)
+        // The market implied probability is the best proxy for "consensus" on totals
+        const marketOverProb = americanToImpliedProbability(bestOverEntry.outcome.price)
+        const blendedOverProb = eloResult.confidence 
+          ? blendWithMarket(baseEloOverProb, marketOverProb, eloResult.confidence)
+          : baseEloOverProb
+        const eloOverProb = applyAdjustment(blendedOverProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
-        const impliedProb = americanToImpliedProbability(bestOverEntry.outcome.price)
+        const impliedProb = marketOverProb
         
-        // Edge is Elo probability - implied probability
+        // Edge is blended probability - implied probability
         const edge = eloOverProb - impliedProb
         
         // Calculate EV and ROI
         const ev = calculateExpectedValue(bestOverEntry.outcome.price, eloOverProb)
         const roi = calculateROI(ev)
         
-        // Apply total-specific thresholds (same as spread)
+        // FIX 2: Apply tighter total-specific thresholds to prevent inflated edges from dominating
         // SANITY CHECK: Reject bets with impossibly large edges (likely calculation errors)
         if (edge > MAX_SANE_EDGE) {
           console.warn(`[analyzeGame] SANITY CHECK FAILED: Over ${line} has edge ${(edge * 100).toFixed(1)}% > 25% max. Skipping.`)
-        } else if (eloOverProb >= MIN_SPREAD_PROBABILITY && edge >= MIN_SPREAD_EDGE && ev > 0 && roi >= MIN_SPREAD_ROI) {
+        } else if (eloOverProb >= MIN_TOTAL_PROBABILITY && edge >= MIN_TOTAL_EDGE && ev > 0 && roi >= MIN_TOTAL_ROI) {
           if (bestOverEntry.outcome.price >= MAX_JUICE_ODDS) {
             const score = calculateBetScore(eloOverProb, edge, roi)
             
@@ -1583,23 +1595,29 @@ export async function analyzeGame(
         // Calculate Elo-based under probability and apply situational adjustment
         const underResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, false)
         const baseEloUnderProb = underResult.probability
-        const eloUnderProb = applyAdjustment(baseEloUnderProb, totalSituationalAdj.totalAdjustment)
+        
+        // FIX 1: Blend totals probability with market consensus (like moneylines do)
+        const marketUnderProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
+        const blendedUnderProb = eloResult.confidence 
+          ? blendWithMarket(baseEloUnderProb, marketUnderProb, eloResult.confidence)
+          : baseEloUnderProb
+        const eloUnderProb = applyAdjustment(blendedUnderProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
-        const impliedProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
+        const impliedProb = marketUnderProb
         
-        // Edge is Elo probability - implied probability
+        // Edge is blended probability - implied probability
         const edge = eloUnderProb - impliedProb
         
         // Calculate EV and ROI
         const ev = calculateExpectedValue(bestUnderEntry.outcome.price, eloUnderProb)
         const roi = calculateROI(ev)
         
-        // Apply total-specific thresholds
+        // FIX 2: Apply tighter total-specific thresholds to prevent inflated edges from dominating
         // SANITY CHECK: Reject bets with impossibly large edges (likely calculation errors)
         if (edge > MAX_SANE_EDGE) {
           console.warn(`[analyzeGame] SANITY CHECK FAILED: Under ${line} has edge ${(edge * 100).toFixed(1)}% > 25% max. Skipping.`)
-        } else if (eloUnderProb >= MIN_SPREAD_PROBABILITY && edge >= MIN_SPREAD_EDGE && ev > 0 && roi >= MIN_SPREAD_ROI) {
+        } else if (eloUnderProb >= MIN_TOTAL_PROBABILITY && edge >= MIN_TOTAL_EDGE && ev > 0 && roi >= MIN_TOTAL_ROI) {
           if (bestUnderEntry.outcome.price >= MAX_JUICE_ODDS) {
             const score = calculateBetScore(eloUnderProb, edge, roi)
             
@@ -2042,12 +2060,18 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         if (bestOverEntry.outcome.price >= -500) {
           // Calculate Elo-based over probability
           const overResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, true)
-          const eloOverProb = overResult.probability
+          const baseEloOverProb = overResult.probability
+          
+          // FIX 1: Blend totals probability with market consensus (like moneylines do)
+          const marketOverProb = americanToImpliedProbability(bestOverEntry.outcome.price)
+          const eloOverProb = eloResult.confidence 
+            ? blendWithMarket(baseEloOverProb, marketOverProb, eloResult.confidence)
+            : baseEloOverProb
           
           // Calculate implied probability from best price
-          const impliedProb = americanToImpliedProbability(bestOverEntry.outcome.price)
+          const impliedProb = marketOverProb
           
-          // Edge is Elo probability - implied probability
+          // Edge is blended probability - implied probability
           const edge = eloOverProb - impliedProb
           
           // Calculate EV and ROI
@@ -2100,12 +2124,18 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         if (bestUnderEntry.outcome.price >= -500) {
           // Calculate Elo-based under probability
           const underResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, false)
-          const eloUnderProb = underResult.probability
+          const baseEloUnderProb = underResult.probability
+          
+          // FIX 1: Blend totals probability with market consensus (like moneylines do)
+          const marketUnderProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
+          const eloUnderProb = eloResult.confidence 
+            ? blendWithMarket(baseEloUnderProb, marketUnderProb, eloResult.confidence)
+            : baseEloUnderProb
           
           // Calculate implied probability from best price
-          const impliedProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
+          const impliedProb = marketUnderProb
           
-          // Edge is Elo probability - implied probability
+          // Edge is blended probability - implied probability
           const edge = eloUnderProb - impliedProb
           
           // Calculate EV and ROI
