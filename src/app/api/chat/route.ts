@@ -859,11 +859,15 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
   const hasPlayRef = /\b(play|playing|schedule|scheduled)\b/i.test(normalizedMessage)
   const teamScheduleQuestion = hasTeamName && (hasTimeRef || hasPlayRef)
   
-  const looksLikeGameQuestion = gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage)) || teamScheduleQuestion
+  // A team name alone is a strong enough signal — if someone says "Lakers" or "what about the Celtics",
+  // they're asking about that team's game. We should always try to find and analyze it.
+  const looksLikeGameQuestion = gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage)) || teamScheduleQuestion || hasTeamName
   if (!looksLikeGameQuestion) {
     return null
   }
-  if (teamScheduleQuestion && !gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage))) {
+  if (hasTeamName && !gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage)) && !teamScheduleQuestion) {
+    console.log(`[detectGameQuestion] Detected team name mention — trying to find matching game`)
+  } else if (teamScheduleQuestion && !gameQuestionPatterns.some(pattern => pattern.test(normalizedMessage))) {
     console.log(`[detectGameQuestion] Detected team schedule question via team keyword + time/play reference`)
   }
   
@@ -2609,13 +2613,91 @@ export async function POST(request: Request) {
     
     // Game-specific detection already handled at the top of the function
     // BROAD BETTING FALLBACK: Check if this is a betting question that slipped through specific detectors
-    // Instead of returning a dead-end, try Elo best bet first, then fall through to LLM with full data
+    // SMART ROUTING: Before returning generic best bet, try to detect what the user is actually asking about
     const isBetting = isBettingQuestion(userMessageContent) || isBettingQuestion(effectiveUserMessage)
     if (isBetting) {
-      console.log(`[chat] Betting question detected by broad detector - trying Elo-based best bet first`)
+      console.log(`[chat] Betting question detected by broad detector - smart routing to find what user is asking about`)
       
       try {
-        // Try to get the best bet with Elo data
+        // ─── SMART ROUTE 1: Try to detect a player name and route to prop analysis ───
+        // This catches questions like "what about Anthony Edwards tonight?" or "Jokic bets"
+        // that slip through the strict prop detector (which requires prop-specific language)
+        const playerNameMatch = userMessageContent.match(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/)
+        if (playerNameMatch) {
+          const potentialPlayerName = playerNameMatch[1]
+          // Make sure it's not a team name or city name by checking against known teams
+          const teamNameWords = ['New York', 'Los Angeles', 'San Francisco', 'San Antonio', 'San Diego', 
+            'Las Vegas', 'Oklahoma City', 'Kansas City', 'Green Bay', 'Tampa Bay', 'Golden State',
+            'New Orleans', 'New England', 'Crystal Palace', 'Aston Villa', 'West Ham', 'Real Madrid',
+            'Red Sox', 'White Sox', 'Blue Jays', 'Red Wings', 'Maple Leafs', 'Notre Dame',
+            'Ohio State', 'Penn State', 'North Carolina', 'Ole Miss', 'Manchester United', 'Manchester City',
+            'AC Milan', 'Inter Milan', 'Atletico Madrid']
+          const isLikelyTeamName = teamNameWords.some(t => t.toLowerCase() === potentialPlayerName.toLowerCase())
+          
+          if (!isLikelyTeamName && potentialPlayerName.split(/\s+/).length >= 2) {
+            console.log(`[chat] Smart route: Detected potential player name "${potentialPlayerName}" — routing to prop analysis`)
+            try {
+              const allAnalyses = await analyzeAllPlayerProps(potentialPlayerName)
+              if (allAnalyses.length > 0) {
+                const propAnalysisData = formatMultiPropAnalysisForContext(allAnalyses)
+                console.log(`[chat] Smart route: Found ${allAnalyses.length} prop markets for ${potentialPlayerName}`)
+                
+                const conversationalResponse = await generatePropConversationalResponse(
+                  anthropic,
+                  propAnalysisData,
+                  effectiveUserMessage,
+                  conversationHistory
+                )
+                
+                await db.messages.create({ conversationId: conversation.id, role: 'user', content: userMessage.content })
+                await db.messages.create({ conversationId: conversation.id, role: 'assistant', content: conversationalResponse })
+                await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+                
+                return NextResponse.json({ 
+                  message: conversationalResponse,
+                  questionsRemaining: subStatus.questionsRemaining
+                })
+              }
+              console.log(`[chat] Smart route: No props found for "${potentialPlayerName}" — continuing to team/best bet fallback`)
+            } catch (playerErr) {
+              console.error(`[chat] Smart route: Error analyzing player "${potentialPlayerName}":`, playerErr)
+            }
+          }
+        }
+        
+        // ─── SMART ROUTE 2: Try game detection with enriched message ───
+        // The enriched message includes follow-up context which may reveal a team name
+        if (effectiveUserMessage !== userMessageContent) {
+          const enrichedGameDetection = await detectGameQuestion(effectiveUserMessage)
+          if (enrichedGameDetection) {
+            console.log(`[chat] Smart route: Found game via enriched message — ${enrichedGameDetection.awayTeam} @ ${enrichedGameDetection.homeTeam}`)
+            try {
+              const gameAnalysis = await analyzeSpecificGame(enrichedGameDetection)
+              const eloAnalysisData = formatGameAnalysisForContext(gameAnalysis)
+              
+              const conversationalResponse = await generateConversationalResponse(
+                anthropic,
+                eloAnalysisData,
+                effectiveUserMessage,
+                conversationHistory
+              )
+              
+              await db.messages.create({ conversationId: conversation.id, role: 'user', content: userMessage.content })
+              await db.messages.create({ conversationId: conversation.id, role: 'assistant', content: conversationalResponse })
+              await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
+              
+              return NextResponse.json({ 
+                message: conversationalResponse,
+                questionsRemaining: subStatus.questionsRemaining
+              })
+            } catch (gameErr) {
+              console.error('[chat] Smart route: Error analyzing game from enriched message:', gameErr)
+            }
+          }
+        }
+        
+        // ─── FALLBACK: Generic best bet ───
+        // Only reach here if no team or player was identified in the message
         let bestBetResult = await getCachedBestBet()
         
         // FALLBACK: If cache is empty, compute best bets on-demand from ESPN data
