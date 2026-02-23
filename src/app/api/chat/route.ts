@@ -83,26 +83,31 @@ QUALITY TIERS (use these labels):
 KEY PRINCIPLE: Users pay $39/month for recommendations. ALWAYS give them actionable information.
 
 ═══════════════════════════════════════════════════════════
-CRITICAL: DO NOT GENERATE BETTING RECOMMENDATIONS
+DATA SOURCE HIERARCHY (CRITICAL)
 ═══════════════════════════════════════════════════════════
 
-If you are reading this, it means the system's deterministic betting recommendation engine did NOT successfully process the user's betting question. This can happen due to:
-- No games available for the requested sport
-- Elo data not available for the requested sport
-- A processing error occurred
+When answering betting questions, follow this priority order:
 
-In this case, you MUST NOT generate your own betting recommendation. Instead:
-1. Acknowledge that you couldn't find Elo-based betting data for their request
-2. Suggest they try a different sport or check back later
-3. Offer to help with general sports questions or information
+1. **PRE-COMPUTED ELO RECOMMENDATIONS** (highest priority):
+   - If PRE-COMPUTED BEST BET data is provided below, use it as your primary source
+   - Present the Elo-powered recommendation with full score breakdown
+   - These are our most reliable, data-driven picks
+
+2. **ODDS DATA ANALYSIS** (when no Elo recommendation available):
+   - If no pre-computed best bet exists for the user's query, analyze the odds data below
+   - Compare spreads, moneylines, and totals across the available games
+   - Identify the best value based on odds pricing, team records, and matchup context
+   - Clearly label this as "Based on available odds data" (not Elo-powered)
+
+3. **GENERAL SPORTS KNOWLEDGE** (last resort):
+   - For questions about future games not yet in our system, general strategy, etc.
+   - Be helpful and provide whatever relevant information you can
 
 NEVER:
-- Pick a team/bet from the raw game data below
-- Generate your own probability estimates
-- Create your own "best bet" recommendation
-- Use records or other data to make betting suggestions
-
-The betting recommendations MUST come from our Elo model, not from LLM analysis of raw data.
+- Invent specific probabilities or edge percentages (only cite numbers from the data)
+- Make up odds that aren't in the provided data
+- Say "I can't help" or "no data available" — ALWAYS find something useful to say
+- Ask the user which sport they prefer — just give them the best answer
 
 ═══════════════════════════════════════════════════════════
 
@@ -1373,11 +1378,9 @@ async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] 
   const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
   console.log(`[convertESPNOddsToEnrichedGames] Today's date (ET): ${todayET}`)
   
+  // Include ALL available games (today + upcoming) so the chat can answer questions about future games
+  // The bet computation layer handles filtering to actionable games; the chat layer needs visibility into everything
   const enrichedGames: EnrichedGame[] = espnOddsData.games
-    .filter(g => {
-      const gameDate = new Date(g.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
-      return gameDate === todayET
-    })
     .map(g => {
       const sportKey = sportKeyMap[g.league] || g.sport
       const provider = g.provider || 'DraftKings'
@@ -2000,6 +2003,41 @@ export async function POST(request: Request) {
       }))
       .filter((msg: { role: 'user' | 'assistant'; content: string }) => msg.content.length > 0)
     
+    // ═══════════════════════════════════════════════════════════
+    // FOLLOW-UP DETECTION: Enrich short/contextual messages before running detectors
+    // ═══════════════════════════════════════════════════════════
+    // If the user says "not soccer", "what about NBA", "how about the under?", etc.
+    // we need to combine it with the previous conversation context so detectors work properly.
+    let effectiveUserMessage = userMessageContent
+    
+    const isFollowUp = userMessageContent.split(/\s+/).length <= 8 && conversationHistory.length >= 2
+    if (isFollowUp) {
+      const followUpPatterns = [
+        /^not\s+/i, /^no\s+/i, /^exclude\s+/i, /^without\s+/i,
+        /^what about/i, /^how about/i, /^what else/i, /^anything else/i,
+        /^instead/i, /^other than/i, /^besides/i,
+        /^(and|but)\s+(the\s+)?(over|under|spread|moneyline|ml|total)/i,
+        /^(over|under|spread|moneyline|ml|total)\??$/i,
+        /^(yes|yeah|sure|ok|do it|give me|show me)/i,
+        /^another/i, /^different/i, /^next/i,
+        /^(nba|nfl|nhl|mlb|ncaab|ncaaf|soccer|mls|epl)/i,
+      ]
+      
+      const looksLikeFollowUp = followUpPatterns.some(p => p.test(userMessageContent.trim()))
+      
+      if (looksLikeFollowUp) {
+        // Get the last assistant message for context
+        const lastAssistantMsg = [...conversationHistory].reverse().find(m => m.role === 'assistant')
+        const lastUserMsg = [...conversationHistory].reverse().find(m => m.role === 'user')
+        
+        if (lastAssistantMsg && lastUserMsg) {
+          // Build enriched message that combines follow-up intent with previous context
+          effectiveUserMessage = `Previous question: "${lastUserMsg.content}"\nPrevious answer was about: ${lastAssistantMsg.content.substring(0, 300)}\nFollow-up: "${userMessageContent}"\n\nUser's intent: Interpret the follow-up in the context of the previous exchange.`
+          console.log(`[chat] Follow-up detected: "${userMessageContent}" → enriched with conversation context`)
+        }
+      }
+    }
+    
     // PRIORITY ORDER: Game-specific > Parlay > Best bet > LLM fallback
     // Check for game-specific questions FIRST (e.g., "I want to bet the Lakers game")
     // This must come before best bet detection to avoid generic responses for team-specific queries
@@ -2255,8 +2293,8 @@ export async function POST(request: Request) {
             propAnalysisData = formatMultiPropAnalysisForContext(bestProps)
             console.log(`[chat] Best props analysis complete: ${bestProps.length} props ranked${propParlayDetection ? ' (parlay mode)' : ''}`)
           } else {
-            propAnalysisData = 'PLAYER PROP ANALYSIS\n\nNo player props data available at this time. Props are typically posted by sportsbooks in the morning/early afternoon for evening games. Please check back later.'
-            console.log(`[chat] No props data available for analysis`)
+              propAnalysisData = 'PLAYER PROP ANALYSIS\n\nNo player props data available at this time. Props are typically posted by sportsbooks in the morning/early afternoon for evening games.\n\nAlternative: Ask about team bets instead — our Elo rating system analyzes moneylines, spreads, and totals for all scheduled games. Try "What\'s the best bet today?" or ask about a specific game.'
+              console.log(`[chat] No props data available - suggesting team bet alternatives`)
           }
         }
         
@@ -2462,18 +2500,9 @@ export async function POST(request: Request) {
           } else {
             // Provide a clear, helpful message when Elo data is unavailable
             // This happens when the Elo cache hasn't been populated yet (needs backfill)
-            deterministicResponse = `🏒 **${bestBetFilter.filterDescription || 'Sport'} Analysis Temporarily Unavailable**
-
-Our Elo rating system is still building up historical data for accurate predictions. This happens when:
-- The system is new and hasn't processed enough games yet
-- The daily update hasn't run yet today
-
-**What this means:** We won't show you a recommendation until we have real Elo data, because using default ratings would give you meaningless predictions (all teams would appear equal).
-
-**Check back soon!** Our system updates daily with new game results, building more accurate team ratings over time.
-
-If you're seeing this message persistently, please contact us at contact@betanalytics.ai.`
-            console.log(`[chat] No sport bets available for filter: ${bestBetFilter.filterDescription} - Elo cache likely empty`)
+            // Instead of a dead-end, try to provide odds-based analysis for the requested sport
+            deterministicResponse = `**${bestBetFilter.filterDescription || 'Sport'} Elo Analysis Building**\n\nOur Elo rating system is still building historical data for this sport. In the meantime, here's what we can offer:\n\n- Our system has odds data for today's games — ask about a specific matchup and we'll break down the lines\n- Try a different sport where our Elo model is fully trained: "What's the best NBA bet?" or "Best NFL pick"\n- Check back soon — our Elo ratings update daily with new game results\n\nWe want to give you real, data-driven picks — not guesses. Once we have enough Elo history for this sport, recommendations will be automatic.`
+            console.log(`[chat] No sport bets available for filter: ${bestBetFilter.filterDescription} - Elo cache likely empty, suggesting alternatives`)
           }
         } else {
           // CRITICAL FIX: Always compute on-demand with fresh injury data
@@ -2515,8 +2544,8 @@ If you're seeing this message persistently, please contact us at contact@betanal
               console.log(`[chat] No strict value bet - returning fallback data. Reason: ${bestBetResult.reason}`)
             }
           } else {
-            deterministicResponse = 'No bets available right now. Please check back later when games are scheduled.'
-            console.log(`[chat] No cached best bet result available`)
+            deterministicResponse = 'No Elo-powered bets computed yet for today. This usually means games haven\'t started being posted by sportsbooks yet, or our daily update is still running.\n\nYou can still ask about specific games or matchups — we have odds data available and can break down the betting lines for you. Try asking about a specific game like "Lakers vs Celtics" or a sport like "Any NBA games today?"'
+            console.log(`[chat] No cached best bet result available - suggesting alternatives`)
           }
         }
         
@@ -2579,10 +2608,11 @@ If you're seeing this message persistently, please contact us at contact@betanal
     }
     
     // Game-specific detection already handled at the top of the function
-    // CRITICAL: Check if this is a betting question that slipped through specific detectors
-    // If so, use Elo-based best bet instead of falling through to LLM
-    if (isBettingQuestion(userMessageContent)) {
-      console.log(`[chat] Betting question detected by broad detector - using Elo-based best bet instead of LLM`)
+    // BROAD BETTING FALLBACK: Check if this is a betting question that slipped through specific detectors
+    // Instead of returning a dead-end, try Elo best bet first, then fall through to LLM with full data
+    const isBetting = isBettingQuestion(userMessageContent) || isBettingQuestion(effectiveUserMessage)
+    if (isBetting) {
+      console.log(`[chat] Betting question detected by broad detector - trying Elo-based best bet first`)
       
       try {
         // Try to get the best bet with Elo data
@@ -2593,7 +2623,6 @@ If you're seeing this message persistently, please contact us at contact@betanal
           console.log(`[chat] Cache empty for betting question fallback - computing on-demand...`)
           const espnOdds = await getESPNOddsWithFallback()
           if (espnOdds.games.length > 0) {
-            // CRITICAL: Use enriched games with injury data for proper injury detection
             console.log(`[chat] Converting ESPN odds to enriched games with injury data...`)
             const todaysGames = await convertESPNOddsToEnrichedGames(espnOdds)
             
@@ -2609,108 +2638,51 @@ If you're seeing this message persistently, please contact us at contact@betanal
           const eloAnalysisData = formatBestBetForContext(bestBetResult)
           console.log(`[chat] Generating conversational response for broad betting question`)
           
-          // Generate conversational response using Elo data as source of truth
           const conversationalResponse = await generateConversationalResponse(
             anthropic,
             eloAnalysisData,
-            userMessageContent,
+            effectiveUserMessage,
             conversationHistory
           )
           
-          // Save messages to database
-          await db.messages.create({
-            conversationId: conversation.id,
-            role: 'user',
-            content: userMessage.content,
-          })
-          
-          await db.messages.create({
-            conversationId: conversation.id,
-            role: 'assistant',
-            content: conversationalResponse,
-          })
-          
+          await db.messages.create({ conversationId: conversation.id, role: 'user', content: userMessage.content })
+          await db.messages.create({ conversationId: conversation.id, role: 'assistant', content: conversationalResponse })
           await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
           
           return NextResponse.json({ 
             message: conversationalResponse,
             questionsRemaining: subStatus.questionsRemaining
           })
-        } else {
-          // No Elo data available - return clear message instead of LLM fallback
-          const noDataMessage = `🎯 **Betting Analysis Temporarily Unavailable**
-
-I detected your question is about betting, but our Elo rating system doesn't have data available right now.
-
-**Why this happens:**
-- The daily Elo update may not have run yet
-- No games are scheduled for today
-- The requested sport may not have Elo data yet
-
-**What you can try:**
-- Ask about a specific sport: "What's the best NBA bet today?"
-- Ask about a specific game: "Lakers vs Celtics prediction"
-- Check back in a few hours after our system updates
-
-Our Elo ratings are our edge - we won't give you a recommendation without them.`
-          
-          console.log(`[chat] No Elo data available for betting question - returning no-data message`)
-          
-          await db.messages.create({
-            conversationId: conversation.id,
-            role: 'user',
-            content: userMessage.content,
-          })
-          
-          await db.messages.create({
-            conversationId: conversation.id,
-            role: 'assistant',
-            content: noDataMessage,
-          })
-          
-          await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
-          
-          return NextResponse.json({ 
-            message: noDataMessage,
-            questionsRemaining: subStatus.questionsRemaining
-          })
         }
+        // If no Elo data, DON'T return a dead-end — fall through to LLM with full data below
+        console.log(`[chat] No Elo best bet available — falling through to LLM with full data context`)
       } catch (err) {
         console.error('[chat] Error in betting question fallback:', err)
-        const errorMessage = formatAnthropicError(err)
-        
-        await db.messages.create({
-          conversationId: conversation.id,
-          role: 'user',
-          content: userMessage.content,
-        })
-        
-        await db.messages.create({
-          conversationId: conversation.id,
-          role: 'assistant',
-          content: errorMessage,
-        })
-        
-        await db.conversations.update(conversation.id, { updatedAt: new Date().toISOString() })
-        
-        return NextResponse.json({ 
-          message: errorMessage,
-          questionsRemaining: subStatus.questionsRemaining
-        })
+        // Fall through to LLM with full data instead of returning error
       }
     }
     
-    // If we reach here, it's NOT a betting question - use LLM for general questions
-    console.log(`[chat] Non-betting question detected - using LLM`)
+    // ═══════════════════════════════════════════════════════════
+    // UNIVERSAL LLM FALLBACK: Handles BOTH betting and non-betting questions
+    // ═══════════════════════════════════════════════════════════
+    // This is the safety net — ANY question that reaches here gets answered using the full data context.
+    // The system prompt's DATA SOURCE HIERARCHY tells the LLM to:
+    // 1. Use pre-computed Elo recommendations if available in the context
+    // 2. Analyze the raw odds data if no Elo recommendation exists
+    // 3. Use general sports knowledge as last resort
+    console.log(`[chat] ${isBetting ? 'Betting question with no Elo data' : 'Non-betting question'} — using LLM with full data context`)
     
     const systemPromptWithData = `${SYSTEM_PROMPT}
 
 ${combinedContext}
 
 IMPORTANT: Use this REAL-TIME data to answer the user's question.
-- Reference actual games and odds from The Odds API
-- Do NOT mention specific player injuries or rest days - our Elo model already factors these in
-- Verify starting lineups (especially NHL goalies) from ESPN data
+- Reference actual games and odds from the data above
+- Do NOT mention specific player injuries or rest days — our Elo model already factors these in
+- If the user is asking about betting, analyze the odds data above and provide your best insight
+- If asking about a specific game, look for that matchup in the data and break down all available betting lines
+- If asking about future games, check the upcoming games section for scheduled matchups
+- ALWAYS provide a useful answer — never say "I can't help" or "no data available"
 
 ═══════════════════════════════════════════════════════════
 CRITICAL: TEAMMATE/ROSTER CLAIMS RULE
