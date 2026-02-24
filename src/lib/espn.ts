@@ -475,9 +475,28 @@ export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
  * Search ESPN scoreboard for a specific game by team name tokens, then fetch its odds.
  * Used as an on-demand fallback when a user asks about a game that isn't in the cache.
  */
-export async function searchESPNGameByTeams(teamTokens: string[]): Promise<ESPNOdds | null> {
+// Map sport hints to ESPN league names for prioritized searching
+const SPORT_HINT_TO_LEAGUES: Record<string, string[]> = {
+  'basketball': ['mens-college-basketball', 'nba'],
+  'college basketball': ['mens-college-basketball'],
+  'ncaab': ['mens-college-basketball'],
+  'nba': ['nba'],
+  'football': ['college-football', 'nfl'],
+  'college football': ['college-football'],
+  'ncaaf': ['college-football'],
+  'nfl': ['nfl'],
+  'hockey': ['nhl'],
+  'nhl': ['nhl'],
+  'baseball': ['mlb'],
+  'mlb': ['mlb'],
+  'soccer': ['eng.1', 'esp.1', 'ger.1', 'ita.1', 'fra.1', 'usa.1', 'uefa.champions'],
+  'mma': ['ufc'],
+  'ufc': ['ufc'],
+}
+
+export async function searchESPNGameByTeams(teamTokens: string[], sportHint?: string): Promise<ESPNOdds | null> {
   if (teamTokens.length === 0) return null
-  console.log(`[ESPN] On-demand search for teams: ${teamTokens.join(', ')}`)
+  console.log(`[ESPN] On-demand search for teams: ${teamTokens.join(', ')}${sportHint ? ` (sport hint: ${sportHint})` : ''}`)
 
   const today = new Date()
 
@@ -491,7 +510,20 @@ export async function searchESPNGameByTeams(teamTokens: string[]): Promise<ESPNO
     )
   }
 
-  for (const { sport, league, name: leagueName } of ESPN_ODDS_SPORTS) {
+  // Prioritize leagues based on sport hint to avoid searching all 15+ leagues
+  let sportsToSearch = ESPN_ODDS_SPORTS
+  if (sportHint) {
+    const hintLower = sportHint.toLowerCase().trim()
+    const prioritizedLeagues = SPORT_HINT_TO_LEAGUES[hintLower]
+    if (prioritizedLeagues) {
+      const prioritized = ESPN_ODDS_SPORTS.filter(s => prioritizedLeagues.includes(s.league))
+      const rest = ESPN_ODDS_SPORTS.filter(s => !prioritizedLeagues.includes(s.league))
+      sportsToSearch = [...prioritized, ...rest]
+      console.log(`[ESPN] Prioritized leagues: ${prioritized.map(s => s.name).join(', ')}`)
+    }
+  }
+
+  for (const { sport, league, name: leagueName } of sportsToSearch) {
     try {
       const dateStr = getESPNDateString(today)
       const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard${getScoreboardParams(league, dateStr)}`

@@ -2879,6 +2879,122 @@ export async function analyzeSpecificGame(
     betsToUse = strictBets
   }
   
+  // FALLBACK 3: If both relaxed and strict analysis returned nothing,
+  // build market-consensus bets from whatever raw odds data we have.
+  // This ensures we ALWAYS return analysis for a specific game query.
+  if (betsToUse.length === 0) {
+    console.log(`[analyzeSpecificGame] Both analyses returned 0 bets, building market-consensus fallback bets`)
+    const fallbackBets: RankedBet[] = []
+    
+    // Build moneyline bets from raw odds
+    for (const ml of game.moneylines) {
+      for (const outcome of ml.outcomes) {
+        const impliedProb = americanToImpliedProbability(outcome.price)
+        const isHome = outcome.name === game.homeTeam
+        const eloProbRaw = eloData ? (isHome ? eloData.homeWinProbability : 1 - eloData.homeWinProbability) : undefined
+        const modelProb = eloProbRaw !== undefined ? eloProbRaw * 100 : impliedProb * 100
+        const edge = modelProb - impliedProb * 100
+        const ev = calculateExpectedValue(outcome.price, modelProb / 100)
+        const betRoi = calculateROI(ev)
+        fallbackBets.push({
+          gameId: game.id,
+          sport: game.sport,
+          sportName: game.sportName || game.sport,
+          homeTeam: game.homeTeam,
+          awayTeam: game.awayTeam,
+          commenceTime: game.commenceTime,
+          team: outcome.name,
+          betType: 'moneyline',
+          consensusProbability: impliedProb * 100,
+          bestPrice: outcome.price,
+          bestBook: ml.bookmaker,
+          impliedProbability: impliedProb * 100,
+          edge: Math.round(edge * 10) / 10,
+          eloProbability: eloProbRaw !== undefined ? Math.round(modelProb * 10) / 10 : undefined,
+          eloConfidence: eloData?.confidence,
+          homeElo: eloData?.homeRating,
+          awayElo: eloData?.awayRating,
+          expectedValue: ev,
+          roi: betRoi,
+          allBookPrices: [{ book: ml.bookmaker, price: outcome.price, impliedProb: impliedProb * 100 }],
+          score: Math.max(0, Math.round(edge * 2 + modelProb)),
+          calculatedAt: now
+        })
+      }
+    }
+    
+    // Build spread bets from raw odds
+    for (const sp of game.spreads) {
+      for (const outcome of sp.outcomes) {
+        const impliedProb = americanToImpliedProbability(outcome.price)
+        const spEv = calculateExpectedValue(outcome.price, impliedProb)
+        const spRoi = calculateROI(spEv)
+        fallbackBets.push({
+          gameId: game.id,
+          sport: game.sport,
+          sportName: game.sportName || game.sport,
+          homeTeam: game.homeTeam,
+          awayTeam: game.awayTeam,
+          commenceTime: game.commenceTime,
+          team: outcome.name,
+          betType: 'spread',
+          line: outcome.point,
+          consensusProbability: impliedProb * 100,
+          bestPrice: outcome.price,
+          bestBook: sp.bookmaker,
+          impliedProbability: impliedProb * 100,
+          edge: 0,
+          eloConfidence: eloData?.confidence,
+          homeElo: eloData?.homeRating,
+          awayElo: eloData?.awayRating,
+          expectedValue: spEv,
+          roi: spRoi,
+          allBookPrices: [{ book: sp.bookmaker, price: outcome.price, impliedProb: impliedProb * 100 }],
+          score: Math.round(impliedProb * 50),
+          calculatedAt: now
+        })
+      }
+    }
+    
+    // Build total bets from raw odds
+    for (const tot of game.totals) {
+      for (const outcome of tot.outcomes) {
+        const impliedProb = americanToImpliedProbability(outcome.price)
+        const totEv = calculateExpectedValue(outcome.price, impliedProb)
+        const totRoi = calculateROI(totEv)
+        fallbackBets.push({
+          gameId: game.id,
+          sport: game.sport,
+          sportName: game.sportName || game.sport,
+          homeTeam: game.homeTeam,
+          awayTeam: game.awayTeam,
+          commenceTime: game.commenceTime,
+          team: outcome.name,
+          betType: 'total',
+          line: outcome.point,
+          consensusProbability: impliedProb * 100,
+          bestPrice: outcome.price,
+          bestBook: tot.bookmaker,
+          impliedProbability: impliedProb * 100,
+          edge: 0,
+          eloConfidence: eloData?.confidence,
+          homeElo: eloData?.homeRating,
+          awayElo: eloData?.awayRating,
+          expectedValue: totEv,
+          roi: totRoi,
+          allBookPrices: [{ book: tot.bookmaker, price: outcome.price, impliedProb: impliedProb * 100 }],
+          score: Math.round(impliedProb * 50),
+          calculatedAt: now
+        })
+      }
+    }
+    
+    if (fallbackBets.length > 0) {
+      console.log(`[analyzeSpecificGame] Market-consensus fallback produced ${fallbackBets.length} bets`)
+      betsToUse = fallbackBets
+    }
+  }
+  
   // Prefer Elo-powered bets, but fall back to all bets if Elo isn't available
   const eloPoweredBets = betsToUse.filter(bet => bet.eloProbability !== undefined)
   const finalBets = eloPoweredBets.length > 0 ? eloPoweredBets : betsToUse
@@ -2890,7 +3006,7 @@ export async function analyzeSpecificGame(
   if (eloPoweredBets.length === 0 && betsToUse.length > 0) {
     console.log(`[analyzeSpecificGame] No Elo data for ${game.awayTeam} @ ${game.homeTeam} (${game.sport}), using market consensus for ${betsToUse.length} bets`)
   } else if (betsToUse.length === 0) {
-    console.log(`[analyzeSpecificGame] No bets available for ${game.awayTeam} @ ${game.homeTeam} - no moneyline odds or Elo data`)
+    console.log(`[analyzeSpecificGame] No bets available for ${game.awayTeam} @ ${game.homeTeam} - no odds data at all`)
   } else {
     console.log(`[analyzeSpecificGame] Returning ${sortedBets.length} bets for ${game.awayTeam} @ ${game.homeTeam}`)
   }
@@ -3487,9 +3603,18 @@ export function formatEnhancedParlayForContext(parlay: EnhancedParlayResult): st
     const leg = parlay.legs[i]
     const emoji = getSportEmoji(leg.sportName)
     const modelProb = leg.eloProbability !== undefined ? leg.eloProbability : leg.consensusProbability
-    lines.push(`${emoji} **Leg ${i + 1}: ${leg.team} ML @ ${formatOdds(leg.bestPrice)}**`)
+    let legDisplay: string
+    if (leg.betType === 'total') {
+      legDisplay = `${leg.team} ${leg.line} @ ${formatOdds(leg.bestPrice)}`
+    } else if (leg.betType === 'spread' && leg.line !== undefined) {
+      legDisplay = `${leg.team} ${leg.line > 0 ? '+' : ''}${leg.line} @ ${formatOdds(leg.bestPrice)}`
+    } else {
+      legDisplay = `${leg.team} ML @ ${formatOdds(leg.bestPrice)}`
+    }
+    const probLabel = leg.betType === 'total' ? `${leg.team.toLowerCase()} probability` : leg.betType === 'spread' ? 'Cover probability' : 'Win probability'
+    lines.push(`${emoji} **Leg ${i + 1}: ${legDisplay}**`)
     lines.push(`   ${leg.awayTeam} @ ${leg.homeTeam}`)
-    lines.push(`   Win probability: ${modelProb}% | Edge: ${leg.edge > 0 ? '+' : ''}${leg.edge}%`)
+    lines.push(`   ${probLabel}: ${modelProb}% | Edge: ${leg.edge > 0 ? '+' : ''}${leg.edge}%`)
     lines.push(`   Available at: ${leg.bestBook}`)
     lines.push('')
   }

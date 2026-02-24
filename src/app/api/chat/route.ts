@@ -775,7 +775,7 @@ async function handleSearchGames(input: SearchGamesInput): Promise<string> {
       const searchTokens = input.team.toLowerCase().split(/\s+/).filter(t => t.length >= 3)
       if (searchTokens.length > 0) {
         try {
-          const espnMatch = await searchESPNGameByTeams(searchTokens)
+          const espnMatch = await searchESPNGameByTeams(searchTokens, input.sport)
           if (espnMatch) {
             matchingGames = [espnMatch]
             console.log(`[tool:search_games] ESPN on-demand found: ${espnMatch.awayTeam} @ ${espnMatch.homeTeam}`)
@@ -875,7 +875,7 @@ async function handleAnalyzeGame(input: AnalyzeGameInput): Promise<string> {
     const searchTokens = input.team.toLowerCase().split(/\s+/).filter(t => t.length >= 3)
     if (searchTokens.length > 0) {
       try {
-        const espnMatch = await searchESPNGameByTeams(searchTokens)
+        const espnMatch = await searchESPNGameByTeams(searchTokens, input.sport)
         if (espnMatch) {
           matchingGames = [espnMatch]
           console.log(`[tool:analyze_game] ESPN on-demand found: ${espnMatch.awayTeam} @ ${espnMatch.homeTeam} (${espnMatch.league})`)
