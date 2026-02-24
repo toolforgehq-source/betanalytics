@@ -3,10 +3,10 @@ import { auth } from "@/auth"
 import Anthropic from "@anthropic-ai/sdk"
 import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
-import { getCachedESPNOdds, getCachedESPNData, cacheESPNOdds, type ESPNOdds, type ESPNOddsData, type ESPNInjury } from "@/lib/espn"
+import { getCachedESPNOdds, getCachedESPNData, cacheESPNOdds, searchESPNGameByTeams, type ESPNOdds, type ESPNOddsData, type ESPNInjury } from "@/lib/espn"
 import { analyzeSpecificGame, formatGameAnalysisForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext, formatBestBetForContext, formatFilteredBestBetResponse, getCachedBestBet } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
-import { fetchAllOdds } from "@/lib/odds"
+import { fetchAllOdds, fetchSportOdds } from "@/lib/odds"
 import { storePick, getAllPicks } from "@/lib/pick-tracking"
 import { analyzePlayerProp, analyzeAllPlayerProps, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
 
@@ -765,9 +765,48 @@ async function handleSearchGames(input: SearchGamesInput): Promise<string> {
   
   // Filter by team name if provided
   if (input.team) {
-    const matchingGames = games.filter(g => 
+    let matchingGames = games.filter(g => 
       teamNameMatches(input.team!, g.homeTeam) || teamNameMatches(input.team!, g.awayTeam)
     )
+    
+    // ON-DEMAND FALLBACK: Search ESPN + Odds API if team not in cache
+    if (matchingGames.length === 0) {
+      console.log(`[tool:search_games] Team "${input.team}" not in cache, trying on-demand search...`)
+      const searchTokens = input.team.toLowerCase().split(/\s+/).filter(t => t.length >= 3)
+      if (searchTokens.length > 0) {
+        try {
+          const espnMatch = await searchESPNGameByTeams(searchTokens)
+          if (espnMatch) {
+            matchingGames = [espnMatch]
+            console.log(`[tool:search_games] ESPN on-demand found: ${espnMatch.awayTeam} @ ${espnMatch.homeTeam}`)
+          }
+        } catch (err) {
+          console.error('[tool:search_games] ESPN on-demand search failed:', err)
+        }
+      }
+      
+      // Try Odds API if ESPN didn't find it
+      if (matchingGames.length === 0) {
+        const sportHint = input.sport?.toLowerCase().trim()
+        const leaguesToTry = sportHint ? (SPORT_TO_LEAGUES[sportHint] || []) : ['NBA', 'NCAAB', 'NFL', 'NCAAF', 'NHL', 'MLB']
+        for (const league of leaguesToTry) {
+          const sportKey = LEAGUE_TO_SPORT_KEY[league]
+          if (!sportKey) continue
+          try {
+            const freshGames = await fetchSportOdds(sportKey, league)
+            for (const game of freshGames) {
+              if (teamNameMatches(input.team!, game.homeTeam) || teamNameMatches(input.team!, game.awayTeam)) {
+                matchingGames.push(convertOddsAPIGameToESPNOdds(game))
+              }
+            }
+            if (matchingGames.length > 0) break
+          } catch (err) {
+            console.error(`[tool:search_games] Odds API fetch for ${league} failed:`, err)
+          }
+        }
+      }
+    }
+    
     if (matchingGames.length > 0) {
       games = matchingGames
     } else {
@@ -826,13 +865,57 @@ async function handleAnalyzeGame(input: AnalyzeGameInput): Promise<string> {
   }
   
   // Find the team's game
-  const matchingGames = candidates.filter(g => 
+  let matchingGames = candidates.filter(g => 
     teamNameMatches(input.team, g.homeTeam) || teamNameMatches(input.team, g.awayTeam)
   )
   
+  // ON-DEMAND FALLBACK 1: Search ESPN scoreboards live
+  if (matchingGames.length === 0) {
+    console.log(`[tool:analyze_game] Team "${input.team}" not in cache, trying ESPN on-demand search...`)
+    const searchTokens = input.team.toLowerCase().split(/\s+/).filter(t => t.length >= 3)
+    if (searchTokens.length > 0) {
+      try {
+        const espnMatch = await searchESPNGameByTeams(searchTokens)
+        if (espnMatch) {
+          matchingGames = [espnMatch]
+          console.log(`[tool:analyze_game] ESPN on-demand found: ${espnMatch.awayTeam} @ ${espnMatch.homeTeam} (${espnMatch.league})`)
+        }
+      } catch (err) {
+        console.error('[tool:analyze_game] ESPN on-demand search failed:', err)
+      }
+    }
+  }
+  
+  // ON-DEMAND FALLBACK 2: Fetch from Odds API for specific sports
+  if (matchingGames.length === 0) {
+    console.log(`[tool:analyze_game] ESPN search failed, trying Odds API for specific sports...`)
+    const sportHint = input.sport?.toLowerCase().trim()
+    const leaguesToTry = sportHint ? (SPORT_TO_LEAGUES[sportHint] || []) : ['NBA', 'NCAAB', 'NFL', 'NCAAF', 'NHL', 'MLB']
+    
+    for (const league of leaguesToTry) {
+      const sportKey = LEAGUE_TO_SPORT_KEY[league]
+      if (!sportKey) continue
+      
+      try {
+        const freshGames = await fetchSportOdds(sportKey, league)
+        for (const game of freshGames) {
+          if (teamNameMatches(input.team, game.homeTeam) || teamNameMatches(input.team, game.awayTeam)) {
+            const converted = convertOddsAPIGameToESPNOdds(game)
+            matchingGames = [converted]
+            console.log(`[tool:analyze_game] Odds API found: ${game.awayTeam} @ ${game.homeTeam} (${league})`)
+            break
+          }
+        }
+        if (matchingGames.length > 0) break
+      } catch (err) {
+        console.error(`[tool:analyze_game] Odds API fetch for ${league} failed:`, err)
+      }
+    }
+  }
+  
   if (matchingGames.length === 0) {
     const availableLeagues = Array.from(new Set(espnOdds.games.map(g => g.league)))
-    return `No game found for"${input.team}"${input.sport ? ` in ${input.sport}` : ''}. This could mean:\n- The team doesn't have a game today\n- The game has already been completed\n- Sportsbooks haven't posted lines yet\n\nAvailable sports today: ${availableLeagues.join(', ')} (${espnOdds.games.length} games total). Use search_games to see all available games.`
+    return `No game found for "${input.team}"${input.sport ? ` in ${input.sport}` : ''}. This could mean:\n- The team doesn't have a game today\n- The game has already been completed\n- Sportsbooks haven't posted lines yet\n\nAvailable sports today: ${availableLeagues.join(', ')} (${espnOdds.games.length} games total). Use search_games to see all available games.`
   }
   
   // If multiple matches, try to narrow by sport hint
