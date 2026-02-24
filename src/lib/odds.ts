@@ -117,8 +117,8 @@ const CACHE_EXPIRY_SECONDS = 4 * 60 * 60
 const ODDS_CACHE_KEY = 'betanalytics:odds:data'
 const PROPS_CACHE_KEY = 'betanalytics:props:data'
 
-// Props cache expiry: 2 hours (shorter than odds since props change more frequently)
-const PROPS_CACHE_EXPIRY_SECONDS = 2 * 60 * 60
+// Props cache expiry: 4 hours (props are available before and during games)
+const PROPS_CACHE_EXPIRY_SECONDS = 4 * 60 * 60
 
 export interface Game {
   id: string
@@ -321,7 +321,7 @@ export async function getCachedPlayerProps(): Promise<GamePlayerProps[] | null> 
     return propsData.props
   } catch (error) {
     console.error('[getCachedPlayerProps] Error:', error)
-    return []
+    return null
   }
 }
 
@@ -1162,13 +1162,15 @@ export async function fetchSportPlayerProps(sportKey: string): Promise<GamePlaye
     
     const events = await eventsResponse.json()
     
-    // Filter to today's games only (within next 24 hours)
+    // Include today's games: games that started up to 12 hours ago (in-progress) through next 24 hours
+    // Props are available before AND during games, so we must not exclude started games
     const now = new Date()
+    const twelveHoursAgo = new Date(now.getTime() - 12 * 60 * 60 * 1000)
     const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000)
     
     const todaysEvents = events.filter((event: { commence_time: string }) => {
       const gameTime = new Date(event.commence_time)
-      return gameTime >= now && gameTime <= tomorrow
+      return gameTime >= twelveHoursAgo && gameTime <= tomorrow
     })
     
     console.log(`[fetchSportPlayerProps] Found ${todaysEvents.length} games today for ${sportKey}`)

@@ -893,11 +893,12 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
   }
   
   // Normalize team name for matching - extract meaningful tokens
+  // Use 3+ chars to catch short team names like "Avs", "Sox", "Mavs", "Nets", etc.
   const normalizeTeam = (name: string) => name.toLowerCase().replace(/[^a-z0-9\s]/g, '')
-  const getTeamTokens = (name: string) => normalizeTeam(name).split(/\s+/).filter(t => t.length >= 4 && !STOPWORDS.has(t))
+  const getTeamTokens = (name: string) => normalizeTeam(name).split(/\s+/).filter(t => t.length >= 3 && !STOPWORDS.has(t))
   
-  // Get message tokens (words with 4+ chars, excluding stopwords)
-  const messageTokens = normalizedMessage.split(/\s+/).filter(w => w.length >= 4 && !STOPWORDS.has(w))
+  // Get message tokens (words with 3+ chars, excluding stopwords)
+  const messageTokens = normalizedMessage.split(/\s+/).filter(w => w.length >= 3 && !STOPWORDS.has(w))
   
   // Track single-team matches for fallback
   const singleTeamMatches: typeof espnOddsData.games = []
@@ -907,12 +908,12 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
     const homeTokens = getTeamTokens(espnGame.homeTeam)
     const awayTokens = getTeamTokens(espnGame.awayTeam)
     
-    // Check for token matches (exact match or one contains the other, both must be 4+ chars)
+    // Check for token matches (exact match or substring match for longer tokens)
     const tokenMatches = (teamTokens: string[]) => {
       return teamTokens.some(tt => 
         messageTokens.some(mt => 
           tt === mt || // exact match
-          (tt.length >= 4 && mt.length >= 4 && (tt.includes(mt) || mt.includes(tt))) // substring match only if both are 4+ chars
+          (tt.length >= 4 && mt.length >= 4 && (tt.includes(mt) || mt.includes(tt))) // substring match for 4+ char tokens
         )
       )
     }
@@ -1070,7 +1071,7 @@ async function detectGameQuestion(userMessage: string): Promise<Game | null> {
   }
   
   console.log(`[detectGameQuestion] No match in cached data. Searching ESPN on-demand...`)
-  const searchTokens = messageTokens.filter(t => t.length >= 4)
+  const searchTokens = messageTokens.filter(t => t.length >= 3)
   if (searchTokens.length > 0) {
     try {
       const onDemandOdds = await searchESPNGameByTeams(searchTokens)
@@ -2269,7 +2270,7 @@ export async function POST(request: Request) {
         const propQuery = parsePlayerPropQuery(userMessageContent)
         console.log(`[chat] Parsed prop query: player="${propQuery.playerName}", stat=${propQuery.statType}, line=${propQuery.line}, direction=${propQuery.direction}`)
         
-        let propAnalysisData: string
+        let propAnalysisData: string = ''
         
         if (propQuery.playerName && propQuery.statType) {
           const analysis = await analyzePlayerProp(propQuery)
@@ -2297,8 +2298,23 @@ export async function POST(request: Request) {
             propAnalysisData = formatMultiPropAnalysisForContext(bestProps)
             console.log(`[chat] Best props analysis complete: ${bestProps.length} props ranked${propParlayDetection ? ' (parlay mode)' : ''}`)
           } else {
-              propAnalysisData = 'PLAYER PROP ANALYSIS\n\nNo player props data available at this time. Props are typically posted by sportsbooks in the morning/early afternoon for evening games.\n\nAlternative: Ask about team bets instead — our Elo rating system analyzes moneylines, spreads, and totals for all scheduled games. Try "What\'s the best bet today?" or ask about a specific game.'
-              console.log(`[chat] No props data available - suggesting team bet alternatives`)
+              // Try fetching for individual sports as a last resort
+              console.log(`[chat] analyzeBestProps returned empty - trying individual sport fetches`)
+              const sportKeys = propQuery.sport ? [propQuery.sport] : ['NBA', 'NFL', 'NHL', 'MLB']
+              let foundRetryProps = false
+              for (const sportKey of sportKeys) {
+                const retryProps = await analyzeBestProps({ sport: sportKey, count: propCount })
+                if (retryProps.length > 0) {
+                  propAnalysisData = formatMultiPropAnalysisForContext(retryProps)
+                  console.log(`[chat] Found ${retryProps.length} props via individual sport retry (${sportKey})`)
+                  foundRetryProps = true
+                  break
+                }
+              }
+              if (!foundRetryProps) {
+                propAnalysisData = 'PLAYER PROP ANALYSIS\n\nNo player props data available at this time. This may be because no games are currently scheduled or all games have completed.\n\nWhat you can do:\n- Ask about team bets instead: "What\'s the best bet today?"\n- Ask about a specific game: "Lakers vs Celtics"\n- Try again closer to game time when sportsbooks post new props'
+                console.log(`[chat] No props data available after retry - suggesting alternatives`)
+              }
           }
         }
         
