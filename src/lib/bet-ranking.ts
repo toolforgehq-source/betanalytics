@@ -1736,12 +1736,12 @@ export async function analyzeGame(
  * IMPORTANT: This function now analyzes ALL bet types (moneylines, spreads, totals)
  * to ensure sport-specific queries return the truly best bet, not just the best moneyline.
  */
-async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], homeLastGameDate?: string | null, awayLastGameDate?: string | null): Promise<RankedBet[]> {
+async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], homeLastGameDate?: string | null, awayLastGameDate?: string | null, skipStartedCheck?: boolean): Promise<RankedBet[]> {
   const rankedBets: RankedBet[] = []
   const now = new Date().toISOString()
   
-  // Skip games that have already started
-  if (new Date(game.commenceTime) < new Date()) {
+  // Skip games that have already started (unless caller explicitly opts out, e.g. specific game queries)
+  if (!skipStartedCheck && new Date(game.commenceTime) < new Date()) {
     return []
   }
   
@@ -2790,6 +2790,13 @@ export interface GameAnalysisResult {
   bets: RankedBet[]
   bestBet: RankedBet | null
   calculatedAt: string
+  // Raw Elo data — included even when no bets pass filters so LLM always has context
+  eloData?: {
+    homeRating: number
+    awayRating: number
+    homeWinProbability: number
+    confidence: string
+  }
 }
 
 /**
@@ -2818,25 +2825,58 @@ export async function analyzeSpecificGame(
     }
   }
   
-  // Analyze the game to get all betting options
-  // Pass injuries to ensure injury-adjusted Elo ratings are used
-  const bets = await analyzeGame(game, injuriesToUse)
+  // Always fetch Elo data independently so we can include it even if bet analysis fails
+  const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
+  let eloData: GameAnalysisResult['eloData'] = undefined
+  if (eloLeague) {
+    try {
+      const eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam)
+      if (eloResult) {
+        eloData = {
+          homeRating: eloResult.homeRating,
+          awayRating: eloResult.awayRating,
+          homeWinProbability: eloResult.probability,
+          confidence: eloResult.confidence
+        }
+        console.log(`[analyzeSpecificGame] Elo data: ${game.homeTeam}=${eloResult.homeRating}, ${game.awayTeam}=${eloResult.awayRating}, homeWinProb=${(eloResult.probability * 100).toFixed(1)}%`)
+      }
+    } catch (err) {
+      console.error(`[analyzeSpecificGame] Failed to fetch Elo data:`, err)
+    }
+  }
+
+  // Use relaxed analysis (analyzeGameForSportQuery) instead of strict best-bet analysis (analyzeGame)
+  // This ensures specific game queries always return full analysis (moneyline, spread, total)
+  // even if no bets pass the strict "best bet of the day" filters.
+  // Also skip the "started game" check — when a user asks about a specific game, they want analysis
+  // regardless of whether it has started (the game may have JUST started or the time might be slightly off).
+  const bets = await analyzeGameForSportQuery(game, injuriesToUse, null, null, true)
+  
+  console.log(`[analyzeSpecificGame] ${game.awayTeam} @ ${game.homeTeam}: ${bets.length} bets from relaxed analysis`)
+  
+  // If relaxed analysis also returned nothing (no Elo data or no moneyline odds),
+  // try the strict analysis as a last resort (it handles market consensus fallback)
+  let betsToUse = bets
+  if (bets.length === 0) {
+    console.log(`[analyzeSpecificGame] Relaxed analysis returned 0 bets, trying strict analysis as fallback`)
+    const strictBets = await analyzeGame(game, injuriesToUse)
+    betsToUse = strictBets
+  }
   
   // Prefer Elo-powered bets, but fall back to all bets if Elo isn't available
-  // This ensures game-specific queries always return useful analysis
-  const eloPoweredBets = bets.filter(bet => bet.eloProbability !== undefined)
-  
-  // Use Elo bets if available, otherwise use all bets (with market consensus)
-  const betsToUse = eloPoweredBets.length > 0 ? eloPoweredBets : bets
+  const eloPoweredBets = betsToUse.filter(bet => bet.eloProbability !== undefined)
+  const finalBets = eloPoweredBets.length > 0 ? eloPoweredBets : betsToUse
   
   // Sort by score to find the best bet for this game
-  const sortedBets = [...betsToUse].sort((a, b) => b.score - a.score)
+  const sortedBets = [...finalBets].sort((a, b) => b.score - a.score)
   
   // Log for debugging
-  if (eloPoweredBets.length === 0 && bets.length > 0) {
-    console.log(`[analyzeSpecificGame] No Elo data for ${game.awayTeam} @ ${game.homeTeam} (${game.sport}), using market consensus for ${bets.length} bets`)
-  } else if (bets.length === 0) {
-    console.log(`[analyzeSpecificGame] No bets available for ${game.awayTeam} @ ${game.homeTeam} - game may have started or no odds`)
+  if (eloPoweredBets.length === 0 && betsToUse.length > 0) {
+    console.log(`[analyzeSpecificGame] No Elo data for ${game.awayTeam} @ ${game.homeTeam} (${game.sport}), using market consensus for ${betsToUse.length} bets`)
+  } else if (betsToUse.length === 0) {
+    console.log(`[analyzeSpecificGame] No bets available for ${game.awayTeam} @ ${game.homeTeam} - no moneyline odds or Elo data`)
+  } else {
+    console.log(`[analyzeSpecificGame] Returning ${sortedBets.length} bets for ${game.awayTeam} @ ${game.homeTeam}`)
   }
   
   return {
@@ -2849,7 +2889,8 @@ export async function analyzeSpecificGame(
     },
     bets: sortedBets,
     bestBet: sortedBets[0] || null,
-    calculatedAt: now
+    calculatedAt: now,
+    eloData
   }
 }
 
@@ -2867,7 +2908,25 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
   lines.push('')
   
   if (!result.bestBet) {
-    lines.push('No betting options available for this game. The game may have already started or odds are not available.')
+    // Even without specific bets, provide Elo analysis if available
+    if (result.eloData) {
+      const homeProb = (result.eloData.homeWinProbability * 100).toFixed(1)
+      const awayProb = ((1 - result.eloData.homeWinProbability) * 100).toFixed(1)
+      const favoredTeam = result.eloData.homeWinProbability > 0.5 ? result.game.homeTeam : result.game.awayTeam
+      const favoredProb = result.eloData.homeWinProbability > 0.5 ? homeProb : awayProb
+      lines.push('**ELO ANALYSIS (no specific bet lines available):**')
+      lines.push('')
+      lines.push(`${result.game.homeTeam} Elo Rating: ${result.eloData.homeRating}`)
+      lines.push(`${result.game.awayTeam} Elo Rating: ${result.eloData.awayRating}`)
+      lines.push(`Elo Win Probability: ${result.game.homeTeam} ${homeProb}% | ${result.game.awayTeam} ${awayProb}%`)
+      lines.push(`Confidence: ${result.eloData.confidence}`)
+      lines.push('')
+      lines.push(`Our Elo model favors **${favoredTeam}** at ${favoredProb}%.`)
+      lines.push('')
+      lines.push('Note: Specific bet lines (spread, moneyline, total) may not be available yet or the game may have started. The Elo analysis above still reflects our model\'s assessment of this matchup.')
+    } else {
+      lines.push('No betting options or Elo data available for this game. Odds may not be posted yet.')
+    }
     return lines.join('\n')
   }
   
