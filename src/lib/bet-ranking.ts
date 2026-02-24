@@ -1276,7 +1276,15 @@ export async function analyzeGame(
       
       // FIX 3: Apply calibration to adjust probability based on historical accuracy
       // This corrects for systematic over/under-confidence in our predictions
-      const baseEloCoverProb = await getCalibratedProbability(rawEloCoverProb)
+      const calibratedEloCoverProb = await getCalibratedProbability(rawEloCoverProb)
+      
+      // FIX: Blend spread cover probability with market consensus (like moneylines and totals already do)
+      // Without blending, the raw Elo model can disagree with the market by 10+ points on large
+      // spreads (e.g., Duke -17.5 vs Notre Dame), producing inflated edges (30%+) that aren't real.
+      const marketCoverProb = americanToImpliedProbability(bestEntry.outcome.price)
+      const baseEloCoverProb = eloResult.confidence
+        ? blendWithMarket(calibratedEloCoverProb, marketCoverProb, eloResult.confidence)
+        : calibratedEloCoverProb
       
       // Apply situational factors to spread cover probability
       const opponentName = isHomeTeam ? game.awayTeam : game.homeTeam
@@ -1986,15 +1994,23 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         return
       }
       
-      const eloCoverProb = spreadResult.probability
+      const rawEloCoverProb = spreadResult.probability
+      
+      // FIX: Blend spread cover probability with market consensus (like moneylines and totals already do)
+      // Without blending, the raw Elo model can disagree with the market by 10+ points on large
+      // spreads (e.g., Duke -17.5 vs Notre Dame), producing inflated edges (30%+) that aren't real.
+      const marketCoverProb = americanToImpliedProbability(bestEntry.outcome.price)
+      const eloCoverProb = eloResult.confidence
+        ? blendWithMarket(rawEloCoverProb, marketCoverProb, eloResult.confidence)
+        : rawEloCoverProb
       
       // Calculate implied probability from best price
-      const impliedProb = americanToImpliedProbability(bestEntry.outcome.price)
+      const impliedProb = marketCoverProb
       
-      // Edge is Elo probability - implied probability (our model vs market)
+      // Edge is blended probability - implied probability (our model vs market)
       const edge = eloCoverProb - impliedProb
       
-      // Calculate EV and ROI using Elo probability
+      // Calculate EV and ROI using blended probability
       const ev = calculateExpectedValue(bestEntry.outcome.price, eloCoverProb)
       const roi = calculateROI(ev)
       
