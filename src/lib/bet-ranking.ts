@@ -1753,9 +1753,18 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     return []
   }
   
-  // Must have moneyline odds
-  if (!game.moneylines || game.moneylines.length === 0) {
+  // Check what odds data we have — don't require moneylines for spread/total analysis
+  const hasMoneylines = game.moneylines && game.moneylines.length > 0
+  const hasSpreads = game.spreads && game.spreads.length > 0
+  const hasTotals = game.totals && game.totals.length > 0
+  
+  if (!hasMoneylines && !hasSpreads && !hasTotals) {
+    console.log(`[analyzeGameForSportQuery] No odds data at all for ${game.awayTeam} @ ${game.homeTeam}`)
     return []
+  }
+  
+  if (!hasMoneylines) {
+    console.log(`[analyzeGameForSportQuery] No moneylines for ${game.awayTeam} @ ${game.homeTeam}, but has spreads=${hasSpreads} totals=${hasTotals} — proceeding with available data`)
   }
   
   // Get Elo prediction for this game (if available)
@@ -1815,14 +1824,19 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     console.log(`[analyzeGameForSportQuery] Elo result: NULL`)
   }
   
-  // Only return bets if we have Elo data
-  // Note: We now accept 'very_low' confidence to ensure all sports have Elo-based recommendations
-  if (!eloResult) {
-    console.log(`[analyzeGameForSportQuery] No Elo data available for ${game.homeTeam} vs ${game.awayTeam} (${game.sportName})`)
+  // For specific game queries (skipStartedCheck=true), proceed even without Elo
+  // The caller (analyzeSpecificGame) fetches Elo independently and includes it in the result
+  // For sport-wide queries, Elo is required to produce meaningful recommendations
+  if (!eloResult && !skipStartedCheck) {
+    console.log(`[analyzeGameForSportQuery] No Elo data available for ${game.homeTeam} vs ${game.awayTeam} (${game.sportName}) — skipping (not a specific game query)`)
     return []
   }
   
-  if (eloResult.confidence === 'very_low') {
+  if (!eloResult) {
+    console.log(`[analyzeGameForSportQuery] No Elo data for ${game.homeTeam} vs ${game.awayTeam} — continuing anyway for specific game query`)
+  }
+  
+  if (eloResult?.confidence === 'very_low') {
     console.log(`[analyzeGameForSportQuery] Using Elo with very_low confidence for ${game.homeTeam} vs ${game.awayTeam} (${game.sportName})`)
   }
   
@@ -1830,7 +1844,12 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
   // MONEYLINE ANALYSIS
   // ============================================
   // Analyze both teams - NO strict filters, just basic requirements
+  // Only run if we have moneyline data
+  if (!hasMoneylines) {
+    console.log(`[analyzeGameForSportQuery] Skipping moneyline analysis — no moneyline odds available`)
+  }
   for (const team of [game.homeTeam, game.awayTeam]) {
+    if (!hasMoneylines || !eloResult) break
     // First try to get best price - this is required
     const bestPrice = findBestPrice(game, team)
     if (!bestPrice) {
