@@ -511,3 +511,253 @@ describe('Dead-end response prevention', () => {
     expect(formatted).toMatch(/check back/i)
   })
 })
+
+// ============================================================
+// SNAPSHOT TESTS — Catch unintended formatting changes
+// ============================================================
+// These snapshots capture the exact output format of formatting functions.
+// If someone changes the format, these tests will fail and require
+// explicit approval via `pnpm test -- --update` to accept the new format.
+
+describe('Snapshot: formatBestBetForContext output format', () => {
+  it('moneyline best bet matches snapshot', () => {
+    const result: BestBetResult = {
+      bestBet: makeRankedBet({
+        betType: 'moneyline',
+        team: 'Los Angeles Lakers',
+        bestPrice: -130,
+        bestBook: 'DraftKings',
+        consensusProbability: 55.0,
+        impliedProbability: 56.5,
+        edge: 3.5,
+        eloProbability: 60.0,
+        expectedValue: 5.50,
+        roi: 5.50,
+        score: 72,
+        homeElo: 1650,
+        awayElo: 1600,
+        commenceTime: '2026-01-15T20:00:00.000Z',
+      }),
+      runnerUp: null,
+      allRankedBets: [],
+      allEloBets: [],
+      calculatedAt: '2026-01-15T12:00:00.000Z',
+      gamesAnalyzed: 10,
+      gamesQualified: 1,
+      reason: null,
+      closestMisses: [],
+      mostLikelyWinners: [],
+    }
+    expect(formatBestBetForContext(result)).toMatchSnapshot()
+  })
+
+  it('spread best bet matches snapshot', () => {
+    const result: BestBetResult = {
+      bestBet: makeRankedBet({
+        betType: 'spread',
+        line: -3.5,
+        team: 'Los Angeles Lakers',
+        bestPrice: -110,
+        bestBook: 'FanDuel',
+        consensusProbability: 58.0,
+        impliedProbability: 52.4,
+        edge: 5.6,
+        eloProbability: 58.0,
+        expectedValue: 7.20,
+        roi: 7.20,
+        score: 80,
+        homeElo: 1680,
+        awayElo: 1600,
+        commenceTime: '2026-01-15T20:00:00.000Z',
+      }),
+      runnerUp: null,
+      allRankedBets: [],
+      allEloBets: [],
+      calculatedAt: '2026-01-15T12:00:00.000Z',
+      gamesAnalyzed: 10,
+      gamesQualified: 1,
+      reason: null,
+      closestMisses: [],
+      mostLikelyWinners: [],
+    }
+    expect(formatBestBetForContext(result)).toMatchSnapshot()
+  })
+
+  it('total over best bet matches snapshot', () => {
+    const result: BestBetResult = {
+      bestBet: makeRankedBet({
+        betType: 'total',
+        line: 224.5,
+        team: 'Over',
+        sportName: 'NBA',
+        bestPrice: -110,
+        bestBook: 'BetMGM',
+        consensusProbability: 56.0,
+        impliedProbability: 52.4,
+        edge: 3.6,
+        eloProbability: 56.0,
+        expectedValue: 4.80,
+        roi: 4.80,
+        score: 68,
+        homeElo: 1650,
+        awayElo: 1600,
+        commenceTime: '2026-01-15T20:00:00.000Z',
+      }),
+      runnerUp: null,
+      allRankedBets: [],
+      allEloBets: [],
+      calculatedAt: '2026-01-15T12:00:00.000Z',
+      gamesAnalyzed: 10,
+      gamesQualified: 1,
+      reason: null,
+      closestMisses: [],
+      mostLikelyWinners: [],
+    }
+    expect(formatBestBetForContext(result)).toMatchSnapshot()
+  })
+
+  it('no best bet with closest misses matches snapshot', () => {
+    const result: BestBetResult = {
+      bestBet: null,
+      runnerUp: null,
+      allRankedBets: [],
+      allEloBets: [],
+      calculatedAt: '2026-01-15T12:00:00.000Z',
+      gamesAnalyzed: 10,
+      gamesQualified: 0,
+      reason: 'No bets passed filters',
+      closestMisses: [{
+        gameId: 'g1',
+        sport: 'basketball_nba',
+        sportName: 'NBA',
+        homeTeam: 'Lakers',
+        awayTeam: 'Celtics',
+        commenceTime: '2026-01-15T20:00:00.000Z',
+        team: 'Lakers',
+        consensusProbability: 54,
+        bestPrice: -140,
+        bestBook: 'DraftKings',
+        impliedProbability: 58.3,
+        edge: -4.3,
+        expectedValue: -3,
+        roi: -3,
+        score: 45,
+        disqualifyReasons: ['Edge below 3%'],
+        isValuePlay: false,
+      }],
+      mostLikelyWinners: [],
+    }
+    expect(formatBestBetForContext(result)).toMatchSnapshot()
+  })
+})
+
+describe('Snapshot: formatGameAnalysisForContext output format', () => {
+  it('game with Elo and bets matches snapshot', () => {
+    const result: GameAnalysisResult = {
+      game: {
+        homeTeam: 'Notre Dame',
+        awayTeam: 'Duke',
+        sport: 'basketball_ncaab',
+        sportName: 'NCAAB',
+        commenceTime: '2026-01-15T23:00:00.000Z',
+      },
+      bets: [makeRankedBet({
+        homeTeam: 'Notre Dame',
+        awayTeam: 'Duke',
+        team: 'Notre Dame',
+        betType: 'spread',
+        line: 17.5,
+        sportName: 'NCAAB',
+        bestPrice: -110,
+        bestBook: 'DraftKings',
+        consensusProbability: 83.3,
+        edge: 30.9,
+        score: 95,
+      })],
+      bestBet: makeRankedBet({
+        homeTeam: 'Notre Dame',
+        awayTeam: 'Duke',
+        team: 'Notre Dame',
+        betType: 'spread',
+        line: 17.5,
+        sportName: 'NCAAB',
+        bestPrice: -110,
+        bestBook: 'DraftKings',
+        consensusProbability: 83.3,
+        edge: 30.9,
+        score: 95,
+      }),
+      calculatedAt: '2026-01-15T12:00:00.000Z',
+      eloData: {
+        homeRating: 1520,
+        awayRating: 1703,
+        homeWinProbability: 0.35,
+        confidence: 'high',
+      },
+    }
+    expect(formatGameAnalysisForContext(result)).toMatchSnapshot()
+  })
+
+  it('game with Elo but no qualifying bets matches snapshot', () => {
+    const result: GameAnalysisResult = {
+      game: {
+        homeTeam: 'Team A',
+        awayTeam: 'Team B',
+        sport: 'basketball_nba',
+        sportName: 'NBA',
+        commenceTime: '2026-01-15T23:00:00.000Z',
+      },
+      bets: [],
+      bestBet: null,
+      calculatedAt: '2026-01-15T12:00:00.000Z',
+      eloData: {
+        homeRating: 1600,
+        awayRating: 1550,
+        homeWinProbability: 0.62,
+        confidence: 'medium',
+      },
+    }
+    expect(formatGameAnalysisForContext(result)).toMatchSnapshot()
+  })
+})
+
+describe('Snapshot: formatEnhancedParlayForContext output format', () => {
+  it('3-leg mixed parlay matches snapshot', () => {
+    const parlay: EnhancedParlayResult = {
+      legs: [
+        makeRankedBet({ betType: 'moneyline', team: 'Lakers', bestPrice: -150, homeTeam: 'Los Angeles Lakers', awayTeam: 'Boston Celtics' }),
+        makeRankedBet({ betType: 'spread', line: 7.5, team: 'Celtics', bestPrice: -110, homeTeam: 'New York Knicks', awayTeam: 'Boston Celtics' }),
+        makeRankedBet({ betType: 'total', line: 224.5, team: 'Over', bestPrice: -110, homeTeam: 'Milwaukee Bucks', awayTeam: 'Miami Heat' }),
+      ],
+      legCount: 3,
+      combinedProbability: 15,
+      parlayOdds: 550,
+      parlayPayout: 650,
+      impliedProbability: 15.4,
+      parlayEdge: -0.4,
+      expectedValue: -2,
+      calculatedAt: '2026-01-15T12:00:00.000Z',
+      alternatives: {},
+      reason: null,
+    }
+    expect(formatEnhancedParlayForContext(parlay)).toMatchSnapshot()
+  })
+})
+
+describe('Snapshot: formatFilteredBestBetResponse output format', () => {
+  it('filtered bet with alternatives matches snapshot', () => {
+    const bet = makeRankedBet({
+      sportName: 'NBA',
+      team: 'Los Angeles Lakers',
+      betType: 'moneyline',
+      bestPrice: -130,
+      bestBook: 'DraftKings',
+      score: 72,
+      commenceTime: '2026-01-15T20:00:00.000Z',
+    })
+    const alts = [
+      makeRankedBet({ sportName: 'NBA', team: 'Boston Celtics', betType: 'spread', line: 3.5, bestPrice: -110, homeTeam: 'New York Knicks', awayTeam: 'Boston Celtics', score: 65, commenceTime: '2026-01-15T20:00:00.000Z' }),
+    ]
+    expect(formatFilteredBestBetResponse(bet, 'Best NBA bet', alts)).toMatchSnapshot()
+  })
+})
