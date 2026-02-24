@@ -598,7 +598,14 @@ function calculateConsensusProbabilityThreeWay(
 ): { consensusProb: number; bookPrices: { book: string; price: number; impliedProb: number; noVigProb: number }[] } | null {
   const bookPrices: { book: string; price: number; impliedProb: number; noVigProb: number }[] = []
   
+  const normalizedTeam = team.toLowerCase()
   const isHomeTeam = team === game.homeTeam
+  const isAwayTeam = team === game.awayTeam
+  const isDraw = normalizedTeam === 'draw' || normalizedTeam === 'tie' || normalizedTeam === 'x'
+
+  if (!isHomeTeam && !isAwayTeam && !isDraw) {
+    return null
+  }
   
   for (const ml of game.moneylines) {
     // Only use reputable books for consensus
@@ -625,9 +632,23 @@ function calculateConsensusProbabilityThreeWay(
     const noVig = removeVigThreeWay(homeImplied, drawImplied, awayImplied)
     
     // Get the team's no-vig probability
-    const teamNoVigProb = isHomeTeam ? noVig.home : noVig.away
-    const teamOutcome = isHomeTeam ? homeOutcome : awayOutcome
-    const teamImplied = isHomeTeam ? homeImplied : awayImplied
+    let teamNoVigProb: number
+    let teamOutcome = homeOutcome
+    let teamImplied = homeImplied
+
+    if (isAwayTeam) {
+      teamNoVigProb = noVig.away
+      teamOutcome = awayOutcome
+      teamImplied = awayImplied
+    } else if (isDraw) {
+      teamNoVigProb = noVig.draw
+      teamOutcome = drawOutcome
+      teamImplied = drawImplied
+    } else {
+      teamNoVigProb = noVig.home
+      teamOutcome = homeOutcome
+      teamImplied = homeImplied
+    }
     
     bookPrices.push({
       book: ml.bookmaker,
@@ -721,8 +742,16 @@ function findBestPrice(
 ): { price: number; book: string; impliedProb: number } | null {
   let best: { price: number; book: string; impliedProb: number } | null = null
   
+  const normalizedTeam = team.toLowerCase()
+  const isDraw = normalizedTeam === 'draw' || normalizedTeam === 'tie' || normalizedTeam === 'x'
+  
   for (const ml of game.moneylines) {
-    const outcome = ml.outcomes.find(o => o.name === team)
+    const outcome = isDraw
+      ? ml.outcomes.find(o => {
+        const name = o.name.toLowerCase()
+        return name === 'draw' || name === 'tie' || name === 'x'
+      })
+      : ml.outcomes.find(o => o.name === team)
     if (!outcome) continue
     
     // Higher price is better (less juice)
@@ -5224,7 +5253,7 @@ export function computeGameMenu(game: Game): GameMenu {
         `${game.homeTeam} ML`,
         bestPrice.price,
         bestPrice.book,
-        homeConsensus.consensusProb / 100,
+        homeConsensus.consensusProb,
         allPrices,
         game.homeTeam
       ))
@@ -5242,10 +5271,37 @@ export function computeGameMenu(game: Game): GameMenu {
         `${game.awayTeam} ML`,
         bestPrice.price,
         bestPrice.book,
-        awayConsensus.consensusProb / 100,
+        awayConsensus.consensusProb,
         allPrices,
         game.awayTeam
       ))
+    }
+  }
+
+  // For 3-way markets (soccer), include Draw moneyline too
+  if (isThreeWayMarket(game)) {
+    const drawConsensus = calculateConsensusProbability(game, 'Draw')
+    if (drawConsensus) {
+      const bestPrice = findBestPrice(game, 'Draw')
+      if (bestPrice) {
+        const allPrices = game.moneylines
+          .flatMap(ml => ml.outcomes
+            .filter(o => {
+              const name = o.name.toLowerCase()
+              return name === 'draw' || name === 'tie' || name === 'x'
+            })
+            .map(o => ({ book: ml.bookmaker, price: o.price })))
+
+        allBets.push(createBetCard(
+          'moneyline',
+          'Draw',
+          bestPrice.price,
+          bestPrice.book,
+          drawConsensus.consensusProb,
+          allPrices,
+          'Draw'
+        ))
+      }
     }
   }
   
