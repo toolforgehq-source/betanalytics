@@ -287,16 +287,16 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
       commenceTime: header?.competitions?.[0]?.date || new Date().toISOString(),
       provider: pickcenter.provider?.name || 'DraftKings',
       spread: pickcenter.spread ?? null,
-      spreadOdds: pickcenter.homeTeamOdds?.spreadOdds && pickcenter.awayTeamOdds?.spreadOdds ? {
+      spreadOdds: (pickcenter.homeTeamOdds?.spreadOdds != null && pickcenter.awayTeamOdds?.spreadOdds != null) ? {
         home: pickcenter.homeTeamOdds.spreadOdds,
         away: pickcenter.awayTeamOdds.spreadOdds
       } : null,
       overUnder: pickcenter.overUnder ?? null,
-      overUnderOdds: pickcenter.overOdds && pickcenter.underOdds ? {
+      overUnderOdds: (pickcenter.overOdds != null && pickcenter.underOdds != null) ? {
         over: pickcenter.overOdds,
         under: pickcenter.underOdds
       } : null,
-      moneyline: pickcenter.homeTeamOdds?.moneyLine && pickcenter.awayTeamOdds?.moneyLine ? {
+      moneyline: (pickcenter.homeTeamOdds?.moneyLine != null && pickcenter.awayTeamOdds?.moneyLine != null) ? {
         home: pickcenter.homeTeamOdds.moneyLine,
         away: pickcenter.awayTeamOdds.moneyLine,
         draw: pickcenter.drawOdds?.moneyLine ?? undefined  // For soccer 3-way markets
