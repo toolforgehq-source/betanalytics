@@ -1187,18 +1187,17 @@ export async function fetchSportPlayerProps(sportKey: string): Promise<GamePlaye
     
     console.log(`[fetchSportPlayerProps] Found ${todaysEvents.length} games today for ${sportKey}`)
     
-    // Fetch props for each game (limit to first 10 to cover full slates)
-    const eventsToFetch = todaysEvents.slice(0, 10)
-    console.log(`[fetchSportPlayerProps] Fetching props for ${eventsToFetch.length} ${sportKey} games`)
+    // Fetch props for ALL games - no artificial limit
+    console.log(`[fetchSportPlayerProps] Fetching props for ${todaysEvents.length} ${sportKey} games`)
     
-    const propsPromises = eventsToFetch.map((event: { id: string }) => 
+    const propsPromises = todaysEvents.map((event: { id: string }) => 
       fetchGamePlayerProps(event.id, sportKey)
     )
     
     const results = await Promise.all(propsPromises)
     // Filter out nulls AND games with 0 props (prevents caching empty game shells)
     const gamesWithProps = results.filter((r): r is GamePlayerProps => r !== null && r.props.length > 0)
-    console.log(`[fetchSportPlayerProps] ${sportKey}: ${gamesWithProps.length}/${eventsToFetch.length} games returned props`)
+    console.log(`[fetchSportPlayerProps] ${sportKey}: ${gamesWithProps.length}/${todaysEvents.length} games returned props`)
     return gamesWithProps
   } catch (error) {
     console.error(`[fetchSportPlayerProps] Error:`, error)
