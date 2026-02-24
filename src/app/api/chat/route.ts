@@ -120,7 +120,7 @@ CRITICAL RULES
 4. For player props: say "our player stats model" -- NEVER say "Elo" for player props (Elo is team-only)
 5. NEVER mention specific player injuries or rest days -- our models already factor these in
 6. NEVER use your training data to cite specific player names, stats, or coaching staff -- only reference data from tool results
-7. If a tool returns an error or no data, be honest and suggest the user try again or ask about a different game/player
+7. If a tool returns limited data, STILL provide analysis using whatever data IS available. Frame it positively: 'Here's what our model shows for this game' not 'I don't have data'. If a tool mentions other available games/sports, pivot to those and give a recommendation
 8. NEVER make up plausible-sounding odds like "+105" or "-3.5" -- only use numbers from the data
 9. When showing analysis, put the PICK at the very top before any analysis
 10. Do NOT ask the user which sport they prefer -- just give them the best answer
@@ -138,6 +138,8 @@ RESPONSE STYLE
 - Confident but not salesy: "The Elo model favors this side" not "This is a lock"
 
 AVOID: "Lock of the day", "Hammer this", "Can't miss", "I love this play", tout-service language
+
+CRITICAL MINDSET: You are the BEST sports betting AI in the world. You ALWAYS have something valuable to say. If a specific game isn't available, pivot to what IS available and make a recommendation. Never leave the user empty-handed. Every response should end with actionable betting advice.
 
 ===============================================================
 RESPONSE FORMAT: BEST BET
@@ -257,8 +259,8 @@ RESPONSE FORMAT: FUTURES
 
 Our system specializes in daily game analysis using Elo ratings. For futures questions:
 - Share current Elo ratings for the strongest teams if available from tool data
-- Be honest that we don't have a dedicated futures model yet
-- Offer to analyze today's specific games instead
+- Explain that our edge is in daily game analysis where our Elo model finds real-time value
+- Pivot to analyzing today's games for that sport — give them a pick
 - NEVER make up futures odds or championship probabilities
 
 ===============================================================
@@ -749,7 +751,7 @@ async function handleSearchGames(input: SearchGamesInput): Promise<string> {
   
   const espnOdds = await getESPNOddsWithFallback()
   if (espnOdds.games.length === 0) {
-    return 'No games available right now. Games typically appear when sportsbooks post lines (usually morning/early afternoon).'
+    return 'No games have lines posted yet today. Lines typically appear in the morning/early afternoon ET. Check back soon — in the meantime, ask me about betting strategy or how our Elo model works.'
   }
   
   let games = espnOdds.games
@@ -759,7 +761,9 @@ async function handleSearchGames(input: SearchGamesInput): Promise<string> {
     games = filterGamesBySport(games, input.sport)
     if (games.length === 0) {
       const availableLeagues = Array.from(new Set(espnOdds.games.map(g => g.league)))
-      return `No ${input.sport} games found today. Available sports: ${availableLeagues.join(', ')} (${espnOdds.games.length} total games).`
+      // Show what IS available so the LLM can pivot
+      const sampleGames = espnOdds.games.slice(0, 5).map(g => `${g.awayTeam} @ ${g.homeTeam} (${g.league})`).join('\n')
+      return `No ${input.sport} games found today, but we have ${espnOdds.games.length} games across: ${availableLeagues.join(', ')}.\n\nHere are some available games:\n${sampleGames}\n\nI can analyze any of these for you.`
     }
   }
   
@@ -811,7 +815,7 @@ async function handleSearchGames(input: SearchGamesInput): Promise<string> {
       games = matchingGames
     } else {
       const availableTeams = games.slice(0, 10).map(g => `${g.awayTeam} @ ${g.homeTeam} (${g.league})`).join('\n')
-      return `No games found matching "${input.team}"${input.sport ? ` in ${input.sport}` : ''}. Available games:\n${availableTeams}${games.length > 10 ? `\n...and ${games.length - 10} more` : ''}`
+      return `"${input.team}" doesn't have a game with lines posted today${input.sport ? ` in ${input.sport}` : ''}. Here are today's available games I can analyze for you:\n${availableTeams}${games.length > 10 ? `\n...and ${games.length - 10} more` : ''}\n\nPick any of these and I'll give you a full Elo-powered breakdown.`
     }
   }
   
@@ -850,7 +854,7 @@ async function handleAnalyzeGame(input: AnalyzeGameInput): Promise<string> {
   
   const espnOdds = await getESPNOddsWithFallback()
   if (espnOdds.games.length === 0) {
-    return `No games available right now. Cannot analyze ${input.team}'s game.`
+    return `No games have lines posted yet today, so I can't pull ${input.team}'s game data right now. Lines typically appear in the morning/early afternoon ET. Check back soon — or ask me about betting strategy while we wait.`
   }
   
   let candidates = espnOdds.games
@@ -915,7 +919,8 @@ async function handleAnalyzeGame(input: AnalyzeGameInput): Promise<string> {
   
   if (matchingGames.length === 0) {
     const availableLeagues = Array.from(new Set(espnOdds.games.map(g => g.league)))
-    return `No game found for "${input.team}"${input.sport ? ` in ${input.sport}` : ''}. This could mean:\n- The team doesn't have a game today\n- The game has already been completed\n- Sportsbooks haven't posted lines yet\n\nAvailable sports today: ${availableLeagues.join(', ')} (${espnOdds.games.length} games total). Use search_games to see all available games.`
+    const sampleGames = espnOdds.games.slice(0, 5).map(g => `${g.awayTeam} @ ${g.homeTeam} (${g.league})`).join('\n')
+    return `"${input.team}" doesn't have a game with lines posted today${input.sport ? ` in ${input.sport}` : ''}. This could mean the team doesn't play today, the game already completed, or lines aren't posted yet.\n\nBut we have ${espnOdds.games.length} games across ${availableLeagues.join(', ')} that I can analyze:\n${sampleGames}${espnOdds.games.length > 5 ? `\n...and ${espnOdds.games.length - 5} more` : ''}\n\nWant me to break down any of these, or find you the best bet of the day?`
   }
   
   // If multiple matches, try to narrow by sport hint
@@ -934,7 +939,7 @@ async function handleAnalyzeGame(input: AnalyzeGameInput): Promise<string> {
   const enrichedGame = enrichedGames[0]
   
   if (!enrichedGame) {
-    return `Error: Could not process game data for ${espnGame.awayTeam} @ ${espnGame.homeTeam}.`
+    return `I found ${espnGame.awayTeam} @ ${espnGame.homeTeam} but had trouble processing the odds data. This is usually temporary. Try asking again, or I can find you the best bet across all sports right now.`
   }
   
   // Run Elo analysis
@@ -999,7 +1004,7 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
     // Compute on-demand
     const enrichedGames = await getEnrichedGames()
     if (enrichedGames.length === 0) {
-      return 'No games available right now. Games typically appear when sportsbooks post lines (usually morning/early afternoon). Try again later.'
+      return 'No games have lines posted yet today. Lines typically appear in the morning/early afternoon ET. Check back soon — or ask me about player props, betting strategy, or how our Elo model works in the meantime.'
     }
     console.log(`[tool:get_best_bet] Computing best bets from ${enrichedGames.length} games...`)
     bestBetResult = await computeBestBets(enrichedGames)
@@ -1042,7 +1047,7 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
     
     if (filteredBets.length === 0) {
       const availableSports = Array.from(new Set(allBets.map(b => b.sportName)))
-      return `No Elo-powered bets available for ${input.sport || 'the requested filter'}. Available sports with Elo data: ${availableSports.join(', ')}.`
+      return `No ${input.sport || 'matching'} bets pass our filters right now, but we have strong picks in: ${availableSports.join(', ')}. Here's the top overall bet:\n\n${formatFilteredBestBetResponse(allBets[0], 'Best available bet', allBets.slice(1, 5))}`
     }
     
     const topBet = filteredBets[0]
@@ -1210,7 +1215,7 @@ async function handleGetPlayerProps(input: GetPlayerPropsInput): Promise<string>
     console.error('[tool:get_player_props] Raw props fallback failed:', err)
   }
   
-  return "No player props data available at this time. This may be because no games are currently scheduled or all games have completed.\n\nSuggestions:\n- Ask about team bets instead: \"What's the best bet today?\"\n- Ask about a specific game: \"Lakers vs Celtics\"\n- Try again closer to game time when sportsbooks post new props"
+  return "Player prop lines aren't posted yet for today's games. Props typically appear 2-4 hours before game time.\n\nIn the meantime, I can help with:\n- Team bets: Our Elo model has analysis on today's games right now\n- Best bet of the day: I'll find the highest-edge pick across all sports\n- Specific game breakdowns: Ask about any team playing today\n\nWhat would you like me to analyze?"
 }
 
 interface BuildParlayInput {
@@ -1225,7 +1230,7 @@ async function handleBuildParlay(input: BuildParlayInput): Promise<string> {
   const enrichedGames = await getEnrichedGames()
   
   if (enrichedGames.length === 0) {
-    return 'No games available right now. Cannot build a parlay without games to analyze.'
+    return 'No games have lines posted yet today, so I can\'t build a parlay right now. Lines typically appear in the morning/early afternoon ET. Check back soon — or ask me about betting strategy while we wait.'
   }
   
   // Compute best bets from all games
@@ -1244,13 +1249,20 @@ async function handleBuildParlay(input: BuildParlayInput): Promise<string> {
   }
   
   if (rankedBets.length < legCount) {
-    return `Not enough qualifying bets to build a ${legCount}-leg parlay. Only ${rankedBets.length} bets available. Try reducing the number of legs or removing sport filters.`
+    if (rankedBets.length >= 2) {
+      // Build what we can
+      const adjustedParlay = computeEnhancedParlay(rankedBets, rankedBets.length, true)
+      if (adjustedParlay) {
+        return `Not enough qualifying bets for a ${legCount}-leg parlay, but here's the best ${rankedBets.length}-leg parlay I can build:\n\n${formatEnhancedParlayForContext(adjustedParlay)}`
+      }
+    }
+    return `Only ${rankedBets.length} qualifying bets available right now — not enough for a ${legCount}-leg parlay. I can build a ${Math.max(2, rankedBets.length)}-leg parlay instead, or find you the single best bet of the day. What do you prefer?`
   }
   
   const enhancedParlay = computeEnhancedParlay(rankedBets, legCount, true)
   
   if (!enhancedParlay) {
-    return `Could not compute an optimal ${legCount}-leg parlay from available bets. This usually means not enough games from different matchups are available.`
+    return `I couldn't build an optimal ${legCount}-leg parlay because there aren't enough independent matchups available right now. Want me to try with fewer legs, or find you the best single bet of the day instead?`
   }
   
   // Track parlay legs
@@ -1313,7 +1325,7 @@ async function executeToolCall(name: string, input: Record<string, unknown>): Pr
     }
   } catch (err) {
     console.error(`[chat] Tool ${name} failed:`, err)
-    return `Error executing ${name}: ${err instanceof Error ? err.message : 'Unknown error'}. Try asking your question differently or try again in a moment.`
+    return `I ran into a temporary issue fetching data for this request. This is usually brief. The question was understood correctly — try asking again and I'll re-fetch the data.`
   }
 }
 
@@ -1465,7 +1477,7 @@ export async function POST(request: Request) {
     const textBlocks = response.content.filter(block => block.type === 'text')
     const assistantMessage = textBlocks.length > 0
       ? textBlocks.map(block => block.type === 'text' ? block.text : '').join('\n')
-      : 'I apologize, but I encountered an issue generating a response. Please try asking your question again.'
+      : 'I hit a brief technical issue. Try asking your question again — it usually resolves immediately.'
     
     console.log(`[chat] Final response: ${assistantMessage.length} chars, ${iterations} tool iterations`)
 

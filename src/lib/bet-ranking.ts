@@ -3076,7 +3076,9 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
       lines.push('')
       lines.push('Note: Specific bet lines (spread, moneyline, total) may not be available yet or the game may have started. The Elo analysis above still reflects our model\'s assessment of this matchup.')
     } else {
-      lines.push('No betting options or Elo data available for this game. Odds may not be posted yet.')
+      lines.push('Specific bet lines (spread, moneyline, total) may not be posted yet for this game, and our Elo model doesn\'t have enough data for this matchup yet.')
+      lines.push('')
+      lines.push('I can still help — ask me for the best bet of the day across all sports, or pick another game to analyze.')
     }
     return lines.join('\n')
   }
