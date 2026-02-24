@@ -492,6 +492,10 @@ const SPORT_HINT_TO_LEAGUES: Record<string, string[]> = {
   'soccer': ['eng.1', 'esp.1', 'ger.1', 'ita.1', 'fra.1', 'usa.1', 'uefa.champions'],
   'mma': ['ufc'],
   'ufc': ['ufc'],
+  'golf': ['pga'],
+  'pga': ['pga'],
+  'tennis': ['atp'],
+  'atp': ['atp'],
 }
 
 export async function searchESPNGameByTeams(teamTokens: string[], sportHint?: string): Promise<ESPNOdds | null> {

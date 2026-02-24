@@ -1849,7 +1849,11 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     console.log(`[analyzeGameForSportQuery] Skipping moneyline analysis — no moneyline odds available`)
   }
   for (const team of [game.homeTeam, game.awayTeam]) {
-    if (!hasMoneylines || !eloResult) break
+    if (!hasMoneylines) break
+    // For sport-wide queries, require Elo (it's our value-add over raw market odds)
+    // For specific game queries, proceed with market consensus if no Elo
+    if (!eloResult && !skipStartedCheck) break
+    
     // First try to get best price - this is required
     const bestPrice = findBestPrice(game, team)
     if (!bestPrice) {
@@ -1872,11 +1876,22 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     }]
     
     const isHomeTeam = team === game.homeTeam
-    const eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
-    let modelProbability = blendWithMarket(eloProbability, consensusProb, eloResult.confidence)
     
-    if (eloResult.confidence === 'very_low' || eloResult.confidence === 'low') {
-      console.log(`[analyzeGameForSportQuery] Blending Elo (${(eloProbability * 100).toFixed(1)}%) with market (${(consensusProb * 100).toFixed(1)}%) at ${eloResult.confidence} confidence → ${(modelProbability * 100).toFixed(1)}% for ${team}`)
+    // Calculate model probability: blend Elo with market if Elo available, else pure market consensus
+    let modelProbability: number
+    let eloProbability: number | undefined
+    
+    if (eloResult) {
+      eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
+      modelProbability = blendWithMarket(eloProbability, consensusProb, eloResult.confidence)
+      
+      if (eloResult.confidence === 'very_low' || eloResult.confidence === 'low') {
+        console.log(`[analyzeGameForSportQuery] Blending Elo (${(eloProbability * 100).toFixed(1)}%) with market (${(consensusProb * 100).toFixed(1)}%) at ${eloResult.confidence} confidence → ${(modelProbability * 100).toFixed(1)}% for ${team}`)
+      }
+    } else {
+      // No Elo — use pure market consensus for specific game queries
+      modelProbability = consensusProb
+      console.log(`[analyzeGameForSportQuery] No Elo, using market consensus (${(consensusProb * 100).toFixed(1)}%) for ${team} in ${game.homeTeam} vs ${game.awayTeam}`)
     }
     
     const eloLeagueForSituational = SPORT_TO_ELO_LEAGUE[game.sport] || game.sport
@@ -1925,10 +1940,10 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
       edge: Math.round(edge * 1000) / 10,
-      eloProbability: Math.round(modelProbability * 1000) / 10,
-      eloConfidence: eloResult.confidence,
-      homeElo: eloResult.homeRating,
-      awayElo: eloResult.awayRating,
+      eloProbability: eloProbability !== undefined ? Math.round(modelProbability * 1000) / 10 : undefined,
+      eloConfidence: eloResult?.confidence,
+      homeElo: eloResult?.homeRating,
+      awayElo: eloResult?.awayRating,
       expectedValue: Math.round(ev * 100) / 100,
       roi: Math.round(roi * 100) / 100,
       allBookPrices: bookPrices.map(b => ({
@@ -1944,9 +1959,13 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
   }
   
   // ============================================
-  // SPREAD ANALYSIS - uses Elo-based cover probability
+  // SPREAD ANALYSIS - uses Elo-based cover probability when available
+  // For specific game queries without Elo, uses market implied probability
   // ============================================
-  if (game.spreads && game.spreads.length > 0 && eloResult) {
+  // For sport-wide queries, require Elo (it's our value-add)
+  const hasSpreadData = game.spreads && game.spreads.length > 0
+  const canAnalyzeSpreads = hasSpreadData && (eloResult || skipStartedCheck)
+  if (canAnalyzeSpreads) {
     // Group spreads by team and line
     const spreadLines = new Map<string, { outcome: { name: string; price: number; point: number }; book: string }[]>()
     
@@ -1969,11 +1988,12 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       // IMPROVED SPREAD FILTERING (System-wide)
       // ============================================
       
-      // FILTER 1: Skip NHL puck lines entirely (use moneylines only)
-      const minMarginEdge = MIN_SPREAD_MARGIN_EDGE[eloLeague] || 2
-      if (minMarginEdge >= 999) {
-        // NHL and other leagues that should use moneylines only
-        return
+      // FILTER 1: Skip NHL puck lines entirely (use moneylines only) — only when we have Elo
+      if (eloResult) {
+        const minMarginEdge = MIN_SPREAD_MARGIN_EDGE[eloLeague] || 2
+        if (minMarginEdge >= 999) {
+          return
+        }
       }
       
       // Find best price across all books
@@ -1988,53 +2008,58 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       const isHomeTeam = teamName === game.homeTeam || 
                          teamName.toLowerCase() === game.homeTeam.toLowerCase()
       
-      // Use effective ratings if available (injury-adjusted), otherwise use base ratings
-      const homeElo = eloResult.homeEffectiveRating ?? eloResult.homeRating
-      const awayElo = eloResult.awayEffectiveRating ?? eloResult.awayRating
+      const marketCoverProb = americanToImpliedProbability(bestEntry.outcome.price)
       
-      // Calculate Elo-based spread cover probability
-      const spreadFromHomePerspective = isHomeTeam ? point : -point
+      let coverProb: number
+      let spreadConfidence: string | undefined
+      let homeEloRating: number | undefined
+      let awayEloRating: number | undefined
+      let hasEloAnalysis = false
       
-      const spreadResult = calculateSpreadCoverProbability(
-        homeElo,
-        awayElo,
-        spreadFromHomePerspective,
-        eloLeague,
-        isHomeTeam
-      )
-      
-      // FILTER 2: Check margin edge (difference between our expected margin and market spread)
-      const expectedMargin = spreadResult.expectedMargin
-      const marketSpread = spreadFromHomePerspective
-      const marginEdge = Math.abs(expectedMargin - (-marketSpread))
-      
-      if (marginEdge < minMarginEdge) {
-        // Edge too small - skip this spread bet
-        return
+      if (eloResult) {
+        // Full Elo analysis
+        const homeElo = eloResult.homeEffectiveRating ?? eloResult.homeRating
+        const awayElo = eloResult.awayEffectiveRating ?? eloResult.awayRating
+        homeEloRating = homeElo
+        awayEloRating = awayElo
+        
+        const spreadFromHomePerspective = isHomeTeam ? point : -point
+        
+        const spreadResult = calculateSpreadCoverProbability(
+          homeElo,
+          awayElo,
+          spreadFromHomePerspective,
+          eloLeague,
+          isHomeTeam
+        )
+        
+        // FILTER 2: Check margin edge — only when we have Elo
+        const minMarginEdge = MIN_SPREAD_MARGIN_EDGE[eloLeague] || 2
+        const expectedMargin = spreadResult.expectedMargin
+        const marketSpread = spreadFromHomePerspective
+        const marginEdge = Math.abs(expectedMargin - (-marketSpread))
+        
+        if (marginEdge < minMarginEdge) {
+          return
+        }
+        
+        const rawEloCoverProb = spreadResult.probability
+        coverProb = eloResult.confidence
+          ? blendWithMarket(rawEloCoverProb, marketCoverProb, eloResult.confidence)
+          : rawEloCoverProb
+        spreadConfidence = spreadResult.confidence
+        hasEloAnalysis = true
+      } else {
+        // No Elo — use market implied probability for specific game queries
+        coverProb = marketCoverProb
+        console.log(`[analyzeGameForSportQuery] No Elo for spread analysis, using market implied prob (${(marketCoverProb * 100).toFixed(1)}%) for ${teamName} ${point > 0 ? '+' : ''}${point}`)
       }
       
-      const rawEloCoverProb = spreadResult.probability
-      
-      // FIX: Blend spread cover probability with market consensus (like moneylines and totals already do)
-      // Without blending, the raw Elo model can disagree with the market by 10+ points on large
-      // spreads (e.g., Duke -17.5 vs Notre Dame), producing inflated edges (30%+) that aren't real.
-      const marketCoverProb = americanToImpliedProbability(bestEntry.outcome.price)
-      const eloCoverProb = eloResult.confidence
-        ? blendWithMarket(rawEloCoverProb, marketCoverProb, eloResult.confidence)
-        : rawEloCoverProb
-      
-      // Calculate implied probability from best price
       const impliedProb = marketCoverProb
-      
-      // Edge is blended probability - implied probability (our model vs market)
-      const edge = eloCoverProb - impliedProb
-      
-      // Calculate EV and ROI using blended probability
-      const ev = calculateExpectedValue(bestEntry.outcome.price, eloCoverProb)
+      const edge = coverProb - impliedProb
+      const ev = calculateExpectedValue(bestEntry.outcome.price, coverProb)
       const roi = calculateROI(ev)
-      
-      // Calculate score
-      const score = calculateBetScore(eloCoverProb, edge, roi)
+      const score = calculateBetScore(coverProb, edge, roi)
       
       // Collect all book prices for this spread
       const allBookPrices = entries.map(e => ({
@@ -2053,15 +2078,15 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         team: teamName,
         betType: 'spread',
         line: point,
-        consensusProbability: Math.round(eloCoverProb * 1000) / 10,
+        consensusProbability: Math.round(coverProb * 1000) / 10,
         bestPrice: bestEntry.outcome.price,
         bestBook: bestEntry.book,
         impliedProbability: Math.round(impliedProb * 1000) / 10,
         edge: Math.round(edge * 1000) / 10,
-        eloProbability: Math.round(eloCoverProb * 1000) / 10,
-        eloConfidence: spreadResult.confidence,
-        homeElo: homeElo,
-        awayElo: awayElo,
+        eloProbability: hasEloAnalysis ? Math.round(coverProb * 1000) / 10 : undefined,
+        eloConfidence: spreadConfidence,
+        homeElo: homeEloRating,
+        awayElo: awayEloRating,
         expectedValue: Math.round(ev * 100) / 100,
         roi: Math.round(roi * 100) / 100,
         allBookPrices,
@@ -2072,9 +2097,12 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
   }
   
   // ============================================
-  // TOTAL (OVER/UNDER) ANALYSIS - uses Elo-based total probability
+  // TOTAL (OVER/UNDER) ANALYSIS - uses Elo-based total probability when available
+  // For specific game queries without Elo, uses market implied probability
   // ============================================
-  if (game.totals && game.totals.length > 0 && eloResult) {
+  const hasTotalData = game.totals && game.totals.length > 0
+  const canAnalyzeTotals = hasTotalData && (eloResult || skipStartedCheck)
+  if (canAnalyzeTotals) {
     // Group totals by line value
     const totalLines = new Map<number, { outcome: { name: string; price: number; point: number }; book: string }[]>()
     
@@ -2092,8 +2120,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     }
     
     // Use effective ratings if available (injury-adjusted), otherwise use base ratings
-    const homeElo = eloResult.homeEffectiveRating ?? eloResult.homeRating
-    const awayElo = eloResult.awayEffectiveRating ?? eloResult.awayRating
+    const homeEloForTotals = eloResult ? (eloResult.homeEffectiveRating ?? eloResult.homeRating) : undefined
+    const awayEloForTotals = eloResult ? (eloResult.awayEffectiveRating ?? eloResult.awayRating) : undefined
     
     // Evaluate each unique total line
     totalLines.forEach((entries, line) => {
@@ -2109,27 +2137,32 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         
         // Only filter out extremely bad odds (worse than -500)
         if (bestOverEntry.outcome.price >= -500) {
-          // Calculate Elo-based over probability
-          const overResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, true)
-          const baseEloOverProb = overResult.probability
-          
-          // FIX 1: Blend totals probability with market consensus (like moneylines do)
           const marketOverProb = americanToImpliedProbability(bestOverEntry.outcome.price)
-          const eloOverProb = eloResult.confidence 
-            ? blendWithMarket(baseEloOverProb, marketOverProb, eloResult.confidence)
-            : baseEloOverProb
           
-          // Calculate implied probability from best price
+          let overProb: number
+          let overConfidence: string | undefined
+          let hasEloTotal = false
+          
+          if (eloResult && homeEloForTotals !== undefined && awayEloForTotals !== undefined) {
+            // Full Elo analysis
+            const overResult = calculateTotalProbability(homeEloForTotals, awayEloForTotals, line, eloLeague, true)
+            const baseEloOverProb = overResult.probability
+            overProb = eloResult.confidence 
+              ? blendWithMarket(baseEloOverProb, marketOverProb, eloResult.confidence)
+              : baseEloOverProb
+            overConfidence = overResult.confidence
+            hasEloTotal = true
+          } else {
+            // No Elo — use market implied probability
+            overProb = marketOverProb
+            console.log(`[analyzeGameForSportQuery] No Elo for total analysis, using market implied prob (${(marketOverProb * 100).toFixed(1)}%) for Over ${line}`)
+          }
+          
           const impliedProb = marketOverProb
-          
-          // Edge is blended probability - implied probability
-          const edge = eloOverProb - impliedProb
-          
-          // Calculate EV and ROI
-          const ev = calculateExpectedValue(bestOverEntry.outcome.price, eloOverProb)
+          const edge = overProb - impliedProb
+          const ev = calculateExpectedValue(bestOverEntry.outcome.price, overProb)
           const roi = calculateROI(ev)
-          
-          const score = calculateBetScore(eloOverProb, edge, roi)
+          const score = calculateBetScore(overProb, edge, roi)
           
           const allBookPrices = overEntries.map(e => ({
             book: e.book,
@@ -2147,15 +2180,15 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
             team: 'Over',
             betType: 'total',
             line: line,
-            consensusProbability: Math.round(eloOverProb * 1000) / 10,
+            consensusProbability: Math.round(overProb * 1000) / 10,
             bestPrice: bestOverEntry.outcome.price,
             bestBook: bestOverEntry.book,
             impliedProbability: Math.round(impliedProb * 1000) / 10,
             edge: Math.round(edge * 1000) / 10,
-            eloProbability: Math.round(eloOverProb * 1000) / 10,
-            eloConfidence: overResult.confidence,
-            homeElo: eloResult.homeRating,
-            awayElo: eloResult.awayRating,
+            eloProbability: hasEloTotal ? Math.round(overProb * 1000) / 10 : undefined,
+            eloConfidence: overConfidence,
+            homeElo: homeEloForTotals,
+            awayElo: awayEloForTotals,
             expectedValue: Math.round(ev * 100) / 100,
             roi: Math.round(roi * 100) / 100,
             allBookPrices,
@@ -2173,27 +2206,32 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         
         // Only filter out extremely bad odds (worse than -500)
         if (bestUnderEntry.outcome.price >= -500) {
-          // Calculate Elo-based under probability
-          const underResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, false)
-          const baseEloUnderProb = underResult.probability
-          
-          // FIX 1: Blend totals probability with market consensus (like moneylines do)
           const marketUnderProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
-          const eloUnderProb = eloResult.confidence 
-            ? blendWithMarket(baseEloUnderProb, marketUnderProb, eloResult.confidence)
-            : baseEloUnderProb
           
-          // Calculate implied probability from best price
+          let underProb: number
+          let underConfidence: string | undefined
+          let hasEloTotal = false
+          
+          if (eloResult && homeEloForTotals !== undefined && awayEloForTotals !== undefined) {
+            // Full Elo analysis
+            const underResult = calculateTotalProbability(homeEloForTotals, awayEloForTotals, line, eloLeague, false)
+            const baseEloUnderProb = underResult.probability
+            underProb = eloResult.confidence 
+              ? blendWithMarket(baseEloUnderProb, marketUnderProb, eloResult.confidence)
+              : baseEloUnderProb
+            underConfidence = underResult.confidence
+            hasEloTotal = true
+          } else {
+            // No Elo — use market implied probability
+            underProb = marketUnderProb
+            console.log(`[analyzeGameForSportQuery] No Elo for total analysis, using market implied prob (${(marketUnderProb * 100).toFixed(1)}%) for Under ${line}`)
+          }
+          
           const impliedProb = marketUnderProb
-          
-          // Edge is blended probability - implied probability
-          const edge = eloUnderProb - impliedProb
-          
-          // Calculate EV and ROI
-          const ev = calculateExpectedValue(bestUnderEntry.outcome.price, eloUnderProb)
+          const edge = underProb - impliedProb
+          const ev = calculateExpectedValue(bestUnderEntry.outcome.price, underProb)
           const roi = calculateROI(ev)
-          
-          const score = calculateBetScore(eloUnderProb, edge, roi)
+          const score = calculateBetScore(underProb, edge, roi)
           
           const allBookPrices = underEntries.map(e => ({
             book: e.book,
@@ -2211,15 +2249,15 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
             team: 'Under',
             betType: 'total',
             line: line,
-            consensusProbability: Math.round(eloUnderProb * 1000) / 10,
+            consensusProbability: Math.round(underProb * 1000) / 10,
             bestPrice: bestUnderEntry.outcome.price,
             bestBook: bestUnderEntry.book,
             impliedProbability: Math.round(impliedProb * 1000) / 10,
             edge: Math.round(edge * 1000) / 10,
-            eloProbability: Math.round(eloUnderProb * 1000) / 10,
-            eloConfidence: underResult.confidence,
-            homeElo: eloResult.homeRating,
-            awayElo: eloResult.awayRating,
+            eloProbability: hasEloTotal ? Math.round(underProb * 1000) / 10 : undefined,
+            eloConfidence: underConfidence,
+            homeElo: homeEloForTotals,
+            awayElo: awayEloForTotals,
             expectedValue: Math.round(ev * 100) / 100,
             roi: Math.round(roi * 100) / 100,
             allBookPrices,

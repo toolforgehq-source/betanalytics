@@ -428,6 +428,13 @@ const SPORT_TO_LEAGUES: Record<string, string[]> = {
   'ligue 1': ['Ligue 1'],
   'mls': ['MLS'],
   'champions league': ['UEFA Champions League'],
+  'ufc': ['UFC'],
+  'mma': ['UFC'],
+  'mixed martial arts': ['UFC'],
+  'golf': ['PGA Tour'],
+  'pga': ['PGA Tour'],
+  'tennis': ['ATP Tennis'],
+  'atp': ['ATP Tennis'],
 }
 
 /** Map ESPN league names to Odds API sport keys */
@@ -445,6 +452,9 @@ const LEAGUE_TO_SPORT_KEY: Record<string, string> = {
   'Ligue 1': 'soccer_france_ligue_one',
   'MLS': 'soccer_usa_mls',
   'UEFA Champions League': 'soccer_uefa_champs_league',
+  'UFC': 'mma_mixed_martial_arts',
+  'PGA Tour': 'golf_pga',
+  'ATP Tennis': 'tennis_atp',
 }
 
 // ===============================================================
@@ -567,7 +577,9 @@ async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] 
           market: 'h2h',
           outcomes: [
             { name: g.homeTeam, price: g.moneyline.home },
-            { name: g.awayTeam, price: g.moneyline.away }
+            { name: g.awayTeam, price: g.moneyline.away },
+            // Include draw odds for soccer three-way markets
+            ...(g.moneyline.draw !== undefined ? [{ name: 'Draw', price: g.moneyline.draw }] : [])
           ]
         }] : []
       }
