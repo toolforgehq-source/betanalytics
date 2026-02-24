@@ -236,7 +236,6 @@ describe('Mapping Chain: SPORT_TO_ELO_LEAGUE completeness', () => {
     // Note: UFC, PGA Tour, ATP Tennis may not have Elo data yet.
     // But the mapping should still exist so the system can attempt to look them up.
     const sportKeysWithElo = new Set(Object.keys(SPORT_TO_ELO_LEAGUE))
-    const sportKeysNeeded = new Set(Object.values(LEAGUE_TO_SPORT_KEY))
     
     // All team sports MUST have Elo mappings
     const teamSportKeys = [

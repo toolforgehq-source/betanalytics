@@ -11,9 +11,9 @@
  * These tests use mock data to validate the pipeline WITHOUT external API calls.
  * They verify that given valid game data, the pipeline produces non-empty results.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { Game, BookmakerOdds } from '@/lib/odds'
-import type { RankedBet, EnhancedParlayResult } from '@/lib/bet-ranking'
+import { describe, it, expect, beforeEach } from 'vitest'
+import type { Game } from '@/lib/odds'
+import type { RankedBet } from '@/lib/bet-ranking'
 
 // ============================================================
 // Test Fixtures — Mock game data for all sports
