@@ -2300,7 +2300,7 @@ export async function POST(request: Request) {
           } else {
               // Try fetching for individual sports as a last resort
               console.log(`[chat] analyzeBestProps returned empty - trying individual sport fetches`)
-              const sportKeys = propQuery.sport ? [propQuery.sport] : ['NBA', 'NFL', 'NHL', 'MLB']
+              const sportKeys = propQuery.sport ? [propQuery.sport] : ['NBA', 'NFL', 'NHL', 'MLB', 'NCAAB']
               let foundRetryProps = false
               for (const sportKey of sportKeys) {
                 const retryProps = await analyzeBestProps({ sport: sportKey, count: propCount })
@@ -2312,8 +2312,26 @@ export async function POST(request: Request) {
                 }
               }
               if (!foundRetryProps) {
-                propAnalysisData = 'PLAYER PROP ANALYSIS\n\nNo player props data available at this time. This may be because no games are currently scheduled or all games have completed.\n\nWhat you can do:\n- Ask about team bets instead: "What\'s the best bet today?"\n- Ask about a specific game: "Lakers vs Celtics"\n- Try again closer to game time when sportsbooks post new props'
-                console.log(`[chat] No props data available after retry - suggesting alternatives`)
+                // Last resort: try to get raw props data from cache/API and format it directly
+                // so the LLM at least has something to work with
+                const { getCachedPlayerProps, fetchSportPlayerProps, formatPlayerPropsForContext } = await import('@/lib/odds')
+                let rawProps = await getCachedPlayerProps()
+                if (!rawProps || rawProps.length === 0) {
+                  // Try fetching fresh for the most common sports
+                  const freshResults = await Promise.all([
+                    fetchSportPlayerProps('basketball_nba').catch(() => []),
+                    fetchSportPlayerProps('americanfootball_nfl').catch(() => []),
+                    fetchSportPlayerProps('icehockey_nhl').catch(() => []),
+                  ])
+                  rawProps = freshResults.flat().filter(g => g.props.length > 0)
+                }
+                if (rawProps && rawProps.length > 0 && rawProps.some(g => g.props.length > 0)) {
+                  propAnalysisData = 'PLAYER PROP ANALYSIS (Market Data)\n\n' + formatPlayerPropsForContext(rawProps) + '\n\nNote: Full statistical model analysis is not available right now. The props data above comes directly from sportsbook markets. Analyze the odds and give your best recommendations based on the market data shown.'
+                  console.log(`[chat] Using raw props data as last resort: ${rawProps.length} games`)
+                } else {
+                  propAnalysisData = 'PLAYER PROP ANALYSIS\n\nNo player props data available at this time. This may be because no games are currently scheduled or all games have completed.\n\nWhat you can do:\n- Ask about team bets instead: "What\'s the best bet today?"\n- Ask about a specific game: "Lakers vs Celtics"\n- Try again closer to game time when sportsbooks post new props'
+                  console.log(`[chat] No props data available after all fallbacks - suggesting alternatives`)
+                }
               }
           }
         }

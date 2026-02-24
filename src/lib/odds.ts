@@ -307,7 +307,14 @@ export async function getCachedPlayerProps(): Promise<GamePlayerProps[] | null> 
     // Validate the parsed data structure
     if (!propsData || !Array.isArray(propsData.props)) {
       console.log('[getCachedPlayerProps] Invalid cache data structure')
-      return []
+      return null
+    }
+    
+    // Check if cached games actually have props data (not just empty game shells)
+    const gamesWithProps = propsData.props.filter((g: GamePlayerProps) => g.props && g.props.length > 0)
+    if (propsData.props.length > 0 && gamesWithProps.length === 0) {
+      console.log('[getCachedPlayerProps] Cache has games but zero props - treating as stale')
+      return null
     }
     
     // Check if cache is still valid (within 2 hours)
@@ -1062,7 +1069,7 @@ export async function fetchGamePlayerProps(eventId: string, sportKey: string): P
     const marketsParam = markets.join(',')
     const url = `${ODDS_API_BASE}/${sportKey}/events/${eventId}/odds?apiKey=${apiKey}&regions=us&markets=${marketsParam}&oddsFormat=american`
     
-    console.log(`[fetchGamePlayerProps] Fetching props for event ${eventId}`)
+    console.log(`[fetchGamePlayerProps] Fetching props for ${sportKey} event ${eventId}, markets: ${marketsParam}`)
     
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
@@ -1070,11 +1077,16 @@ export async function fetchGamePlayerProps(eventId: string, sportKey: string): P
     })
     
     if (!response.ok) {
-      console.error(`[fetchGamePlayerProps] API error: ${response.status}`)
+      const errorBody = await response.text().catch(() => 'unknown')
+      console.error(`[fetchGamePlayerProps] API error: ${response.status} - ${errorBody}`)
       return null
     }
     
     const data = await response.json()
+    
+    // Log what the API returned for debugging
+    const bookmakerCount = data.bookmakers?.length || 0
+    console.log(`[fetchGamePlayerProps] ${sportKey} event ${eventId}: ${bookmakerCount} bookmakers, home=${data.home_team}, away=${data.away_team}`)
     
     // Extract player props from the response
     const props: PlayerProp[] = []
@@ -1175,13 +1187,19 @@ export async function fetchSportPlayerProps(sportKey: string): Promise<GamePlaye
     
     console.log(`[fetchSportPlayerProps] Found ${todaysEvents.length} games today for ${sportKey}`)
     
-    // Fetch props for each game (limit to first 5 to manage API usage)
-    const propsPromises = todaysEvents.slice(0, 5).map((event: { id: string }) => 
+    // Fetch props for each game (limit to first 10 to cover full slates)
+    const eventsToFetch = todaysEvents.slice(0, 10)
+    console.log(`[fetchSportPlayerProps] Fetching props for ${eventsToFetch.length} ${sportKey} games`)
+    
+    const propsPromises = eventsToFetch.map((event: { id: string }) => 
       fetchGamePlayerProps(event.id, sportKey)
     )
     
     const results = await Promise.all(propsPromises)
-    return results.filter((r): r is GamePlayerProps => r !== null)
+    // Filter out nulls AND games with 0 props (prevents caching empty game shells)
+    const gamesWithProps = results.filter((r): r is GamePlayerProps => r !== null && r.props.length > 0)
+    console.log(`[fetchSportPlayerProps] ${sportKey}: ${gamesWithProps.length}/${eventsToFetch.length} games returned props`)
+    return gamesWithProps
   } catch (error) {
     console.error(`[fetchSportPlayerProps] Error:`, error)
     return []

@@ -114,6 +114,7 @@ const ALL_PROP_SPORT_KEYS = [
   'icehockey_nhl',
   'basketball_ncaab',
   'americanfootball_ncaaf',
+  'baseball_mlb',
 ]
 
 async function fetchPropsOnDemand(sport?: string | null): Promise<GamePlayerProps[]> {
@@ -139,17 +140,23 @@ async function fetchPropsOnDemand(sport?: string | null): Promise<GamePlayerProp
   )
 
   const allProps = results.flat()
+  
+  // Only count games that actually have props (not empty game shells)
+  const gamesWithActualProps = allProps.filter(g => g.props && g.props.length > 0)
+  const totalPropCount = gamesWithActualProps.reduce((sum, g) => sum + g.props.length, 0)
+  
+  console.log(`[fetchPropsOnDemand] API returned ${allProps.length} games, ${gamesWithActualProps.length} with props, ${totalPropCount} total props`)
 
-  if (allProps.length > 0) {
-    await setCachedPlayerProps(allProps).catch(err =>
+  if (gamesWithActualProps.length > 0) {
+    await setCachedPlayerProps(gamesWithActualProps).catch(err =>
       console.error('[fetchPropsOnDemand] Cache write failed:', err)
     )
-    console.log(`[fetchPropsOnDemand] Fetched and cached ${allProps.length} games`)
+    console.log(`[fetchPropsOnDemand] Cached ${gamesWithActualProps.length} games with ${totalPropCount} props`)
   } else {
-    console.log('[fetchPropsOnDemand] No props returned from API')
+    console.log('[fetchPropsOnDemand] No games with actual prop data returned from API')
   }
 
-  return allProps
+  return gamesWithActualProps
 }
 
 // ============================================
@@ -852,8 +859,11 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   const count = request.count || 3
   let propsData = await getCachedPlayerProps()
 
-  if (!propsData || propsData.length === 0) {
-    console.log('[analyzeBestProps] Cache empty, attempting on-demand fetch')
+  // Check if cache has actual prop data (not just empty game shells)
+  const hasActualProps = propsData && propsData.length > 0 && propsData.some(g => g.props && g.props.length > 0)
+  
+  if (!hasActualProps) {
+    console.log(`[analyzeBestProps] Cache empty or has no props (games=${propsData?.length || 0}), attempting on-demand fetch`)
     try {
       propsData = await fetchPropsOnDemand(request.sport || null)
     } catch (err) {
@@ -863,9 +873,12 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     if (!propsData || propsData.length === 0) return []
   }
 
+  // At this point propsData is guaranteed non-null and non-empty
+  const validPropsData = propsData!
+  
   const statsData = await getPlayerStatsData()
   const hasModelData = !!statsData
-  console.log(`[analyzeBestProps] Props data: ${propsData.length} games, model data: ${hasModelData}`)
+  console.log(`[analyzeBestProps] Props data: ${validPropsData.length} games, model data: ${hasModelData}`)
 
   type ScoredProp = {
     prop: PlayerProp
@@ -878,18 +891,19 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   const results: ScoredProp[] = []
   const marketFallbacks: ScoredProp[] = []
 
-  for (const game of propsData) {
+  const sportKeyMap: Record<string, string[]> = {
+    'NBA': ['basketball_nba'],
+    'NFL': ['americanfootball_nfl'],
+    'NHL': ['icehockey_nhl'],
+    'MLB': ['baseball_mlb'],
+    'NCAAB': ['basketball_ncaab'],
+    'NCAAF': ['americanfootball_ncaaf'],
+  }
+
+  for (const game of validPropsData) {
     if (request.sport) {
-      const sportMap: Record<string, string[]> = {
-        'NBA': ['basketball_nba'],
-        'NFL': ['americanfootball_nfl'],
-        'NHL': ['icehockey_nhl'],
-        'MLB': ['baseball_mlb'],
-        'NCAAB': ['basketball_ncaab'],
-        'NCAAF': ['americanfootball_ncaaf'],
-      }
-      const validKeys = sportMap[request.sport] || []
-      if (validKeys.length > 0 && !validKeys.some(k => game.sport.includes(k))) continue
+      const validKeys = sportKeyMap[request.sport] || []
+      if (validKeys.length > 0 && !validKeys.some((k: string) => game.sport.includes(k))) continue
     }
 
     const propGroups = new Map<string, PlayerProp[]>()
@@ -999,6 +1013,38 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     console.log('[analyzeBestProps] No props passed edge filter, using market-data fallback')
     candidatePool = marketFallbacks
   }
+  
+  // If STILL no candidates but we have props data, create candidates from raw market data
+  // This ensures we always return something when props exist
+  if (candidatePool.length === 0 && validPropsData.length > 0) {
+    console.log('[analyzeBestProps] No scored candidates - creating from raw market data')
+    for (const game of validPropsData) {
+      if (request.sport) {
+        const validKeys = sportKeyMap[request.sport] || []
+        if (validKeys.length > 0 && !validKeys.some((k: string) => game.sport.includes(k))) continue
+      }
+      for (const prop of game.props.slice(0, 20)) {
+        const statType = MARKET_TO_STAT_TYPE[prop.market]
+        if (!statType) continue
+        const overImplied = americanToImpliedProbability(prop.overOdds)
+        const underImplied = americanToImpliedProbability(prop.underOdds)
+        const total = overImplied + underImplied
+        const overNoVig = overImplied / total
+        const underNoVig = underImplied / total
+        const dir = overNoVig >= underNoVig ? 'over' as const : 'under' as const
+        candidatePool.push({
+          prop,
+          game,
+          score: Math.max(overNoVig, underNoVig) * 100,
+          modelProb: dir === 'over' ? overNoVig : underNoVig,
+          edge: 0,
+          direction: dir,
+        })
+      }
+    }
+    candidatePool.sort((a, b) => b.score - a.score)
+    console.log(`[analyzeBestProps] Created ${candidatePool.length} raw market candidates`)
+  }
 
   candidatePool.sort((a, b) => b.score - a.score)
   const topResults = candidatePool.slice(0, count * 3)
@@ -1062,6 +1108,10 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     if (analysis.recommendation.edge > 0 && !hasDirectionalWarning) {
       analyses.push(analysis)
     } else if (analysis.recommendation.pick) {
+      fallbackAnalyses.push(analysis)
+    } else if (analysis.marketData) {
+      // Even without a pick, if we have market data, include as a fallback
+      // This ensures we ALWAYS return something when props data exists
       fallbackAnalyses.push(analysis)
     }
     if (analyses.length >= count) break
