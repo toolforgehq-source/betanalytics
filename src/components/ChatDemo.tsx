@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -8,83 +8,96 @@ interface ChatMessage {
   delay: number
 }
 
+// Generic examples — no specific teams or dates, realistic numbers
 const DEMO_CONVERSATION: ChatMessage[] = [
   {
     role: 'user',
-    content: "What's the best bet tonight?",
+    content: "What's the best bet today?",
     delay: 0,
   },
   {
     role: 'assistant',
-    content: `## BEST BET TODAY
+    content: `🏀 BEST BET — NBA
 
-**Celtics -6.5 @ -110** | Score: 82/100 | RECOMMENDED BET
+Home Team -4.5 @ -110
+Score: 74/100
 
-**THE EDGE:**
-- Our Elo Model: 78.3% win probability
-- Market Implied: 64.1%
-- **Edge Found: +14.2%**
+Elo: 1712 vs 1634 (+78 gap)
+Our prob: 61.8% | Market: 55.2%
+Edge: +6.6%
 
-**MATCHUP:**
-- Celtics (Elo: 1847) vs Knicks (Elo: 1692)
-- 155-point Elo gap = strong favorite
-- Injury adj: Knicks missing starter (-20 Elo)
+Injury: Away missing starting PG
+(-20 Elo, status: Out)
 
-**VALUE:** ROI +11.2% | EV: $11.20 per $100`,
+EV: +$5.40 per $100 risked`,
     delay: 1500,
   },
   {
     role: 'user',
-    content: 'Any good player props?',
-    delay: 3000,
+    content: 'Should I take the over 218.5?',
+    delay: 3500,
   },
   {
     role: 'assistant',
-    content: `## TOP PLAYER PROPS
+    content: `📊 TOTAL ANALYSIS
 
-**#1 Jayson Tatum OVER 27.5 pts** | RECOMMENDED
-- Model Probability: 62.4%
-- Edge: +8.1%
-- Avg: 29.3 pts (last 10 games)
+Over 218.5 @ -110
 
-**#2 Jalen Brunson OVER 24.5 pts** | BEST AVAILABLE
-- Model Probability: 58.7%
-- Edge: +5.2%
-- Avg: 26.1 pts (last 10 games)`,
-    delay: 4500,
+Elo-projected total: 221.3
+Our prob: 57.4% | Market: 52.4%
+Edge: +5.0%
+
+Pace factor: both top-10 pace
+Last 10 avg combined: 223.1
+
+Verdict: Lean OVER ✓`,
+    delay: 5000,
   },
 ]
 
 export default function ChatDemo() {
   const [visibleMessages, setVisibleMessages] = useState<number>(0)
   const [typing, setTyping] = useState(false)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
+    // Clean up any pending timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+      timeoutRef.current = null
+    }
+
     if (visibleMessages >= DEMO_CONVERSATION.length) {
-      // Reset after showing all messages
-      const resetTimer = setTimeout(() => {
+      timeoutRef.current = setTimeout(() => {
         setVisibleMessages(0)
-      }, 8000)
-      return () => clearTimeout(resetTimer)
+        setTyping(false)
+      }, 6000)
+      return () => {
+        if (timeoutRef.current) clearTimeout(timeoutRef.current)
+      }
     }
 
     const nextMessage = DEMO_CONVERSATION[visibleMessages]
-    const delay = visibleMessages === 0 ? 800 : nextMessage.delay
+    const delay = visibleMessages === 0 ? 1000 : nextMessage.delay
 
-    const showTimer = setTimeout(() => {
-      if (nextMessage.role === 'assistant') {
+    if (nextMessage.role === 'assistant') {
+      // Show typing indicator first, then reveal message
+      timeoutRef.current = setTimeout(() => {
         setTyping(true)
-        const typeTimer = setTimeout(() => {
+        timeoutRef.current = setTimeout(() => {
           setTyping(false)
           setVisibleMessages(v => v + 1)
-        }, 1200)
-        return () => clearTimeout(typeTimer)
-      } else {
+        }, 1400)
+      }, delay)
+    } else {
+      timeoutRef.current = setTimeout(() => {
         setVisibleMessages(v => v + 1)
-      }
-    }, delay)
+      }, delay)
+    }
 
-    return () => clearTimeout(showTimer)
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current)
+    }
   }, [visibleMessages])
 
   return (
@@ -104,7 +117,7 @@ export default function ChatDemo() {
       {/* Messages */}
       <div className="p-4 space-y-3 min-h-[340px] max-h-[400px] overflow-hidden">
         {DEMO_CONVERSATION.slice(0, visibleMessages).map((msg, i) => (
-          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fadeIn`}>
+          <div key={`${visibleMessages}-${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fadeIn`}>
             {msg.role === 'user' ? (
               <div className="bg-gradient-to-br from-blue-500 to-cyan-400 text-white rounded-2xl rounded-br-sm px-4 py-2.5 max-w-[80%] text-sm">
                 {msg.content}

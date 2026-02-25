@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { TrendingUp, Trophy, Target, BarChart3 } from 'lucide-react'
+import { TrendingUp, Trophy, Target, BarChart3, Activity } from 'lucide-react'
 
 interface StatsData {
   winRate: number
@@ -41,33 +41,60 @@ export default function LiveStats() {
     fetchStats()
   }, [])
 
-  if (loading || !stats || stats.settledBets < 5) return null
+  if (loading) return null
 
+  // If we have enough settled bets, show real stats
+  if (stats && stats.settledBets >= 5) {
+    return (
+      <div className="flex flex-wrap justify-center gap-4 md:gap-8">
+        <StatPill
+          icon={<Trophy className="w-4 h-4" />}
+          label="Win Rate"
+          value={`${stats.winRate.toFixed(1)}%`}
+          color="text-green-400"
+        />
+        <StatPill
+          icon={<Target className="w-4 h-4" />}
+          label="Record"
+          value={`${stats.wins}-${stats.losses}`}
+          color="text-blue-400"
+        />
+        <StatPill
+          icon={<TrendingUp className="w-4 h-4" />}
+          label="ROI"
+          value={`${stats.roi >= 0 ? '+' : ''}${stats.roi.toFixed(1)}%`}
+          color={stats.roi >= 0 ? 'text-green-400' : 'text-red-400'}
+        />
+        <StatPill
+          icon={<BarChart3 className="w-4 h-4" />}
+          label="Tracked Picks"
+          value={`${stats.settledBets}`}
+          color="text-cyan-400"
+        />
+      </div>
+    )
+  }
+
+  // Otherwise show static credibility signals
   return (
-    <div className="flex flex-wrap justify-center gap-6 md:gap-10">
+    <div className="flex flex-wrap justify-center gap-4 md:gap-8">
       <StatPill
-        icon={<Trophy className="w-4 h-4" />}
-        label="Win Rate"
-        value={`${stats.winRate.toFixed(1)}%`}
-        color="text-green-400"
+        icon={<Activity className="w-4 h-4" />}
+        label="Teams Tracked"
+        value="692"
+        color="text-cyan-400"
       />
       <StatPill
         icon={<Target className="w-4 h-4" />}
-        label="Record"
-        value={`${stats.wins}-${stats.losses}`}
+        label="Sports Covered"
+        value="13+"
         color="text-blue-400"
       />
       <StatPill
-        icon={<TrendingUp className="w-4 h-4" />}
-        label="ROI"
-        value={`${stats.roi >= 0 ? '+' : ''}${stats.roi.toFixed(1)}%`}
-        color={stats.roi >= 0 ? 'text-green-400' : 'text-red-400'}
-      />
-      <StatPill
-        icon={<BarChart3 className="w-4 h-4" />}
-        label="Tracked Picks"
-        value={`${stats.settledBets}`}
-        color="text-cyan-400"
+        icon={<Trophy className="w-4 h-4" />}
+        label="Every Pick"
+        value="Verified"
+        color="text-green-400"
       />
     </div>
   )
