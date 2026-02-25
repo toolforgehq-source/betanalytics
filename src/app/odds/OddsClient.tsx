@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
-import { RefreshCw, ExternalLink, TrendingUp, Search, Filter } from 'lucide-react'
+import { RefreshCw, TrendingUp, Search, Filter } from 'lucide-react'
 
 // ============================================
 // TYPES

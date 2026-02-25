@@ -33,26 +33,6 @@ interface BookPrice {
   point?: number
 }
 
-function findBestPrice(prices: BookPrice[], side: 'home' | 'away' | 'over' | 'under', outcomes: { book: string; outcomes: { name: string; price: number; point?: number }[] }[]): BookPrice | null {
-  let best: BookPrice | null = null
-  
-  for (const bk of outcomes) {
-    for (const o of bk.outcomes) {
-      const isTarget = (side === 'home' && o.name !== 'Draw') || 
-                       (side === 'away' && o.name !== 'Draw') ||
-                       (side === 'over' && o.name === 'Over') ||
-                       (side === 'under' && o.name === 'Under')
-      if (!isTarget) continue
-      
-      if (!best || o.price > best.price) {
-        best = { book: bk.book, price: o.price, point: o.point }
-      }
-    }
-  }
-  
-  return best
-}
-
 function formatGame(game: Game): FormattedGame {
   const moneylinePrices: BookPrice[] = []
   const spreadPrices: BookPrice[] = []

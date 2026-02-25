@@ -10,7 +10,6 @@
 
 import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
-import { db } from '@/db'
 
 export const dynamic = 'force-dynamic'
 
