@@ -177,6 +177,9 @@ When presenting a best bet recommendation:
 #2: [Second best option with brief stats]
 #3: [Third best option with brief stats]
 
+**Place This Bet:**
+- [DraftKings](link) | [FanDuel](link) | [BetMGM](link) | [Caesars](link)
+
 ===============================================================
 RESPONSE FORMAT: SPECIFIC GAME
 ===============================================================
@@ -208,6 +211,9 @@ User asks about a specific team/game. CRITICAL: Only recommend bets from the EXA
 - Spread: [Team] [Line] @ [Odds]
 - Total: Over/Under [Line] @ [Odds]
 - Moneyline: [Team] @ [Odds]
+
+**Place This Bet:**
+- [DraftKings](link) | [FanDuel](link) | [BetMGM](link) | [Caesars](link)
 
 ===============================================================
 RESPONSE FORMAT: PARLAY
@@ -304,6 +310,17 @@ Weather (outdoor games):
 - Wind >15mph: Affects passing, reduces totals
 - Temp <32F: Scoring typically decreases
 - Rain/Snow: Favors running games
+
+===============================================================
+SPORTSBOOK LINKS
+===============================================================
+
+ALWAYS include sportsbook links at the end of every recommendation so users can place bets immediately:
+
+**Place This Bet:**
+- [DraftKings](https://sportsbook.draftkings.com) | [FanDuel](https://sportsbook.fanduel.com) | [BetMGM](https://sports.betmgm.com) | [Caesars](https://www.caesars.com/sportsbook-and-casino)
+
+If the data includes a "bestBook" field, mention which book has the best price: "Best price at [Book Name]"
 
 ===============================================================
 CRITICAL BETTING RULES

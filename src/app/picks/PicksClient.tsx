@@ -1,7 +1,62 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { TrendingUp, TrendingDown, Clock, Trophy, Target, BarChart3, ChevronDown, ChevronUp } from 'lucide-react'
+import { TrendingUp, TrendingDown, Clock, Trophy, Target, BarChart3, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react'
+
+// Sportsbook deep links configuration
+const BOOK_URLS: Record<string, Record<string, string>> = {
+  draftkings: {
+    default: 'https://sportsbook.draftkings.com',
+    basketball_nba: 'https://sportsbook.draftkings.com/leagues/basketball/nba',
+    basketball_ncaab: 'https://sportsbook.draftkings.com/leagues/basketball/college-basketball',
+    americanfootball_nfl: 'https://sportsbook.draftkings.com/leagues/football/nfl',
+    americanfootball_ncaaf: 'https://sportsbook.draftkings.com/leagues/football/college-football',
+    icehockey_nhl: 'https://sportsbook.draftkings.com/leagues/hockey/nhl',
+    baseball_mlb: 'https://sportsbook.draftkings.com/leagues/baseball/mlb',
+  },
+  fanduel: {
+    default: 'https://sportsbook.fanduel.com',
+    basketball_nba: 'https://sportsbook.fanduel.com/navigation/basketball/nba',
+    basketball_ncaab: 'https://sportsbook.fanduel.com/navigation/basketball/college-basketball',
+    americanfootball_nfl: 'https://sportsbook.fanduel.com/navigation/football/nfl',
+    americanfootball_ncaaf: 'https://sportsbook.fanduel.com/navigation/football/college-football',
+    icehockey_nhl: 'https://sportsbook.fanduel.com/navigation/hockey/nhl',
+    baseball_mlb: 'https://sportsbook.fanduel.com/navigation/baseball/mlb',
+  },
+  betmgm: {
+    default: 'https://sports.betmgm.com',
+    basketball_nba: 'https://sports.betmgm.com/en/sports/basketball/nba',
+    basketball_ncaab: 'https://sports.betmgm.com/en/sports/basketball/college-basketball',
+    americanfootball_nfl: 'https://sports.betmgm.com/en/sports/football/nfl',
+    icehockey_nhl: 'https://sports.betmgm.com/en/sports/hockey/nhl',
+    baseball_mlb: 'https://sports.betmgm.com/en/sports/baseball/mlb',
+  },
+  caesars: {
+    default: 'https://www.caesars.com/sportsbook-and-casino',
+    basketball_nba: 'https://www.caesars.com/sportsbook-and-casino/basketball/nba',
+    basketball_ncaab: 'https://www.caesars.com/sportsbook-and-casino/basketball/ncaa',
+    americanfootball_nfl: 'https://www.caesars.com/sportsbook-and-casino/football/nfl',
+    icehockey_nhl: 'https://www.caesars.com/sportsbook-and-casino/hockey/nhl',
+    baseball_mlb: 'https://www.caesars.com/sportsbook-and-casino/baseball/mlb',
+  },
+}
+
+function getBookLink(bookName: string, sport: string): string {
+  const normalized = bookName.toLowerCase().replace(/\s+/g, '')
+  for (const [key, urls] of Object.entries(BOOK_URLS)) {
+    if (normalized.includes(key)) {
+      return urls[sport] || urls.default
+    }
+  }
+  return '#'
+}
+
+const SPORTSBOOKS = [
+  { name: 'DraftKings', color: 'bg-[#53D337] hover:bg-[#47b830] text-black', getUrl: (sport: string) => BOOK_URLS.draftkings[sport] || BOOK_URLS.draftkings.default },
+  { name: 'FanDuel', color: 'bg-[#1493FF] hover:bg-[#1180e0] text-white', getUrl: (sport: string) => BOOK_URLS.fanduel[sport] || BOOK_URLS.fanduel.default },
+  { name: 'BetMGM', color: 'bg-[#BFA05C] hover:bg-[#a88d50] text-black', getUrl: (sport: string) => BOOK_URLS.betmgm[sport] || BOOK_URLS.betmgm.default },
+  { name: 'Caesars', color: 'bg-[#0A3D2C] hover:bg-[#0d4f39] text-white', getUrl: (sport: string) => BOOK_URLS.caesars[sport] || BOOK_URLS.caesars.default },
+]
 
 interface StoredPick {
   id: string
@@ -298,7 +353,14 @@ export default function PicksClient() {
                   </div>
                   <div className="text-right">
                     <div className="text-lg font-bold">{formatOdds(pick.odds)}</div>
-                    <div className="text-sm text-slate-400">{pick.bestBook}</div>
+                    <a
+                      href={getBookLink(pick.bestBook, pick.sport)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-cyan-400 hover:text-cyan-300 inline-flex items-center gap-1"
+                    >
+                      {pick.bestBook} <ExternalLink className="w-3 h-3" />
+                    </a>
                     <StatusBadge status={pick.status} />
                   </div>
                 </div>
@@ -316,6 +378,25 @@ export default function PicksClient() {
                     <div className="font-semibold text-green-400">+{pick.edge.toFixed(1)}%</div>
                   </div>
                 </div>
+                {pick.status === 'pending' && (
+                  <div className="mt-3 pt-3 border-t border-slate-800/50">
+                    <p className="text-xs text-slate-500 mb-2">Place this bet:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {SPORTSBOOKS.map((book) => (
+                        <a
+                          key={book.name}
+                          href={book.getUrl(pick.sport)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${book.color}`}
+                        >
+                          {book.name}
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
