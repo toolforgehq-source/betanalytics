@@ -11,6 +11,8 @@ export default function Footer() {
         <p>Must be 21+. If you or someone you know has a gambling problem, call 1-800-GAMBLER.</p>
         <div className="mt-3 flex justify-center gap-4 flex-wrap">
           <Link href="/picks" className="hover:text-slate-300 transition-colors">Model Picks</Link>
+          <Link href="/performance" className="hover:text-slate-300 transition-colors">Performance</Link>
+          <Link href="/odds" className="hover:text-slate-300 transition-colors">Odds Board</Link>
           <Link href="/methodology" className="hover:text-slate-300 transition-colors">Methodology</Link>
           <Link href="/pricing" className="hover:text-slate-300 transition-colors">Pricing</Link>
           <Link href="/blog" className="hover:text-slate-300 transition-colors">Blog</Link>
