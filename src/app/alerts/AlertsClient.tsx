@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Bell, BellOff, Mail, Smartphone, Zap, Clock, TrendingUp, Filter, Save, Check } from 'lucide-react'
 
 // ============================================
@@ -147,6 +147,27 @@ export default function AlertsClient() {
   const [prefs, setPrefs] = useState<AlertPreferences>(DEFAULT_PREFERENCES)
   const [saved, setSaved] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [loadingPrefs, setLoadingPrefs] = useState(true)
+
+  // Load saved preferences on mount
+  useEffect(() => {
+    async function loadPrefs() {
+      try {
+        const res = await fetch('/api/alerts')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.success && data.preferences) {
+            setPrefs(data.preferences)
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load alert preferences:', err)
+      } finally {
+        setLoadingPrefs(false)
+      }
+    }
+    loadPrefs()
+  }, [])
 
   function updatePref<K extends keyof AlertPreferences>(key: K, value: AlertPreferences[K]) {
     setPrefs(prev => ({ ...prev, [key]: value }))
@@ -170,6 +191,20 @@ export default function AlertsClient() {
     } finally {
       setSaving(false)
     }
+  }
+
+  if (loadingPrefs) {
+    return (
+      <div className="space-y-6 max-w-2xl">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-6 animate-pulse">
+            <div className="h-6 bg-slate-800 rounded w-1/3 mb-4" />
+            <div className="h-4 bg-slate-800 rounded w-2/3 mb-2" />
+            <div className="h-4 bg-slate-800 rounded w-1/2" />
+          </div>
+        ))}
+      </div>
+    )
   }
 
   return (

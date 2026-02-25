@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { RefreshCw, TrendingUp, Search, Filter } from 'lucide-react'
 
 // ============================================
@@ -288,32 +288,54 @@ export default function OddsClient() {
   const [sportFilter, setSportFilter] = useState<string>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [refreshing, setRefreshing] = useState(false)
+  const [countdown, setCountdown] = useState(60)
+  const autoRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  async function fetchOdds() {
+  const fetchOdds = useCallback(async (isAutoRefresh = false) => {
     try {
-      setError(null)
+      if (!isAutoRefresh) setError(null)
       const res = await fetch('/api/odds')
       const json = await res.json()
       if (!json.success) {
-        setError(json.error || 'Failed to fetch odds')
+        if (!isAutoRefresh) setError(json.error || 'Failed to fetch odds')
         return
       }
       setData(json)
+      setCountdown(60)
     } catch (err) {
-      setError('Failed to fetch odds data. Please try again.')
+      if (!isAutoRefresh) {
+        setError('Failed to fetch odds data. Please try again.')
+      }
       console.error('Odds fetch error:', err)
     } finally {
       setLoading(false)
       setRefreshing(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     fetchOdds()
-  }, [])
+
+    // Auto-refresh every 60 seconds
+    autoRefreshRef.current = setInterval(() => {
+      fetchOdds(true)
+    }, 60000)
+
+    // Countdown timer
+    countdownRef.current = setInterval(() => {
+      setCountdown(prev => (prev <= 1 ? 60 : prev - 1))
+    }, 1000)
+
+    return () => {
+      if (autoRefreshRef.current) clearInterval(autoRefreshRef.current)
+      if (countdownRef.current) clearInterval(countdownRef.current)
+    }
+  }, [fetchOdds])
 
   function handleRefresh() {
     setRefreshing(true)
+    setCountdown(60)
     fetchOdds()
   }
 
@@ -448,6 +470,7 @@ export default function OddsClient() {
         <span>
           Updated {data.lastUpdated ? new Date(data.lastUpdated).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'recently'}
           {data.isStale && <span className="ml-2 text-yellow-400">(cached)</span>}
+          <span className="ml-2 text-slate-600">· refreshing in {countdown}s</span>
         </span>
       </div>
 
