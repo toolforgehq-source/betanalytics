@@ -113,8 +113,8 @@ function filterPicksForUser(picks: StoredPick[], prefs: AlertPreferences): Store
     // Filter by minimum edge
     if (pick.edge < prefs.minEdge) return false
 
-    // Filter by minimum probability
-    if (pick.consensusProbability * 100 < prefs.minProbability) return false
+    // Filter by minimum probability (consensusProbability is already 0-100 scale)
+    if (pick.consensusProbability < prefs.minProbability) return false
 
     // Filter by alert type preferences
     if (pick.pickType === 'best_bet' && !prefs.bestBetOfDay) return false
@@ -161,10 +161,12 @@ function buildAlertEmail(picks: StoredPick[], userEmail: string): { subject: str
     ? `BetAnalytics: ${bestBet.team} ${bestBet.betType === 'moneyline' ? 'ML' : bestBet.betType === 'spread' ? bestBet.line! > 0 ? `+${bestBet.line}` : `${bestBet.line}` : bestBet.betType === 'total' ? `${bestBet.team.includes('Over') ? 'O' : 'U'} ${bestBet.line}` : ''} — Best Bet of the Day`
     : `BetAnalytics: ${picks.length} High-Edge Pick${picks.length !== 1 ? 's' : ''} Found`
 
-  const pickRows = picks.map(pick => {
+  // Exclude bestBet from the table rows since it gets its own callout
+  const tablePicks = bestBet ? picks.filter(p => p.id !== bestBet.id) : picks
+  const pickRows = tablePicks.map(pick => {
     const odds = pick.odds > 0 ? `+${pick.odds}` : `${pick.odds}`
     const edge = pick.edge.toFixed(1)
-    const prob = (pick.consensusProbability * 100).toFixed(0)
+    const prob = pick.consensusProbability.toFixed(0)
     const betLabel = pick.betType === 'moneyline' ? 'ML'
       : pick.betType === 'spread' ? `${pick.line! > 0 ? '+' : ''}${pick.line}`
       : pick.betType === 'total' ? `${pick.team.includes('Over') ? 'O' : 'U'} ${pick.line}`
@@ -227,7 +229,7 @@ function buildAlertEmail(picks: StoredPick[], userEmail: string): { subject: str
         </div>
         <div>
           <div style="font-size: 11px; color: #64748b;">Probability</div>
-          <div style="font-size: 18px; font-weight: 600; color: #f1f5f9;">${(bestBet.consensusProbability * 100).toFixed(0)}%</div>
+          <div style="font-size: 18px; font-weight: 600; color: #f1f5f9;">${bestBet.consensusProbability.toFixed(0)}%</div>
         </div>
         <div>
           <div style="font-size: 11px; color: #64748b;">Best Book</div>
@@ -255,7 +257,7 @@ function buildAlertEmail(picks: StoredPick[], userEmail: string): { subject: str
           </tr>
         </thead>
         <tbody>
-          ${bestBet ? pickRows.replace(picks.indexOf(bestBet).toString(), '') : pickRows}
+          ${pickRows}
         </tbody>
       </table>
     </div>
@@ -336,8 +338,32 @@ export async function GET(request: Request) {
       })
     }
 
-    // 2. Get all subscribed users from Redis set
-    const subscribers = await redisCommand(['SMEMBERS', 'alert_subscribers']) as string[] | null
+    // 2. Get all subscribed users from Redis set + SCAN fallback for legacy users
+    let subscribers = await redisCommand(['SMEMBERS', 'alert_subscribers']) as string[] | null
+
+    // Fallback: SCAN for alert_prefs:* keys to find users who saved prefs before
+    // the alert_subscribers set was introduced. Backfill them into the set.
+    if (!subscribers || subscribers.length === 0) {
+      const scannedEmails: string[] = []
+      let cursor = '0'
+      do {
+        const result = await redisCommand(['SCAN', cursor, 'MATCH', 'alert_prefs:*', 'COUNT', '100']) as [string, string[]] | null
+        if (!result) break
+        cursor = result[0]
+        for (const key of result[1]) {
+          const email = key.replace('alert_prefs:', '')
+          scannedEmails.push(email)
+          // Backfill into the set for future runs
+          await redisCommand(['SADD', 'alert_subscribers', email])
+        }
+      } while (cursor !== '0')
+
+      if (scannedEmails.length > 0) {
+        subscribers = scannedEmails
+        console.log(`[send-alerts] Backfilled ${scannedEmails.length} subscribers from SCAN`)
+      }
+    }
+
     if (!subscribers || subscribers.length === 0) {
       return NextResponse.json({
         message: 'No subscribers — nothing to send',
