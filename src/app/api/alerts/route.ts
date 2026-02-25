@@ -60,6 +60,13 @@ export async function POST(req: Request) {
     const redisResult = await redisCommand(['SET', key, value])
     if (redisResult === null) {
       memoryAlertPrefs.set(key, value)
+    } else {
+      // Track this user in a set so the cron job can scan all subscribers
+      if (preferences.emailEnabled) {
+        await redisCommand(['SADD', 'alert_subscribers', session.user.email.toLowerCase()])
+      } else {
+        await redisCommand(['SREM', 'alert_subscribers', session.user.email.toLowerCase()])
+      }
     }
 
     return NextResponse.json({ 

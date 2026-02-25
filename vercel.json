@@ -55,6 +55,14 @@
     {
       "path": "/api/cron/seasonal-nudge",
       "schedule": "0 15 * * 1"
+    },
+    {
+      "path": "/api/cron/send-alerts",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/send-alerts",
+      "schedule": "0 22 * * *"
     }
   ]
 }
