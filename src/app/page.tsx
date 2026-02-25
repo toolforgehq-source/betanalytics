@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import { Activity, BarChart3, CheckCircle, Target, TrendingUp, MessageSquare, ArrowRight, Eye, Lock, ChevronDown } from 'lucide-react'
+import { Activity, BarChart3, CheckCircle, Target, TrendingUp, MessageSquare, ArrowRight, Eye, Lock, ChevronDown, Search, Bell, Layers } from 'lucide-react'
 import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
 import LiveStats from '@/components/LiveStats'
@@ -111,9 +111,18 @@ export default function HomePage() {
             </div>
 
             {/* Desktop Navigation */}
-            <div className="hidden md:flex items-center gap-6">
+            <div className="hidden md:flex items-center gap-5">
               <Link href="/picks" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Track Record
+              </Link>
+              <Link href="/odds" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Odds Board
+              </Link>
+              <Link href="/performance" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Performance
+              </Link>
+              <Link href="/betslip" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Parlay Builder
               </Link>
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Methodology
@@ -287,24 +296,45 @@ export default function HomePage() {
                       icon={<MessageSquare className="w-5 h-5 text-cyan-400" />}
                       title="AI Chat"
                       text="Ask about any game, team, player, or matchup. Parlays, props, best bets."
+                      href="/chat"
                     />
                     <Feature
                       icon={<Target className="w-5 h-5 text-blue-400" />}
                       title="Elo Edge Detection"
                       text="Independent probabilities for 692 teams. Find where the model disagrees with the market."
+                      href="/picks"
                     />
                     <Feature
-                      icon={<Activity className="w-5 h-5 text-green-400" />}
+                      icon={<Search className="w-5 h-5 text-green-400" />}
+                      title="Line Shopping"
+                      text="Compare odds across DraftKings, FanDuel, BetMGM, and Caesars. Best price highlighted instantly."
+                      href="/odds"
+                    />
+                    <Feature
+                      icon={<Layers className="w-5 h-5 text-purple-400" />}
+                      title="Parlay Builder"
+                      text="Build parlays visually from live odds. See combined probability and payout before you bet."
+                      href="/betslip"
+                    />
+                    <Feature
+                      icon={<BarChart3 className="w-5 h-5 text-orange-400" />}
+                      title="Performance Dashboard"
+                      text="Full transparency. Win rates, ROI, calibration by sport and bet type. Every pick graded."
+                      href="/performance"
+                    />
+                    <Feature
+                      icon={<Activity className="w-5 h-5 text-red-400" />}
                       title="Injury Adjustments"
                       text="Real-time ESPN data. Every injury quantified in Elo points, not just mentioned."
                     />
                     <Feature
-                      icon={<BarChart3 className="w-5 h-5 text-purple-400" />}
-                      title="Public Track Record"
-                      text="Every pick graded after the game. Win rates, ROI, breakdowns by sport and bet type."
+                      icon={<Bell className="w-5 h-5 text-yellow-400" />}
+                      title="Smart Alerts"
+                      text="Get notified when we find high-edge picks. Customizable by sport, bet type, and threshold."
+                      href="/alerts"
                     />
                     <Feature
-                      icon={<TrendingUp className="w-5 h-5 text-yellow-400" />}
+                      icon={<TrendingUp className="w-5 h-5 text-emerald-400" />}
                       title="13+ Sports"
                       text="NBA, NFL, NHL, MLB, NCAAB, NCAAF, Premier League, La Liga, Bundesliga, Serie A, and more."
                     />
@@ -326,13 +356,14 @@ export default function HomePage() {
 
                   <ul className="space-y-3 mb-8">
                     <PricingLine text="Unlimited AI chat" />
-                    <PricingLine text="All sports and bet types" />
-                    <PricingLine text="Elo edge detection" />
+                    <PricingLine text="Elo edge detection across 13+ sports" />
+                    <PricingLine text="Odds board &mdash; line shop across 4+ books" />
+                    <PricingLine text="Visual parlay builder with payout calc" />
+                    <PricingLine text="Performance dashboard &mdash; full transparency" />
                     <PricingLine text="Real-time injury adjustments" />
                     <PricingLine text="Player props analysis" />
-                    <PricingLine text="Parlay builder" />
-                    <PricingLine text="Full methodology access" />
-                    <PricingLine text="Public verified track record" />
+                    <PricingLine text="Customizable alerts for +EV picks" />
+                    <PricingLine text="Verified public track record" />
                   </ul>
 
                   <Link
@@ -458,18 +489,25 @@ function StepCard({ number, title, description, detail }: {
   )
 }
 
-function Feature({ icon, title, text }: { icon: React.ReactNode; title: string; text: string }) {
-  return (
-    <div className="flex items-start gap-4">
-      <div className="w-10 h-10 bg-slate-800/60 border border-slate-700/40 rounded-xl flex items-center justify-center flex-shrink-0">
+function Feature({ icon, title, text, href }: { icon: React.ReactNode; title: string; text: string; href?: string }) {
+  const content = (
+    <div className={`flex items-start gap-4 ${href ? 'group cursor-pointer' : ''}`}>
+      <div className="w-10 h-10 bg-slate-800/60 border border-slate-700/40 rounded-xl flex items-center justify-center flex-shrink-0 group-hover:border-cyan-500/30 transition-colors">
         {icon}
       </div>
       <div>
-        <div className="font-semibold mb-0.5">{title}</div>
+        <div className="font-semibold mb-0.5 group-hover:text-cyan-400 transition-colors">
+          {title}
+          {href && <span className="ml-1 text-cyan-500/0 group-hover:text-cyan-500/70 transition-colors text-xs">&rarr;</span>}
+        </div>
         <div className="text-sm text-slate-400">{text}</div>
       </div>
     </div>
   )
+  if (href) {
+    return <Link href={href}>{content}</Link>
+  }
+  return content
 }
 
 function PricingLine({ text }: { text: string }) {
