@@ -43,7 +43,21 @@ export default function MobileNav() {
             Odds Board
           </Link>
           <Link 
-            href="/methodology" 
+            href="/betslip" 
+            className="block w-full px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm text-slate-300 hover:text-white"
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Parlay Builder
+          </Link>
+          <Link 
+            href="/alerts" 
+            className="block w-full px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm text-slate-300 hover:text-white"
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Alerts
+          </Link>
+          <Link 
+            href="/methodology"
             className="block w-full px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm text-slate-300 hover:text-white"
             onClick={() => setMobileMenuOpen(false)}
           >

@@ -13,6 +13,8 @@ export default function Footer() {
           <Link href="/picks" className="hover:text-slate-300 transition-colors">Model Picks</Link>
           <Link href="/performance" className="hover:text-slate-300 transition-colors">Performance</Link>
           <Link href="/odds" className="hover:text-slate-300 transition-colors">Odds Board</Link>
+          <Link href="/betslip" className="hover:text-slate-300 transition-colors">Parlay Builder</Link>
+          <Link href="/alerts" className="hover:text-slate-300 transition-colors">Alerts</Link>
           <Link href="/methodology" className="hover:text-slate-300 transition-colors">Methodology</Link>
           <Link href="/pricing" className="hover:text-slate-300 transition-colors">Pricing</Link>
           <Link href="/blog" className="hover:text-slate-300 transition-colors">Blog</Link>
