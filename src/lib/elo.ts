@@ -1490,9 +1490,10 @@ export interface PlayerImportance {
  * Rules:
  * - NFL/NCAAF: Starting QB out = -80 Elo
  * - NHL: Starting goalie out = -30 Elo
- * - NBA/NCAAB/NHL: Top 3 scorer out = -20 Elo each
- * - Fallback: -5 Elo per starter out (for sports without good player data)
+ * - NBA/NCAAB/NHL: Top 3 scorer out = -35 Elo each (star players have outsized impact)
+ * - Fallback: -10 Elo per rotation player out (for sports without good player data)
  * - Status multipliers: Out=100%, Doubtful=70%, Questionable=15%
+ * - Compounding: 3+ players OUT = extra -15 Elo, 5+ = extra -30 Elo (depth depletion)
  */
 export function calculateInjuryAdjustment(
   league: string,
@@ -1567,20 +1568,32 @@ export function calculateInjuryAdjustment(
       })
       
       if (isTopScorer) {
-        const topScorerPenalty = Math.round(-20 * statusMultiplier)
+        const topScorerPenalty = Math.round(-35 * statusMultiplier)
         totalAdjustment += topScorerPenalty
         details.push(`${injury.player} (Top Scorer, ${injury.status}): ${topScorerPenalty} Elo`)
         continue
       }
     }
     
-    // Fallback: -5 Elo per injured player (for starters/significant players)
+    // Fallback: -10 Elo per rotation player out (for sports without good player data)
     // Only apply if status indicates they're actually out/doubtful
     if (statusMultiplier >= 0.5) {
-      const fallbackPenalty = Math.round(-5 * statusMultiplier)
+      const fallbackPenalty = Math.round(-10 * statusMultiplier)
       totalAdjustment += fallbackPenalty
       details.push(`${injury.player} (${injury.status}): ${fallbackPenalty} Elo`)
     }
+  }
+  
+  // Compounding penalty for depth depletion
+  // When multiple players are OUT, the team's depth is severely compromised
+  // This goes beyond individual player value — it changes the team's identity
+  const outCount = teamInjuries.filter(inj => getStatusMultiplier(inj.status) >= 0.7).length
+  if (outCount >= 5) {
+    totalAdjustment += -30
+    details.push(`Depth crisis: ${outCount} players OUT/Doubtful — extra -30 Elo`)
+  } else if (outCount >= 3) {
+    totalAdjustment += -15
+    details.push(`Depth concern: ${outCount} players OUT/Doubtful — extra -15 Elo`)
   }
   
   return { adjustment: totalAdjustment, details }

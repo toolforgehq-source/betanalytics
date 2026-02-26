@@ -339,6 +339,63 @@ function convertESPNInjuriesToInjuryInfo(espnInjuries: ESPNInjury[]): InjuryInfo
 }
 
 /**
+ * Build injury display info for the situational breakdown
+ * Shows WHO is out (not just a count) and the approximate probability impact
+ */
+function buildInjuryDisplay(
+  teamName: string,
+  injuries: InjuryInfo[] | undefined,
+  eloResult: { homeRating: number; awayRating: number; homeEffectiveRating?: number; awayEffectiveRating?: number } | null,
+  isHomeTeam: boolean
+): { value: string; adjustment: number } {
+  if (!injuries || injuries.length === 0) {
+    return { value: 'No major injuries reported', adjustment: 0 }
+  }
+  
+  // Filter injuries for this specific team
+  const teamNorm = teamName.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const teamInjuries = injuries.filter(inj => {
+    const injTeamNorm = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+    return injTeamNorm.includes(teamNorm) || teamNorm.includes(injTeamNorm)
+  })
+  
+  // Get key OUT/Doubtful players
+  const keyOut = teamInjuries
+    .filter(i => {
+      const s = i.status.toLowerCase()
+      return s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir'
+    })
+    .map(i => `${i.player} (${i.status})`)
+  
+  // Calculate Elo adjustment (effective - base)
+  let eloAdjustment = 0
+  if (eloResult) {
+    if (isHomeTeam && eloResult.homeEffectiveRating !== undefined) {
+      eloAdjustment = eloResult.homeEffectiveRating - eloResult.homeRating
+    } else if (!isHomeTeam && eloResult.awayEffectiveRating !== undefined) {
+      eloAdjustment = eloResult.awayEffectiveRating - eloResult.awayRating
+    }
+  }
+  
+  // Convert Elo adjustment to approximate probability change (~0.14% per Elo point)
+  const probAdjustment = Math.round(eloAdjustment * 0.14 * 10) / 10
+  
+  let value: string
+  if (keyOut.length > 0) {
+    value = `KEY OUT: ${keyOut.join(', ')}`
+    if (eloAdjustment !== 0) {
+      value += ` (Elo impact: ${eloAdjustment > 0 ? '+' : ''}${eloAdjustment} pts)`
+    }
+  } else if (teamInjuries.length > 0) {
+    value = `${teamInjuries.length} injuries tracked (minor/questionable)`
+  } else {
+    value = `${injuries.length} total injuries in game`
+  }
+  
+  return { value, adjustment: probAdjustment }
+}
+
+/**
  * Normalize team name for matching (handles "Denver Nuggets" vs "Nuggets" vs "Denver")
  */
 function normalizeTeamName(name: string): string {
@@ -1195,11 +1252,7 @@ export async function analyzeGame(
           value: situationalAdj.motivationAdjustment?.notes.length ? situationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
           adjustment: Math.round(situationalAdj.breakdown.motivation * 1000) / 10
         },
-        injuries: {
-          // Show injury info
-          value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
-          adjustment: 0
-        }
+        injuries: buildInjuryDisplay(team, injuries, eloResult, isHomeTeam)
       },
       baseEloProbability: eloProbability ? Math.round(eloProbability * 1000) / 10 : undefined,
       calculatedAt: now
@@ -1458,11 +1511,7 @@ export async function analyzeGame(
             value: spreadSituationalAdj.motivationAdjustment?.notes.length ? spreadSituationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
             adjustment: Math.round(spreadSituationalAdj.breakdown.motivation * 1000) / 10
           },
-          injuries: {
-            // Show injury info
-            value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
-            adjustment: 0
-          }
+          injuries: buildInjuryDisplay(teamName, injuries, eloResult, isHomeTeam)
         },
         calculatedAt: now
       })
@@ -1625,11 +1674,7 @@ export async function analyzeGame(
                   value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
                   adjustment: Math.round(totalSituationalAdj.breakdown.motivation * 1000) / 10
                 },
-                injuries: {
-                  // Show injury info
-                  value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
-                  adjustment: 0
-                }
+                injuries: buildInjuryDisplay(game.homeTeam, injuries, eloResult, true)
               },
               calculatedAt: now
             })
@@ -1747,11 +1792,7 @@ export async function analyzeGame(
                   value: totalSituationalAdj.motivationAdjustment?.notes.length ? totalSituationalAdj.motivationAdjustment.notes[0] : 'Regular season game',
                   adjustment: Math.round(totalSituationalAdj.breakdown.motivation * 1000) / 10
                 },
-                injuries: {
-                  // Show injury info
-                  value: injuries && injuries.length > 0 ? `${injuries.length} injuries tracked` : 'No major injuries reported',
-                  adjustment: 0
-                }
+                injuries: buildInjuryDisplay(game.homeTeam, injuries, eloResult, true)
               },
               calculatedAt: now
             })
@@ -2407,18 +2448,66 @@ export async function computeBestBets(
   // allEloBets is used for sport-specific queries (e.g., "best NBA bet")
   const filteredRankedBets: RankedBet[] = []
   for (const bet of allRankedBets) {
-    // Only check moneyline bets for star player injuries (spread/total are less affected)
+    const enrichedGame = games.find(g => g.id === bet.gameId) as EnrichedGame | undefined
+    const espnInjuries = enrichedGame?.espnData?.injuries || []
+    const injuries = convertESPNInjuriesToInjuryInfo(espnInjuries)
+    
+    // Count key players OUT/Doubtful for the bet's team
+    const teamNorm = bet.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const teamOutCount = injuries.filter(inj => {
+      const injTeamNorm = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+      const isTeam = injTeamNorm.includes(teamNorm) || teamNorm.includes(injTeamNorm)
+      const s = inj.status.toLowerCase()
+      const isOut = s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir'
+      return isTeam && isOut
+    }).length
+    
+    // DISQUALIFY moneyline bets if star player is OUT
     if (bet.betType === 'moneyline') {
-      const enrichedGame = games.find(g => g.id === bet.gameId) as EnrichedGame | undefined
-      const espnInjuries = enrichedGame?.espnData?.injuries || []
-      const injuries = convertESPNInjuriesToInjuryInfo(espnInjuries)
-      
       const starOut = await getStarPlayerOut(bet.team, bet.sport, injuries)
       if (starOut) {
         console.log(`[computeBestBets] DISQUALIFIED (ranked): ${bet.team} ML - star player ${starOut} is OUT`)
-        continue // Skip this bet
+        continue
       }
     }
+    
+    // DISQUALIFY spread bets if star player is OUT or 3+ key players are OUT
+    // A team missing its star or multiple rotation players is fundamentally different
+    if (bet.betType === 'spread') {
+      const starOut = await getStarPlayerOut(bet.team, bet.sport, injuries)
+      if (starOut) {
+        console.log(`[computeBestBets] DISQUALIFIED (ranked): ${bet.team} spread - star player ${starOut} is OUT`)
+        continue
+      }
+      if (teamOutCount >= 3) {
+        console.log(`[computeBestBets] DISQUALIFIED (ranked): ${bet.team} spread - ${teamOutCount} key players OUT (depth crisis)`)
+        continue
+      }
+    }
+    
+    // DISQUALIFY totals bets if EITHER team has 3+ key players OUT
+    // Missing multiple players dramatically changes scoring dynamics
+    if (bet.betType === 'total') {
+      const homeTeamNorm = (enrichedGame?.homeTeam || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      const awayTeamNorm = (enrichedGame?.awayTeam || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      const homeOutCount = injuries.filter(inj => {
+        const injTeamNorm = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const isTeam = injTeamNorm.includes(homeTeamNorm) || homeTeamNorm.includes(injTeamNorm)
+        const s = inj.status.toLowerCase()
+        return isTeam && (s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir')
+      }).length
+      const awayOutCount = injuries.filter(inj => {
+        const injTeamNorm = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const isTeam = injTeamNorm.includes(awayTeamNorm) || awayTeamNorm.includes(injTeamNorm)
+        const s = inj.status.toLowerCase()
+        return isTeam && (s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir')
+      }).length
+      if (homeOutCount >= 4 || awayOutCount >= 4) {
+        console.log(`[computeBestBets] DISQUALIFIED (ranked): ${bet.homeTeam} vs ${bet.awayTeam} total - home ${homeOutCount} / away ${awayOutCount} key players OUT`)
+        continue
+      }
+    }
+    
     filteredRankedBets.push(bet)
   }
   
@@ -2427,18 +2516,64 @@ export async function computeBestBets(
   // teams with star players OUT. Previously only allRankedBets was filtered.
   const filteredEloBets: RankedBet[] = []
   for (const bet of allEloBets) {
-    // Only check moneyline bets for star player injuries
+    const enrichedGame = games.find(g => g.id === bet.gameId) as EnrichedGame | undefined
+    const espnInjuries = enrichedGame?.espnData?.injuries || []
+    const injuries = convertESPNInjuriesToInjuryInfo(espnInjuries)
+    
+    // Count key players OUT/Doubtful for the bet's team
+    const teamNorm = bet.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const teamOutCount = injuries.filter(inj => {
+      const injTeamNorm = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+      const isTeam = injTeamNorm.includes(teamNorm) || teamNorm.includes(injTeamNorm)
+      const s = inj.status.toLowerCase()
+      const isOut = s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir'
+      return isTeam && isOut
+    }).length
+    
+    // DISQUALIFY moneyline bets if star player is OUT
     if (bet.betType === 'moneyline') {
-      const enrichedGame = games.find(g => g.id === bet.gameId) as EnrichedGame | undefined
-      const espnInjuries = enrichedGame?.espnData?.injuries || []
-      const injuries = convertESPNInjuriesToInjuryInfo(espnInjuries)
-      
       const starOut = await getStarPlayerOut(bet.team, bet.sport, injuries)
       if (starOut) {
         console.log(`[computeBestBets] DISQUALIFIED (elo): ${bet.team} ML - star player ${starOut} is OUT`)
-        continue // Skip this bet
+        continue
       }
     }
+    
+    // DISQUALIFY spread bets if star player is OUT or 3+ key players are OUT
+    if (bet.betType === 'spread') {
+      const starOut = await getStarPlayerOut(bet.team, bet.sport, injuries)
+      if (starOut) {
+        console.log(`[computeBestBets] DISQUALIFIED (elo): ${bet.team} spread - star player ${starOut} is OUT`)
+        continue
+      }
+      if (teamOutCount >= 3) {
+        console.log(`[computeBestBets] DISQUALIFIED (elo): ${bet.team} spread - ${teamOutCount} key players OUT (depth crisis)`)
+        continue
+      }
+    }
+    
+    // DISQUALIFY totals bets if EITHER team has 4+ key players OUT
+    if (bet.betType === 'total') {
+      const homeTeamNorm = (enrichedGame?.homeTeam || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      const awayTeamNorm = (enrichedGame?.awayTeam || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      const homeOutCount = injuries.filter(inj => {
+        const injTeamNorm = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const isTeam = injTeamNorm.includes(homeTeamNorm) || homeTeamNorm.includes(injTeamNorm)
+        const s = inj.status.toLowerCase()
+        return isTeam && (s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir')
+      }).length
+      const awayOutCount = injuries.filter(inj => {
+        const injTeamNorm = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const isTeam = injTeamNorm.includes(awayTeamNorm) || awayTeamNorm.includes(injTeamNorm)
+        const s = inj.status.toLowerCase()
+        return isTeam && (s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir')
+      }).length
+      if (homeOutCount >= 4 || awayOutCount >= 4) {
+        console.log(`[computeBestBets] DISQUALIFIED (elo): ${bet.homeTeam} vs ${bet.awayTeam} total - home ${homeOutCount} / away ${awayOutCount} key players OUT`)
+        continue
+      }
+    }
+    
     filteredEloBets.push(bet)
   }
   
