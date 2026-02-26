@@ -30,19 +30,31 @@ export default function PicksPage() {
             </Link>
 
             {/* Desktop Navigation */}
-            <div className="hidden md:flex items-center gap-4">
-              <Link href="/picks" className="text-cyan-400 font-medium">
+            <div className="hidden md:flex items-center gap-6">
+              <Link href="/picks" className="text-sm text-cyan-400 font-medium">
                 Model Picks
               </Link>
-              <Link href="/methodology" className="text-slate-300 hover:text-white transition-colors">
+              <Link href="/performance" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Performance
+              </Link>
+              <Link href="/odds" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Odds Board
+              </Link>
+              <Link href="/betslip" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Parlay Builder
+              </Link>
+              <Link href="/alerts" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Alerts
+              </Link>
+              <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Methodology
               </Link>
-              <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
+              <Link href="/login" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Sign In
               </Link>
               <Link 
                 href="/signup" 
-                className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
+                className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25"
               >
                 Start Free Trial
               </Link>

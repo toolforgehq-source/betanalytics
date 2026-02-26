@@ -37,6 +37,15 @@ export default function PerformancePage() {
               <Link href="/performance" className="text-sm text-cyan-400 font-medium">
                 Performance
               </Link>
+              <Link href="/odds" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Odds Board
+              </Link>
+              <Link href="/betslip" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Parlay Builder
+              </Link>
+              <Link href="/alerts" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Alerts
+              </Link>
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Methodology
               </Link>

@@ -40,6 +40,9 @@ export default function AlertsPage() {
               <Link href="/odds" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Odds Board
               </Link>
+              <Link href="/betslip" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Parlay Builder
+              </Link>
               <Link href="/alerts" className="text-sm text-cyan-400 font-medium">
                 Alerts
               </Link>

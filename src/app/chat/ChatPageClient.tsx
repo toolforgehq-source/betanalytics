@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Calculator, BookOpen, User, LogOut, ArrowLeft, Activity, RefreshCw, Menu, X } from 'lucide-react'
+import { Calculator, BookOpen, User, LogOut, ArrowLeft, Activity, RefreshCw, Menu, X, Target, BarChart3, Search, Layers, Bell } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
@@ -139,47 +139,75 @@ export default function ChatPageClient({
             </Link>
             
             {/* Desktop Navigation */}
-            <div className="hidden md:flex items-center gap-2">
+            <div className="hidden md:flex items-center gap-1">
               <Link
-                href="/methodology"
-                className="flex items-center gap-2 px-4 py-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+                href="/picks"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
               >
-                <BookOpen className="w-4 h-4" />
-                Methodology
+                <Target className="w-4 h-4" />
+                Picks
               </Link>
+              <Link
+                href="/odds"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
+              >
+                <Search className="w-4 h-4" />
+                Odds
+              </Link>
+              <Link
+                href="/betslip"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
+              >
+                <Layers className="w-4 h-4" />
+                Parlay
+              </Link>
+              <Link
+                href="/performance"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
+              >
+                <BarChart3 className="w-4 h-4" />
+                Performance
+              </Link>
+              <Link
+                href="/alerts"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
+              >
+                <Bell className="w-4 h-4" />
+                Alerts
+              </Link>
+              <div className="w-px h-6 bg-slate-700/50 mx-1" />
               <button
                 onClick={() => setShowHedgeCalculator(!showHedgeCalculator)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm ${
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg transition-colors text-sm ${
                   showHedgeCalculator 
                     ? 'bg-blue-500/20 border border-blue-500/30 text-blue-300' 
-                    : 'bg-slate-800/50 hover:bg-slate-700/50'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-800/50'
                 }`}
               >
                 {showHedgeCalculator ? (
                   <>
                     <ArrowLeft className="w-4 h-4" />
-                    Back to Chat
+                    Chat
                   </>
                 ) : (
                   <>
                     <Calculator className="w-4 h-4" />
-                    Hedge Calculator
+                    Hedge Calc
                   </>
                 )}
               </button>
               <button
                 onClick={() => router.push('/account')}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
               >
                 <User className="w-4 h-4" />
                 Account
               </button>
               <button
                 onClick={() => signOut({ callbackUrl: '/' })}
-                className="flex items-center gap-2 px-4 py-2 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-400 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
               >
                 <LogOut className="w-4 h-4" />
-                Sign Out
               </button>
             </div>
 
@@ -197,6 +225,46 @@ export default function ChatPageClient({
           {mobileMenuOpen && (
             <div className="md:hidden mt-4 pt-4 border-t border-slate-800/50 space-y-2">
               <Link
+                href="/picks"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <Target className="w-4 h-4" />
+                Model Picks
+              </Link>
+              <Link
+                href="/odds"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <Search className="w-4 h-4" />
+                Odds Board
+              </Link>
+              <Link
+                href="/betslip"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <Layers className="w-4 h-4" />
+                Parlay Builder
+              </Link>
+              <Link
+                href="/performance"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <BarChart3 className="w-4 h-4" />
+                Performance
+              </Link>
+              <Link
+                href="/alerts"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <Bell className="w-4 h-4" />
+                Alerts
+              </Link>
+              <Link
                 href="/methodology"
                 onClick={() => setMobileMenuOpen(false)}
                 className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
@@ -204,46 +272,48 @@ export default function ChatPageClient({
                 <BookOpen className="w-4 h-4" />
                 Methodology
               </Link>
-              <button
-                onClick={() => {
-                  setShowHedgeCalculator(!showHedgeCalculator)
-                  setMobileMenuOpen(false)
-                }}
-                className={`w-full flex items-center gap-2 px-4 py-3 rounded-lg transition-colors text-sm ${
-                  showHedgeCalculator 
-                    ? 'bg-blue-500/20 border border-blue-500/30 text-blue-300' 
-                    : 'bg-slate-800/50 hover:bg-slate-700/50'
-                }`}
-              >
-                {showHedgeCalculator ? (
-                  <>
-                    <ArrowLeft className="w-4 h-4" />
-                    Back to Chat
-                  </>
-                ) : (
-                  <>
-                    <Calculator className="w-4 h-4" />
-                    Hedge Calculator
-                  </>
-                )}
-              </button>
-              <button
-                onClick={() => {
-                  router.push('/account')
-                  setMobileMenuOpen(false)
-                }}
-                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
-              >
-                <User className="w-4 h-4" />
-                Account
-              </button>
-              <button
-                onClick={() => signOut({ callbackUrl: '/' })}
-                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
-              >
-                <LogOut className="w-4 h-4" />
-                Sign Out
-              </button>
+              <div className="border-t border-slate-700/50 pt-2">
+                <button
+                  onClick={() => {
+                    setShowHedgeCalculator(!showHedgeCalculator)
+                    setMobileMenuOpen(false)
+                  }}
+                  className={`w-full flex items-center gap-2 px-4 py-3 rounded-lg transition-colors text-sm ${
+                    showHedgeCalculator 
+                      ? 'bg-blue-500/20 border border-blue-500/30 text-blue-300' 
+                      : 'bg-slate-800/50 hover:bg-slate-700/50'
+                  }`}
+                >
+                  {showHedgeCalculator ? (
+                    <>
+                      <ArrowLeft className="w-4 h-4" />
+                      Back to Chat
+                    </>
+                  ) : (
+                    <>
+                      <Calculator className="w-4 h-4" />
+                      Hedge Calculator
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    router.push('/account')
+                    setMobileMenuOpen(false)
+                  }}
+                  className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm mt-2"
+                >
+                  <User className="w-4 h-4" />
+                  Account
+                </button>
+                <button
+                  onClick={() => signOut({ callbackUrl: '/' })}
+                  className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm mt-2"
+                >
+                  <LogOut className="w-4 h-4" />
+                  Sign Out
+                </button>
+              </div>
             </div>
           )}
         </div>

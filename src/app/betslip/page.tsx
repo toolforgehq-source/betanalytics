@@ -43,6 +43,9 @@ export default function BetSlipPage() {
               <Link href="/betslip" className="text-sm text-cyan-400 font-medium">
                 Parlay Builder
               </Link>
+              <Link href="/alerts" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Alerts
+              </Link>
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Methodology
               </Link>
