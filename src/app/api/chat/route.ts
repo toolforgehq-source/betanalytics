@@ -749,6 +749,33 @@ function filterGamesBySport(games: ESPNOdds[], sport: string): ESPNOdds[] {
 }
 
 /**
+ * Check if a game's commence time falls on "today" in US Eastern time.
+ * This ensures "best bet today" only returns games actually happening today,
+ * not tomorrow or later.
+ */
+function isGameToday(commenceTime: string): boolean {
+  try {
+    const gameDate = new Date(commenceTime)
+    const now = new Date()
+    // Compare dates in ET timezone
+    const gameDateET = gameDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    const todayET = now.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    return gameDateET === todayET
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Filter enriched games to only those scheduled for today (ET timezone)
+ */
+function filterGamesToday(games: EnrichedGame[]): EnrichedGame[] {
+  const todayGames = games.filter(g => isGameToday(g.commenceTime))
+  console.log(`[filterGamesToday] ${todayGames.length} of ${games.length} games are today`)
+  return todayGames
+}
+
+/**
  * Format a game time for display
  */
 function formatGameTime(commenceTime: string): string {
@@ -1027,16 +1054,27 @@ interface GetBestBetInput {
 async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   console.log(`[tool:get_best_bet] sport="${input.sport || ''}", exclude=${JSON.stringify(input.exclude_sports || [])}`)
   
-  // Try cached best bet first for speed
+  // Try cached best bet first for speed — but validate it contains today's games
   let bestBetResult = await getCachedBestBet()
   
+  // Invalidate cache if best bet is not from today
+  if (bestBetResult?.bestBet?.commenceTime && !isGameToday(bestBetResult.bestBet.commenceTime)) {
+    console.log(`[tool:get_best_bet] Cached best bet is not from today (${bestBetResult.bestBet.commenceTime}), recomputing...`)
+    bestBetResult = null
+  }
+  
   if (!bestBetResult) {
-    // Compute on-demand
-    const enrichedGames = await getEnrichedGames()
+    // Compute on-demand — only consider games happening TODAY
+    const allGames = await getEnrichedGames()
+    const enrichedGames = filterGamesToday(allGames)
     if (enrichedGames.length === 0) {
+      // If no games today, let user know
+      if (allGames.length > 0) {
+        return `No games are scheduled for today. There are ${allGames.length} upcoming games with lines posted — ask me about a specific game or "what games are coming up" to see them.`
+      }
       return 'No games have lines posted yet today. Lines typically appear in the morning/early afternoon ET. Check back soon — or ask me about player props, betting strategy, or how our Elo model works in the meantime.'
     }
-    console.log(`[tool:get_best_bet] Computing best bets from ${enrichedGames.length} games...`)
+    console.log(`[tool:get_best_bet] Computing best bets from ${enrichedGames.length} today's games...`)
     bestBetResult = await computeBestBets(enrichedGames)
     await cacheBestBet(bestBetResult)
   }
@@ -1255,15 +1293,19 @@ interface BuildParlayInput {
 
 async function handleBuildParlay(input: BuildParlayInput): Promise<string> {
   const legCount = Math.min(Math.max(input.legs || 3, 2), 6)
-  console.log(`[tool:build_parlay] legs=${legCount}, sport="${input.sport || ''}"`)
+  console.log(`[tool:build_parlay] legs=${legCount}, sport="${input.sport || ''}"`) 
   
-  const enrichedGames = await getEnrichedGames()
+  const allGames = await getEnrichedGames()
+  const enrichedGames = filterGamesToday(allGames)
   
   if (enrichedGames.length === 0) {
+    if (allGames.length > 0) {
+      return `No games are scheduled for today, so I can't build a parlay right now. There are ${allGames.length} upcoming games — ask me about a specific game or check back when today's lines are posted.`
+    }
     return 'No games have lines posted yet today, so I can\'t build a parlay right now. Lines typically appear in the morning/early afternoon ET. Check back soon — or ask me about betting strategy while we wait.'
   }
   
-  // Compute best bets from all games
+  // Compute best bets from today's games only
   const bestBetResult = await computeBestBets(enrichedGames)
   
   let rankedBets = bestBetResult.allRankedBets || []
