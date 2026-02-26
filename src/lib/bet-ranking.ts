@@ -3448,6 +3448,19 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
     pickDisplay = `${bet.team} ML @ ${formatOdds(bet.bestPrice)}`
   }
   
+  // Check if this is an injury-impacted game with no good value
+  const hasDisqualifiedBets = result.bets.some(b => b.injuryDisqualified)
+  const bestBetNegativeEV = bet.edge < -3 && bet.expectedValue < -5
+  
+  if (hasDisqualifiedBets && bestBetNegativeEV) {
+    lines.push('**⚠️ INJURY-IMPACTED GAME — NO STRONG VALUE:**')
+    lines.push('')
+    lines.push(`Due to severe injuries, bets on the depleted team have been removed. The remaining best option (${pickDisplay}) has negative expected value (${bet.edge}% edge, $${bet.expectedValue.toFixed(2)} EV per $100). This game may be best to skip — the market has already priced in the injuries and there is no edge on either side.`)
+    lines.push('')
+    lines.push('If you still want to bet this game, here is the analysis:')
+    lines.push('')
+  }
+  
   lines.push('**TOP PICK FOR THIS GAME:**')
   lines.push('')
   lines.push(`**${pickDisplay}**`)
@@ -3550,15 +3563,15 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
   lines.push('')
   
   // Other betting options for this game
-  // Filter out injury-disqualified bets so the LLM doesn't recommend them
-  const nonDisqualifiedOthers = result.bets.filter(b => b !== result.bestBet && !b.injuryDisqualified)
-  const disqualifiedOthers = result.bets.filter(b => b !== result.bestBet && b.injuryDisqualified)
+  // HARD CONSTRAINT: Strip disqualified bets entirely — don't even show them to the LLM
+  const validOthers = result.bets.filter(b => b !== result.bestBet && !b.injuryDisqualified)
+  const disqualifiedCount = result.bets.filter(b => b.injuryDisqualified).length
   
-  if (nonDisqualifiedOthers.length > 0 || disqualifiedOthers.length > 0) {
+  if (validOthers.length > 0) {
     lines.push('**OTHER OPTIONS:**')
     lines.push('')
     let idx = 2
-    for (const otherBet of nonDisqualifiedOthers.slice(0, 4)) {
+    for (const otherBet of validOthers.slice(0, 4)) {
       let otherDisplay: string
       if (otherBet.betType === 'total') {
         otherDisplay = `${otherBet.team} ${otherBet.line} @ ${formatOdds(otherBet.bestPrice)}`
@@ -3570,22 +3583,13 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
       lines.push(`#${idx}: ${otherDisplay} (Score: ${otherBet.score}/100, ${otherBet.edge}% edge)`)
       idx++
     }
-    // Show disqualified bets with clear warning — DO NOT recommend these
-    if (disqualifiedOthers.length > 0) {
+    if (disqualifiedCount > 0) {
       lines.push('')
-      lines.push('**DISQUALIFIED (injury-depleted team — DO NOT recommend):**')
-      for (const dqBet of disqualifiedOthers.slice(0, 3)) {
-        let dqDisplay: string
-        if (dqBet.betType === 'total') {
-          dqDisplay = `${dqBet.team} ${dqBet.line} @ ${formatOdds(dqBet.bestPrice)}`
-        } else if (dqBet.betType === 'spread' && dqBet.line !== undefined) {
-          dqDisplay = `${dqBet.team} ${dqBet.line > 0 ? '+' : ''}${dqBet.line} @ ${formatOdds(dqBet.bestPrice)}`
-        } else {
-          dqDisplay = `${dqBet.team} ML @ ${formatOdds(dqBet.bestPrice)}`
-        }
-        lines.push(`~~${dqDisplay}~~ — DISQUALIFIED: team has multiple key players OUT`)
-      }
+      lines.push(`(${disqualifiedCount} additional bet${disqualifiedCount > 1 ? 's' : ''} removed — team has multiple key players OUT)`)
     }
+    lines.push('')
+  } else if (disqualifiedCount > 0) {
+    lines.push('**OTHER OPTIONS:** None available — all alternatives involve an injury-depleted team.')
     lines.push('')
   }
   
