@@ -3304,6 +3304,57 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
     }
   }
   
+  // INJURY DISQUALIFICATION for specific game analysis
+  // If the top-scored bet is on a severely injured team, swap to a better alternative
+  // This mirrors the disqualification logic in computeBestBets
+  if (result.bestBet && result.injuries && result.injuries.length > 0) {
+    const getTeamOutCount = (teamName: string): number => {
+      const tn = teamName.toLowerCase().replace(/[^a-z0-9]/g, '')
+      return result.injuries!.filter(inj => {
+        const it = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const s = inj.status.toLowerCase()
+        const isOut = s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir'
+        return isOut && (it.includes(tn) || tn.includes(it))
+      }).length
+    }
+    
+    const bestBetTeam = result.bestBet.team
+    const bestBetTeamOutCount = getTeamOutCount(bestBetTeam)
+    const isTotal = result.bestBet.betType === 'total'
+    
+    // For non-total bets: if the recommended team has 3+ players OUT, find an alternative
+    // For total bets: if either team has 4+ OUT, flag the total as unreliable
+    if (!isTotal && bestBetTeamOutCount >= 3) {
+      // Find the best bet that ISN'T on the depleted team
+      const altBet = result.bets.find(b => {
+        if (b.betType === 'total') return false  // skip totals for this swap
+        const bTeamOut = getTeamOutCount(b.team)
+        return bTeamOut < 3 && b !== result.bestBet
+      })
+      
+      if (altBet) {
+        // Swap the recommendation to the non-injured alternative
+        lines.push(`**⚠️ INJURY DISQUALIFICATION:** Our model initially favored ${bestBetTeam}, but with ${bestBetTeamOutCount} key players OUT, this pick is disqualified. Recommending the opponent's side instead.`)
+        lines.push('')
+        // Replace the best bet with the alternative
+        result = { ...result, bestBet: altBet }
+      } else {
+        // No good alternative — warn strongly
+        lines.push(`**⚠️ INJURY WARNING:** ${bestBetTeam} has ${bestBetTeamOutCount} key players OUT. Our model's recommendation is based on historical Elo data and may not fully reflect this team's current depleted state. The line may already be priced in. Exercise extreme caution.`)
+        lines.push('')
+      }
+    } else if (isTotal) {
+      const homeOutCount = getTeamOutCount(result.game.homeTeam)
+      const awayOutCount = getTeamOutCount(result.game.awayTeam)
+      if (homeOutCount >= 4 || awayOutCount >= 4) {
+        const depletedTeam = homeOutCount >= 4 ? result.game.homeTeam : result.game.awayTeam
+        const outCount = Math.max(homeOutCount, awayOutCount)
+        lines.push(`**⚠️ INJURY WARNING:** ${depletedTeam} has ${outCount} key players OUT. Totals bets are unreliable when a team is this depleted — scoring dynamics change dramatically. Exercise extreme caution.`)
+        lines.push('')
+      }
+    }
+  }
+  
   if (!result.bestBet) {
     // Even without specific bets, provide Elo analysis if available
     if (result.eloData) {
