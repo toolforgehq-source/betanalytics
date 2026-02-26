@@ -3489,6 +3489,11 @@ function formatTime(isoString: string): string {
 // Redis cache key for best bet
 const BEST_BET_CACHE_KEY = 'betanalytics:best-bet'
 
+// Bump this version whenever the best-bet algorithm changes materially
+// (e.g. injury disqualification, scoring changes, filter changes).
+// Cached results with a different version are automatically invalidated.
+const BEST_BET_CACHE_VERSION = 2  // v2: injury disqualification for spreads/totals (PR #101)
+
 /**
  * Get Redis client for caching
  */
@@ -3518,7 +3523,7 @@ export async function cacheBestBet(result: BestBetResult): Promise<void> {
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(JSON.stringify(result))
+      body: JSON.stringify(JSON.stringify({ ...result, _cacheVersion: BEST_BET_CACHE_VERSION }))
     })
     
     // Set 4-hour expiry
@@ -3561,6 +3566,12 @@ export async function getCachedBestBet(): Promise<BestBetResult | null> {
     if (typeof parsed === 'string') {
       parsed = JSON.parse(parsed)
     }
+    // Invalidate if cache version doesn't match (algorithm changed)
+    if (parsed._cacheVersion !== BEST_BET_CACHE_VERSION) {
+      console.log(`[getCachedBestBet] Cache version mismatch (cached: ${parsed._cacheVersion}, current: ${BEST_BET_CACHE_VERSION}), invalidating`)
+      return null
+    }
+    
     return parsed as BestBetResult
   } catch (error) {
     console.error('[getCachedBestBet] Error getting cached best bet:', error)
