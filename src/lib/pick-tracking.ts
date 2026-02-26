@@ -167,7 +167,26 @@ export async function getAllPicks(): Promise<StoredPick[]> {
     const data = await response.json()
     if (!data.result) return []
     
-    return JSON.parse(data.result) as StoredPick[]
+    // Handle potentially double-encoded JSON from Redis
+    let parsed = data.result
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch {
+        console.error('[getAllPicks] Failed to parse picks data')
+        return []
+      }
+    }
+    // If still a string after first parse, try once more (double-encoded)
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch {
+        console.error('[getAllPicks] Failed to parse double-encoded picks data')
+        return []
+      }
+    }
+    return Array.isArray(parsed) ? parsed : []
   } catch (error) {
     console.error('[getAllPicks] Error getting picks:', error)
     return []
@@ -305,7 +324,25 @@ export async function getTrackRecord(): Promise<PickTrackingData['trackRecord'] 
     const data = await response.json()
     if (!data.result) return null
     
-    return JSON.parse(data.result)
+    // Handle potentially double-encoded JSON from Redis
+    let parsed = data.result
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch {
+        console.error('[getTrackRecord] Failed to parse track record data')
+        return null
+      }
+    }
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch {
+        console.error('[getTrackRecord] Failed to parse double-encoded track record data')
+        return null
+      }
+    }
+    return parsed && typeof parsed === 'object' ? parsed : null
   } catch (error) {
     console.error('[getTrackRecord] Error getting track record:', error)
     return null

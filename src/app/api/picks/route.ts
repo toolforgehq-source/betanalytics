@@ -16,12 +16,16 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     // Fetch all data in parallel
-    const [trackRecord, allPicks, recentRecos, stats] = await Promise.all([
+    const [trackRecord, rawAllPicks, rawRecentRecos, stats] = await Promise.all([
       getTrackRecord(),
       getAllPicks(),
       getRecentRecommendations(200),
       calculateTrackingStats()
     ])
+
+    // Defensive: ensure arrays are actually arrays
+    const allPicks = Array.isArray(rawAllPicks) ? rawAllPicks : []
+    const recentRecos = Array.isArray(rawRecentRecos) ? rawRecentRecos : []
 
     // Separate picks into today's and historical
     const now = new Date()

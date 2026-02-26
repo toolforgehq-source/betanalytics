@@ -254,7 +254,25 @@ export async function getRecommendation(id: string): Promise<TrackedRecommendati
     const data = await response.json()
     if (!data.result) return null
     
-    return JSON.parse(data.result) as TrackedRecommendation
+    // Handle potentially double-encoded JSON from Redis
+    let parsed = data.result
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch {
+        console.error('[Tracking] Failed to parse recommendation data')
+        return null
+      }
+    }
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed)
+      } catch {
+        console.error('[Tracking] Failed to parse double-encoded recommendation data')
+        return null
+      }
+    }
+    return parsed && typeof parsed === 'object' ? (parsed as TrackedRecommendation) : null
   } catch (error) {
     console.error('[Tracking] Error getting recommendation:', error)
     return null
