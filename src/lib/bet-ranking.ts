@@ -3034,6 +3034,8 @@ export interface GameAnalysisResult {
     homeWinProbability: number
     confidence: string
   }
+  // Injury data for display in analysis
+  injuries?: InjuryInfo[]
 }
 
 /**
@@ -3090,6 +3092,9 @@ export async function analyzeSpecificGame(
   const bets = await analyzeGameForSportQuery(game, injuriesToUse, null, null, true)
   
   console.log(`[analyzeSpecificGame] ${game.awayTeam} @ ${game.homeTeam}: ${bets.length} bets from relaxed analysis`)
+  if (injuriesToUse && injuriesToUse.length > 0) {
+    console.log(`[analyzeSpecificGame] ${injuriesToUse.length} injuries being passed to result for display`)
+  }
   
   // If relaxed analysis also returned nothing (no Elo data or no moneyline odds),
   // try the strict analysis as a last resort (it handles market consensus fallback)
@@ -3243,7 +3248,8 @@ export async function analyzeSpecificGame(
     bets: sortedBets,
     bestBet: sortedBets[0] || null,
     calculatedAt: now,
-    eloData
+    eloData,
+    injuries: injuriesToUse
   }
 }
 
@@ -3259,6 +3265,44 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
   lines.push('')
   lines.push(`${result.game.sportName} | ${formatTime(result.game.commenceTime)}`)
   lines.push('')
+  
+  // INJURY WARNING — show prominent injury info when key players are OUT
+  if (result.injuries && result.injuries.length > 0) {
+    const getTeamInjuries = (teamName: string) => {
+      const tn = teamName.toLowerCase().replace(/[^a-z0-9]/g, '')
+      return result.injuries!.filter(inj => {
+        const it = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const s = inj.status.toLowerCase()
+        const isOut = s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir'
+        return isOut && (it.includes(tn) || tn.includes(it))
+      })
+    }
+    
+    const homeOut = getTeamInjuries(result.game.homeTeam)
+    const awayOut = getTeamInjuries(result.game.awayTeam)
+    
+    if (homeOut.length > 0 || awayOut.length > 0) {
+      lines.push('**INJURY REPORT:**')
+      lines.push('')
+      if (homeOut.length > 0) {
+        const names = homeOut.map(i => `${i.player} (${i.status})`).join(', ')
+        const severity = homeOut.length >= 4 ? 'SEVERE' : homeOut.length >= 2 ? 'SIGNIFICANT' : 'NOTABLE'
+        lines.push(`${result.game.homeTeam}: ${severity} — ${homeOut.length} key player${homeOut.length > 1 ? 's' : ''} OUT: ${names}`)
+      }
+      if (awayOut.length > 0) {
+        const names = awayOut.map(i => `${i.player} (${i.status})`).join(', ')
+        const severity = awayOut.length >= 4 ? 'SEVERE' : awayOut.length >= 2 ? 'SIGNIFICANT' : 'NOTABLE'
+        lines.push(`${result.game.awayTeam}: ${severity} — ${awayOut.length} key player${awayOut.length > 1 ? 's' : ''} OUT: ${names}`)
+      }
+      // Add warning if severe injuries detected
+      const maxOut = Math.max(homeOut.length, awayOut.length)
+      if (maxOut >= 3) {
+        lines.push('')
+        lines.push(`⚠️ CAUTION: ${maxOut >= 4 ? 'This team is severely depleted.' : 'Multiple key players missing.'} Our Elo model adjusts for injuries, but the market may have already priced these absences into the line. Exercise extra caution with any bets involving the short-handed team.`)
+      }
+      lines.push('')
+    }
+  }
   
   if (!result.bestBet) {
     // Even without specific bets, provide Elo analysis if available
