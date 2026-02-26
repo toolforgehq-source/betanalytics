@@ -88,6 +88,9 @@ export interface RankedBet {
   }
   baseEloProbability?: number        // Base Elo probability before situational adjustments
   
+  // Injury disqualification flag (set when team has severe injuries)
+  injuryDisqualified?: boolean
+  
   // Timestamp
   calculatedAt: string
 }
@@ -3225,8 +3228,55 @@ export async function analyzeSpecificGame(
   const eloPoweredBets = betsToUse.filter(bet => bet.eloProbability !== undefined)
   const finalBets = eloPoweredBets.length > 0 ? eloPoweredBets : betsToUse
   
+  // ============================================
+  // INJURY DISQUALIFICATION for specific game analysis
+  // ============================================
+  // Penalize bets on teams with severe injuries so they don't become the bestBet.
+  // This mirrors the disqualification logic in computeBestBets but applies it
+  // at the data layer so the LLM never sees a depleted team as the top pick.
+  const getTeamOutCountForBet = (teamName: string): number => {
+    if (!injuriesToUse || injuriesToUse.length === 0) return 0
+    const tn = teamName.toLowerCase().replace(/[^a-z0-9]/g, '')
+    return injuriesToUse.filter(inj => {
+      const it = inj.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+      const s = inj.status.toLowerCase()
+      const isOut = s === 'out' || s.includes('out') || s === 'doubtful' || s === 'injured reserve' || s === 'ir'
+      return isOut && (it.includes(tn) || tn.includes(it))
+    }).length
+  }
+  
+  // Apply heavy score penalty to bets on severely injured teams
+  // This ensures they sort BELOW non-injured alternatives
+  const penalizedBets = finalBets.map(bet => {
+    const isTotal = bet.betType === 'total'
+    
+    if (!isTotal) {
+      // For ML/spread bets: penalize if the bet's team has 3+ OUT players
+      const teamOutCount = getTeamOutCountForBet(bet.team)
+      if (teamOutCount >= 3) {
+        const penalty = teamOutCount >= 5 ? 80 : teamOutCount >= 4 ? 60 : 40
+        const newScore = Math.max(0, bet.score - penalty)
+        console.log(`[analyzeSpecificGame] INJURY PENALTY: ${bet.team} ${bet.betType} score ${bet.score} -> ${newScore} (${teamOutCount} players OUT)`)
+        return { ...bet, score: newScore, injuryDisqualified: true }
+      }
+    } else {
+      // For totals: penalize if either team has 4+ OUT players
+      const homeOutCount = getTeamOutCountForBet(game.homeTeam)
+      const awayOutCount = getTeamOutCountForBet(game.awayTeam)
+      if (homeOutCount >= 4 || awayOutCount >= 4) {
+        const maxOut = Math.max(homeOutCount, awayOutCount)
+        const penalty = maxOut >= 5 ? 60 : 40
+        const newScore = Math.max(0, bet.score - penalty)
+        console.log(`[analyzeSpecificGame] INJURY PENALTY: ${bet.team} total score ${bet.score} -> ${newScore} (home ${homeOutCount} / away ${awayOutCount} OUT)`)
+        return { ...bet, score: newScore, injuryDisqualified: true }
+      }
+    }
+    
+    return bet
+  })
+  
   // Sort by score to find the best bet for this game
-  const sortedBets = [...finalBets].sort((a, b) => b.score - a.score)
+  const sortedBets = [...penalizedBets].sort((a, b) => b.score - a.score)
   
   // Log for debugging
   if (eloPoweredBets.length === 0 && betsToUse.length > 0) {
@@ -3235,6 +3285,9 @@ export async function analyzeSpecificGame(
     console.log(`[analyzeSpecificGame] No bets available for ${game.awayTeam} @ ${game.homeTeam} - no odds data at all`)
   } else {
     console.log(`[analyzeSpecificGame] Returning ${sortedBets.length} bets for ${game.awayTeam} @ ${game.homeTeam}`)
+    if (sortedBets[0]) {
+      console.log(`[analyzeSpecificGame] Best bet: ${sortedBets[0].team} ${sortedBets[0].betType} (score: ${sortedBets[0].score})`)
+    }
   }
   
   return {
