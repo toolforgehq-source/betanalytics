@@ -16,7 +16,8 @@ import {
   fetchYesterdaysGames, 
   updateEloRatings, 
   backfillHistoricalGames,
-  getEloStats 
+  getEloStats,
+  clearEloData
 } from '@/lib/elo'
 
 export const runtime = 'edge'
@@ -27,6 +28,7 @@ export const maxDuration = 300 // 5 minutes for backfill
  * 
  * Query params:
  * - backfill=true: Run initial backfill from season start
+ * - reset=true: Clear all existing data before backfilling (use with backfill=true)
  * - days=N: Backfill last N days (default: yesterday only)
  */
 export async function GET(request: Request) {
@@ -44,9 +46,20 @@ export async function GET(request: Request) {
     
     const url = new URL(request.url)
     const shouldBackfill = url.searchParams.get('backfill') === 'true'
+    const shouldReset = url.searchParams.get('reset') === 'true'
     const daysParam = url.searchParams.get('days')
     
     let games
+    
+    // If reset requested, clear all existing data first
+    if (shouldReset) {
+      console.log('[Elo Cron] Resetting all Elo data...')
+      const cleared = await clearEloData()
+      if (!cleared) {
+        return NextResponse.json({ error: 'Failed to clear Elo data' }, { status: 500 })
+      }
+      console.log('[Elo Cron] Elo data cleared successfully')
+    }
     
     if (shouldBackfill) {
       // Backfill from season start (October 2025 for most sports)
@@ -82,7 +95,8 @@ export async function GET(request: Request) {
     
     return NextResponse.json({
       success: true,
-      message: shouldBackfill ? 'Backfill complete' : 'Daily update complete',
+      message: shouldReset ? 'Reset + backfill complete' : shouldBackfill ? 'Backfill complete' : 'Daily update complete',
+      wasReset: shouldReset,
       gamesProcessed: games.length,
       totalTeams: stats?.totalTeams || 0,
       totalGamesProcessed: stats?.totalGamesProcessed || 0,

@@ -38,34 +38,15 @@ const K_FACTORS: Record<string, number> = {
   'soccer_uefa_champs_league': 25,
 }
 
-// Recency decay factor: applied before each game update to shrink ratings toward baseline
-// This makes recent games more impactful than older games
-// decay^30 gives the relative weight of a game 30 games ago vs a recent game
-// 0.98^30 = 0.55 (game 30 ago has 55% weight of recent game)
-// 0.97^30 = 0.40 (game 30 ago has 40% weight)
-// 0.95^30 = 0.21 (game 30 ago has 21% weight)
-// 0.93^30 = 0.11 (game 30 ago has 11% weight)
-// Higher decay = more stability, lower decay = more recency bias
-// 
-// FIX: Reduced decay values to prevent bad teams from being pulled toward 1500
-// This ensures teams like Brooklyn (13-35) have appropriately low Elo ratings
-// instead of being artificially inflated by decay toward baseline
-const RECENCY_DECAY: Record<string, number> = {
-  'NBA': 0.95,      // 82 games - was 0.98, now ~21% weight at 30 games ago (bad teams stay low)
-  'NFL': 0.93,      // 17 games - was 0.96, now ~11% weight at 30 games ago
-  'NHL': 0.95,      // 82 games - was 0.98, same as NBA
-  'MLB': 0.97,      // 162 games - was 0.99, now ~40% weight at 30 games ago
-  'NCAAB': 0.94,    // Fewer games - was 0.97, now ~16% weight at 30 games ago
-  'NCAAF': 0.92,    // Very few games - was 0.95, now ~8% weight at 30 games ago
-  // Soccer leagues - reduced recency to keep bad teams low
-  'soccer_epl': 0.95,
-  'soccer_spain_la_liga': 0.95,
-  'soccer_germany_bundesliga': 0.95,
-  'soccer_italy_serie_a': 0.95,
-  'soccer_france_ligue_one': 0.95,
-  'soccer_usa_mls': 0.95,
-  'soccer_uefa_champs_league': 0.95,
-}
+// REMOVED: Per-game recency decay was compressing all ratings toward 1500
+// and preventing dominant teams (e.g., Colorado Avalanche 38-9) from building
+// proper Elo ratings. Standard Elo does NOT use per-game decay.
+// Between-season regression (SEASON_REGRESSION_FACTOR) handles the need
+// to account for roster changes and uncertainty between seasons.
+//
+// Minimum games threshold: teams with fewer than this many games
+// should not be used for predictions (insufficient data)
+const MIN_GAMES_FOR_PREDICTIONS = 5
 
 // Home advantage in Elo points (added to home team's rating for prediction)
 // Calibrated to match real-world home win rates:
@@ -748,6 +729,43 @@ export async function saveProcessedGameIds(gameIds: Set<string>): Promise<void> 
   }
 }
 
+/**
+ * Clear all Elo data from Redis (ratings + processed game IDs)
+ * Used for full reset before re-backfilling from scratch
+ */
+export async function clearEloData(): Promise<boolean> {
+  const redis = await getRedisClient()
+  if (!redis) return false
+  
+  try {
+    // Delete ratings
+    await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['DEL', ELO_RATINGS_KEY])
+    })
+    
+    // Delete processed game IDs
+    await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['DEL', ELO_PROCESSED_GAMES_KEY])
+    })
+    
+    console.log('[Elo] Cleared all Elo data from Redis')
+    return true
+  } catch (error) {
+    console.error('[Elo] Error clearing Elo data:', error)
+    return false
+  }
+}
+
 // ============================================
 // ESPN INTEGRATION
 // ============================================
@@ -781,7 +799,11 @@ async function fetchCompletedGames(
   date: string
 ): Promise<GameResult[]> {
   try {
-    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard?dates=${date}`
+    // For college sports, ESPN only returns top-25/featured games by default.
+    // Adding groups=50 (D1) and limit=300 fetches ALL Division I games.
+    const isCollege = leagueName === 'NCAAB' || leagueName === 'NCAAF'
+    const collegeParams = isCollege ? '&groups=50&limit=300' : ''
+    const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard?dates=${date}${collegeParams}`
     
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
@@ -998,12 +1020,9 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
     const homeTeam = eloData.ratings[homeKey]
     const awayTeam = eloData.ratings[awayKey]
     
-    // Apply recency decay before updating - this shrinks ratings toward baseline (1500)
-    // so that older games have less impact on the current rating
-    // Formula: rating = baseline + (rating - baseline) * decay
-    const decay = RECENCY_DECAY[game.league] || 0.98
-    homeTeam.rating = Math.round(DEFAULT_RATING + (homeTeam.rating - DEFAULT_RATING) * decay)
-    awayTeam.rating = Math.round(DEFAULT_RATING + (awayTeam.rating - DEFAULT_RATING) * decay)
+    // REMOVED: Per-game recency decay was compressing all ratings toward 1500
+    // and preventing dominant teams from building proper ratings.
+    // Between-season regression (SEASON_REGRESSION_FACTOR) handles staleness.
     
     // Update ratings
     const { newHomeRating, newAwayRating } = updateRatingsAfterGame(
@@ -1183,7 +1202,7 @@ export async function getEloWinProbabilityByName(
   league: string,
   homeTeamName: string,
   awayTeamName: string
-): Promise<{ probability: number; homeRating: number; awayRating: number; confidence: string; homeFound: boolean; awayFound: boolean } | null> {
+): Promise<{ probability: number; homeRating: number; awayRating: number; confidence: string; homeFound: boolean; awayFound: boolean; homeGamesPlayed?: number; awayGamesPlayed?: number } | null> {
   console.log(`[Elo Lookup] Starting lookup for ${league}: ${homeTeamName} vs ${awayTeamName}`)
   
   const eloData = await getEloRatings()
@@ -1246,12 +1265,20 @@ export async function getEloWinProbabilityByName(
   const homeRating = homeTeam.rating
   const awayRating = awayTeam.rating
   
-  const probability = calculateWinProbability(homeRating, awayRating, league)
-  
   // Confidence based on how many games we've seen
   const homeGames = homeTeam.gamesPlayed
   const awayGames = awayTeam.gamesPlayed
   const minGames = Math.min(homeGames, awayGames)
+  
+  // If either team has fewer than MIN_GAMES_FOR_PREDICTIONS games,
+  // their rating is unreliable (e.g., KC Roos with 2 games).
+  // Return null so callers fall back to market consensus.
+  if (minGames < MIN_GAMES_FOR_PREDICTIONS) {
+    console.log(`[Elo Lookup] INSUFFICIENT DATA: ${homeTeamName} (${homeGames} games) vs ${awayTeamName} (${awayGames} games) - need at least ${MIN_GAMES_FOR_PREDICTIONS} games each`)
+    return null
+  }
+  
+  const probability = calculateWinProbability(homeRating, awayRating, league)
   
   let confidence: string
   if (minGames >= 20) {
@@ -1270,7 +1297,9 @@ export async function getEloWinProbabilityByName(
     awayRating,
     confidence,
     homeFound: true,
-    awayFound: true
+    awayFound: true,
+    homeGamesPlayed: homeGames,
+    awayGamesPlayed: awayGames
   }
 }
 
