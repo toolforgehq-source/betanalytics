@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/auth"
 import { headers, cookies } from "next/headers"
 import { checkSubscription, checkTermsAccepted } from "@/lib/subscription"
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const dynamic = "force-dynamic"
 
 export async function GET(req: NextRequest) {
+  const authError = requireDebugAuth(req)
+  if (authError) return authError
+
   const headersList = await headers()
   const cookieStore = await cookies()
   

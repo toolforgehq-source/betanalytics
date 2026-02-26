@@ -15,6 +15,7 @@ import { NextResponse } from "next/server"
 import { fetchAllOdds } from "@/lib/odds"
 import { getCachedESPNData, fetchAllESPNData } from "@/lib/espn"
 import { formatCombinedDataForContext, getCombinedSportsData } from "@/lib/combined-data"
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const dynamic = "force-dynamic"
 
@@ -123,7 +124,10 @@ You can handle requests for:
 
 Always be helpful, educational, and emphasize responsible gambling.`
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const startTime = Date.now()
   
   // Check environment variables
@@ -312,7 +316,10 @@ IMPORTANT: Use this REAL-TIME data to answer the user's question.
 }
 
 // POST endpoint to force refresh all data
-export async function POST() {
+export async function POST(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const startTime = Date.now()
   
   try {

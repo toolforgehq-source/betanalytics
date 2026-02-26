@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const dynamic = "force-dynamic"
 
@@ -35,8 +36,10 @@ interface SportDebugInfo {
   }>
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export async function GET(_req: NextRequest) {
+export async function GET(request: NextRequest) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const apiKey = process.env.ODDS_API_KEY
   
   if (!apiKey) {

@@ -14,6 +14,7 @@
 
 import { NextResponse } from 'next/server'
 import { getPlayerStatsData, calculateOverProbability, type PlayerStats } from '@/lib/player-stats'
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const runtime = 'edge'
 export const maxDuration = 120
@@ -237,6 +238,9 @@ async function fetchGameBoxScores(
 }
 
 export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const startTime = Date.now()
   
   try {

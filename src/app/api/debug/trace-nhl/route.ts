@@ -10,11 +10,15 @@ import { getCachedESPNOdds } from '@/lib/espn'
 import { getEloWinProbabilityByName, getEloRatings } from '@/lib/elo'
 import { computeBestBets, getCachedSportBets, getFilteredBestBetWithElo } from '@/lib/bet-ranking'
 import type { Game } from '@/lib/odds'
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const runtime = 'edge'
 export const maxDuration = 60
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const trace: Record<string, unknown> = {}
   
   try {

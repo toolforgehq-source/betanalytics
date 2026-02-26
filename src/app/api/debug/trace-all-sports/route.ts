@@ -10,6 +10,7 @@ import { getCachedESPNOdds, type ESPNOdds } from '@/lib/espn'
 import { getEloWinProbabilityByName, getEloRatings } from '@/lib/elo'
 import { computeBestBets, getCachedSportBets } from '@/lib/bet-ranking'
 import type { Game } from '@/lib/odds'
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const runtime = 'edge'
 export const maxDuration = 60
@@ -85,7 +86,10 @@ function convertESPNToGame(g: ESPNOdds, sportKey: string): Game {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const results: Record<string, SportTestResult> = {}
   const todayET = new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
   

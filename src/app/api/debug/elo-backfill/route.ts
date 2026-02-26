@@ -10,7 +10,8 @@
  */
 
 import { NextResponse } from 'next/server'
-import { 
+import { requireDebugAuth } from "@/lib/debug-auth"
+import {
   backfillHistoricalGames,
   updateEloRatings, 
   getEloStats,
@@ -29,6 +30,9 @@ export const runtime = 'edge'
 export const maxDuration = 300 // 5 minutes for backfill - v2
 
 export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const startTime = Date.now()
   
   try {

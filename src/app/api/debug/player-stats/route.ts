@@ -7,7 +7,8 @@
  */
 
 import { NextResponse } from 'next/server'
-import { 
+import { requireDebugAuth } from "@/lib/debug-auth"
+import {
   updatePlayerStats, 
   getPlayerStatsInfo,
   getPlayerStatsData,
@@ -19,6 +20,9 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const startTime = Date.now()
   
   try {

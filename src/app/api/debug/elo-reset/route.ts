@@ -9,7 +9,8 @@
  */
 
 import { NextResponse } from 'next/server'
-import { 
+import { requireDebugAuth } from "@/lib/debug-auth"
+import {
   getEloRatings,
   saveEloRatings,
   saveProcessedGameIds,
@@ -20,6 +21,9 @@ export const runtime = 'edge'
 export const maxDuration = 60
 
 export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   try {
     const url = new URL(request.url)
     const league = url.searchParams.get('league')

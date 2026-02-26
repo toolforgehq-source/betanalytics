@@ -11,6 +11,7 @@
 
 import { NextResponse } from 'next/server'
 import { getEloRatings, getEloStats, getProcessedGameIds } from '@/lib/elo'
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const runtime = 'edge'
 export const maxDuration = 60
@@ -32,7 +33,10 @@ function getConfidenceLevel(gamesPlayed: number): string {
   return 'MINIMAL (<5 games)'
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   try {
     const [eloData, stats, processedIds] = await Promise.all([
       getEloRatings(),

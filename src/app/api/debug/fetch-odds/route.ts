@@ -9,6 +9,7 @@
 
 import { NextResponse } from "next/server"
 import { fetchAllOdds, getCurrentOdds } from "@/lib/odds"
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const dynamic = "force-dynamic"
 
@@ -20,7 +21,10 @@ const TEST_SPORTS = [
   { key: 'americanfootball_ncaaf', name: 'NCAAF' },
 ]
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const startTime = Date.now()
   
   try {

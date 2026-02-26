@@ -7,10 +7,14 @@
 
 import { NextResponse } from "next/server"
 import { getCachedPlayerProps, fetchSportPlayerProps, setCachedPlayerProps, type GamePlayerProps } from "@/lib/odds"
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const dynamic = "force-dynamic"
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const startTime = Date.now()
   
   try {

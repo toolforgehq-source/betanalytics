@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Bell, BellOff, Mail, Smartphone, Zap, Clock, TrendingUp, Filter, Save, Check } from 'lucide-react'
+import { Bell, BellOff, Mail, Zap, Clock, TrendingUp, Filter, Save, Check } from 'lucide-react'
 
 // ============================================
 // TYPES
@@ -59,10 +59,8 @@ const ALL_SPORTS = [
 const ALL_BET_TYPES = ['Moneyline', 'Spread', 'Total', 'Player Props']
 
 const FREQUENCY_OPTIONS = [
-  { value: 'instant', label: 'Instant', desc: 'Get alerts as soon as we find an edge' },
-  { value: 'hourly', label: 'Hourly Digest', desc: 'Bundled summary every hour' },
-  { value: 'daily_morning', label: 'Morning Brief', desc: 'Daily digest at 9:00 AM ET' },
-  { value: 'daily_evening', label: 'Evening Brief', desc: 'Daily digest at 5:00 PM ET' },
+  { value: 'daily_morning', label: 'Morning Brief', desc: 'Daily digest at 9:00 AM ET — plan your day' },
+  { value: 'daily_evening', label: 'Evening Brief', desc: 'Daily digest at 5:00 PM ET — tonight\'s games' },
 ]
 
 // ============================================
@@ -237,20 +235,14 @@ export default function AlertsClient() {
               </div>
             </div>
           )}
-          <Toggle
-            enabled={prefs.pushEnabled}
-            onChange={(v) => updatePref('pushEnabled', v)}
-            label="Push Notifications"
-            description="Browser push notifications for instant alerts"
-          />
-          {prefs.pushEnabled && (
-            <div className="pb-3 flex items-start gap-2 bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
-              <Smartphone className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
-              <p className="text-xs text-blue-400/80">
-                Push notifications require browser permission. You&apos;ll be prompted to allow notifications when you save.
-              </p>
+          {/* Push notifications - coming soon */}
+          <div className="flex items-center justify-between py-3 opacity-50">
+            <div>
+              <p className="text-sm font-medium">Push Notifications</p>
+              <p className="text-xs text-slate-500 mt-0.5">Coming soon — browser push notifications</p>
             </div>
-          )}
+            <span className="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded-full">Soon</span>
+          </div>
         </div>
       </section>
 

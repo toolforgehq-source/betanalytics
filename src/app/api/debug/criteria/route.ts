@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { fetchAllOdds, type Game } from "@/lib/odds"
 import { americanToImpliedProbability } from "@/lib/bet-ranking"
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const dynamic = "force-dynamic"
 
@@ -161,7 +162,10 @@ function analyzeTeam(game: Game, team: string): AnalyzedBet | null {
   }
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   try {
     // Fetch current odds
     const oddsData = await fetchAllOdds()

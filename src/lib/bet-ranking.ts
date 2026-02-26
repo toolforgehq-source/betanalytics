@@ -3527,6 +3527,21 @@ function calculatePayout(americanOdds: number): number {
  * Build a parlay with specified number of legs from ranked bets
  * Returns null if not enough qualifying bets available
  */
+/**
+ * Check if two bets are correlated (same league/conference increases correlation).
+ * Correlated parlays are penalized by sportsbooks and reduce true independence.
+ */
+function areLegsCorrelated(a: RankedBet, b: RankedBet): boolean {
+  // Same game = fully correlated (already blocked by gameId check)
+  if (a.gameId === b.gameId) return true
+  
+  // Same sport + same bet type (e.g., two NBA totals) = moderately correlated
+  // Sportsbooks flag these as correlated parlays
+  if (a.sport === b.sport && a.betType === b.betType && a.betType === 'total') return true
+  
+  return false
+}
+
 function buildParlayWithLegs(
   sortedBets: RankedBet[], 
   legCount: number, 
@@ -3534,14 +3549,42 @@ function buildParlayWithLegs(
 ): RankedBet[] | null {
   const parlay: RankedBet[] = []
   const localUsedGameIds = new Set(usedGameIds)
+  const usedSports = new Set<string>()
   
   for (const bet of sortedBets) {
     if (localUsedGameIds.has(bet.gameId)) continue
     
+    // Check correlation with existing legs
+    const isCorrelated = parlay.some(leg => areLegsCorrelated(leg, bet))
+    if (isCorrelated) continue
+    
+    // Prefer cross-sport diversification: if we already have 2+ legs from the
+    // same sport, skip unless we have no other options
+    if (usedSports.has(bet.sport) && parlay.length >= 2) {
+      // Count how many legs are already from this sport
+      const sameLeagueCount = parlay.filter(l => l.sport === bet.sport).length
+      if (sameLeagueCount >= 2) continue // Max 2 legs from same sport
+    }
+    
     parlay.push(bet)
     localUsedGameIds.add(bet.gameId)
+    usedSports.add(bet.sport)
     
     if (parlay.length === legCount) break
+  }
+  
+  // If diversification was too strict, fall back to just gameId dedup
+  if (parlay.length < legCount) {
+    parlay.length = 0
+    localUsedGameIds.clear()
+    Array.from(usedGameIds).forEach(id => localUsedGameIds.add(id))
+    
+    for (const bet of sortedBets) {
+      if (localUsedGameIds.has(bet.gameId)) continue
+      parlay.push(bet)
+      localUsedGameIds.add(bet.gameId)
+      if (parlay.length === legCount) break
+    }
   }
   
   return parlay.length === legCount ? parlay : null

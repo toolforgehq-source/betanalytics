@@ -9,6 +9,7 @@ import type { Game } from "@/lib/odds"
 import { fetchAllOdds, fetchSportOdds } from "@/lib/odds"
 import { storePick, getAllPicks } from "@/lib/pick-tracking"
 import { analyzePlayerProp, analyzeAllPlayerProps, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
+import { checkRateLimit } from "@/lib/rate-limit"
 
 // ===============================================================
 // HELPERS
@@ -1400,6 +1401,20 @@ export async function POST(request: Request) {
         { status: 403 }
       )
     }
+
+    // Rate limiting: 30 requests per minute per user
+    const { limited, remaining, resetMs } = checkRateLimit(
+      session.user.id,
+      30,
+      60 * 1000
+    )
+    if (limited) {
+      return NextResponse.json(
+        { error: "Too many requests. Please wait a moment before sending another message.", retryAfterMs: resetMs },
+        { status: 429, headers: { 'Retry-After': String(Math.ceil(resetMs / 1000)) } }
+      )
+    }
+    console.log(`[chat] Rate limit: ${remaining} remaining for user ${session.user.id}`)
 
     const body = await request.json()
     const chatMessages = body?.messages

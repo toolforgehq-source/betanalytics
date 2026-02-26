@@ -16,9 +16,8 @@
  */
 
 import { NextResponse } from 'next/server'
-import { 
-  getEloRatings
-} from '@/lib/elo'
+import { requireDebugAuth } from "@/lib/debug-auth"
+import { getEloRatings } from '@/lib/elo'
 
 export const runtime = 'edge'
 export const maxDuration = 120
@@ -168,6 +167,9 @@ async function fetchCompletedGames(
 }
 
 export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const startTime = Date.now()
   
   try {

@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server"
+import { requireDebugAuth } from "@/lib/debug-auth"
 
 export const dynamic = "force-dynamic"
 
 const ODDS_CACHE_KEY = 'betanalytics:odds:data'
 
-export async function POST() {
+export async function POST(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   const url = process.env.KV_REST_API_URL
   const token = process.env.KV_REST_API_TOKEN
   
