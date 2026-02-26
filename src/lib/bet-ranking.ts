@@ -3550,11 +3550,15 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
   lines.push('')
   
   // Other betting options for this game
-  if (result.bets.length > 1) {
+  // Filter out injury-disqualified bets so the LLM doesn't recommend them
+  const nonDisqualifiedOthers = result.bets.filter(b => b !== result.bestBet && !b.injuryDisqualified)
+  const disqualifiedOthers = result.bets.filter(b => b !== result.bestBet && b.injuryDisqualified)
+  
+  if (nonDisqualifiedOthers.length > 0 || disqualifiedOthers.length > 0) {
     lines.push('**OTHER OPTIONS:**')
     lines.push('')
-    for (let i = 1; i < Math.min(result.bets.length, 5); i++) {
-      const otherBet = result.bets[i]
+    let idx = 2
+    for (const otherBet of nonDisqualifiedOthers.slice(0, 4)) {
       let otherDisplay: string
       if (otherBet.betType === 'total') {
         otherDisplay = `${otherBet.team} ${otherBet.line} @ ${formatOdds(otherBet.bestPrice)}`
@@ -3563,7 +3567,24 @@ export function formatGameAnalysisForContext(result: GameAnalysisResult): string
       } else {
         otherDisplay = `${otherBet.team} ML @ ${formatOdds(otherBet.bestPrice)}`
       }
-      lines.push(`#${i + 1}: ${otherDisplay} (Score: ${otherBet.score}/100, ${otherBet.edge}% edge)`)
+      lines.push(`#${idx}: ${otherDisplay} (Score: ${otherBet.score}/100, ${otherBet.edge}% edge)`)
+      idx++
+    }
+    // Show disqualified bets with clear warning — DO NOT recommend these
+    if (disqualifiedOthers.length > 0) {
+      lines.push('')
+      lines.push('**DISQUALIFIED (injury-depleted team — DO NOT recommend):**')
+      for (const dqBet of disqualifiedOthers.slice(0, 3)) {
+        let dqDisplay: string
+        if (dqBet.betType === 'total') {
+          dqDisplay = `${dqBet.team} ${dqBet.line} @ ${formatOdds(dqBet.bestPrice)}`
+        } else if (dqBet.betType === 'spread' && dqBet.line !== undefined) {
+          dqDisplay = `${dqBet.team} ${dqBet.line > 0 ? '+' : ''}${dqBet.line} @ ${formatOdds(dqBet.bestPrice)}`
+        } else {
+          dqDisplay = `${dqBet.team} ML @ ${formatOdds(dqBet.bestPrice)}`
+        }
+        lines.push(`~~${dqDisplay}~~ — DISQUALIFIED: team has multiple key players OUT`)
+      }
     }
     lines.push('')
   }
