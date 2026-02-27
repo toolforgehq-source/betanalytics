@@ -41,16 +41,27 @@ export async function GET() {
       .sort((a: StoredPick, b: StoredPick) => new Date(b.gradedAt || b.createdAt).getTime() - new Date(a.gradedAt || a.createdAt).getTime())
       .slice(0, 50)
 
-    // Also get recent recommendations with full details
-    const recentRecoSettled = recentRecos
+    // Get today's recommendations (pending or settled) from recommendation system
+    const todaysRecommendations = recentRecos.filter(r => {
+      const recoDate = new Date(r.commenceTime || r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+      return recoDate === todayStr
+    })
+
+    // Get settled recommendations for history table
+    const settledRecos = recentRecos
       .filter(r => r.status !== 'pending')
-      .slice(0, 50)
+      .slice(0, 100)
+    
+    // Get ALL recent recommendations (including pending) for the full history view
+    const allRecentRecos = recentRecos.slice(0, 100)
 
     return NextResponse.json({
       success: true,
       todaysPicks,
+      todaysRecommendations,
       recentSettled,
-      recentRecommendations: recentRecoSettled,
+      recentRecommendations: allRecentRecos,
+      settledRecommendations: settledRecos,
       trackRecord,
       stats: {
         totalBets: stats.totalBets,

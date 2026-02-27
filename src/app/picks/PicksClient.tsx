@@ -118,8 +118,10 @@ interface TrackedRecommendation {
 interface PicksData {
   success: boolean
   todaysPicks: StoredPick[]
+  todaysRecommendations: TrackedRecommendation[]
   recentSettled: StoredPick[]
   recentRecommendations: TrackedRecommendation[]
+  settledRecommendations: TrackedRecommendation[]
   trackRecord: {
     '7d': TrackRecord
     '30d': TrackRecord
@@ -229,7 +231,8 @@ export default function PicksClient() {
   const record = data.trackRecord?.[selectedPeriod]
   const hasTrackRecord = data.trackRecord && record && record.total > 0
   const hasRecos = data.recentRecommendations.length > 0
-  const hasPicks = data.todaysPicks.length > 0 || data.recentSettled.length > 0
+  const hasTodaysRecos = (data.todaysRecommendations || []).length > 0
+  const hasPicks = data.todaysPicks.length > 0 || hasTodaysRecos || data.recentSettled.length > 0
 
   // Combine and deduplicate recent history from both systems
   const recentHistory = data.recentRecommendations.length > 0
@@ -326,7 +329,8 @@ export default function PicksClient() {
           <Target className="w-6 h-6 text-cyan-400" />
           Today&apos;s Model Picks
         </h2>
-        {hasPicks && data.todaysPicks.length > 0 ? (
+        {/* Show today's picks from storePick system */}
+        {data.todaysPicks.length > 0 ? (
           <div className="space-y-3">
             {data.todaysPicks.map((pick) => (
               <div key={pick.id} className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-4">
@@ -396,6 +400,69 @@ export default function PicksClient() {
                       ))}
                     </div>
                   </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : hasTodaysRecos ? (
+          /* Fallback: show today's recommendations from recommendation tracking system */
+          <div className="space-y-3">
+            {(data.todaysRecommendations || []).map((reco) => (
+              <div key={reco.id} className="bg-slate-900/50 border border-slate-800/50 rounded-xl p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-xs bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-2 py-0.5 rounded-full font-medium">
+                        {reco.source === 'best_bet' ? 'BEST BET' : reco.source === 'sport_bet' ? 'SPORT BET' : reco.source.toUpperCase()}
+                      </span>
+                      <span className="text-xs text-slate-500">{reco.sportName}</span>
+                    </div>
+                    <div className="font-semibold text-lg">{reco.selection}</div>
+                    <div className="text-sm text-slate-400">{reco.gameName}</div>
+                    <div className="text-xs text-slate-500 mt-1">
+                      {new Date(reco.commenceTime).toLocaleString('en-US', { 
+                        timeZone: 'America/New_York',
+                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                      })} ET
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-lg font-bold">{formatOdds(reco.odds)}</div>
+                    <div className="text-xs text-slate-500 capitalize">{reco.betType}</div>
+                    <StatusBadge status={reco.status} />
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-slate-800/50 grid grid-cols-2 gap-4 text-center">
+                  <div>
+                    <div className="text-xs text-slate-500">Our Probability</div>
+                    <div className="font-semibold text-blue-400">{reco.probability.toFixed(1)}%</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-slate-500">Confidence</div>
+                    <div className="font-semibold text-cyan-400">{reco.score.toFixed(0)}</div>
+                  </div>
+                </div>
+                {reco.status === 'pending' && (
+                  <div className="mt-3 pt-3 border-t border-slate-800/50">
+                    <p className="text-xs text-slate-500 mb-2">Place this bet:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {SPORTSBOOKS.map((book) => (
+                        <a
+                          key={book.name}
+                          href={book.getUrl(reco.sport)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${book.color}`}
+                        >
+                          {book.name}
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {reco.actualResult && (
+                  <div className="mt-2 text-xs text-slate-500">Result: {reco.actualResult}</div>
                 )}
               </div>
             ))}

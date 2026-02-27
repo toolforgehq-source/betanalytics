@@ -577,6 +577,18 @@ export async function calculateTrackingStats(): Promise<TrackingStats> {
 import type { RankedBet, RankedProp } from './bet-ranking'
 
 /**
+ * Build selection string based on bet type
+ */
+function buildSelection(bet: RankedBet): string {
+  if (bet.betType === 'spread' && bet.line !== undefined) {
+    return `${bet.team} ${bet.line > 0 ? '+' : ''}${bet.line}`
+  } else if (bet.betType === 'total' && bet.line !== undefined) {
+    return `${bet.team} ${bet.line}`
+  }
+  return `${bet.team} ML`
+}
+
+/**
  * Track a best bet recommendation
  */
 export async function trackBestBet(bet: RankedBet): Promise<string | null> {
@@ -586,8 +598,9 @@ export async function trackBestBet(bet: RankedBet): Promise<string | null> {
     gameId: bet.gameId,
     gameName: `${bet.awayTeam} @ ${bet.homeTeam}`,
     commenceTime: bet.commenceTime,
-    betType: 'moneyline',
-    selection: `${bet.team} ML`,
+    betType: bet.betType,
+    selection: buildSelection(bet),
+    line: bet.line,
     odds: bet.bestPrice,
     probability: bet.consensusProbability,
     score: bet.score,
@@ -635,8 +648,9 @@ export async function trackSportBet(bet: RankedBet, sportName: string): Promise<
     gameId: bet.gameId,
     gameName: `${bet.awayTeam} @ ${bet.homeTeam}`,
     commenceTime: bet.commenceTime,
-    betType: 'moneyline',
-    selection: `${bet.team} ML`,
+    betType: bet.betType,
+    selection: buildSelection(bet),
+    line: bet.line,
     odds: bet.bestPrice,
     probability: bet.consensusProbability,
     score: bet.score,
