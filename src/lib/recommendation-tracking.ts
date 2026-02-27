@@ -177,7 +177,8 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
   // Check if already exists (idempotent)
   try {
     const existsResponse = await fetch(`${redis.url}/exists/${TRACKING_KEY_PREFIX}${id}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
+      headers: { Authorization: `Bearer ${redis.token}` },
+      cache: 'no-store'
     })
     const existsData = await existsResponse.json()
     if (existsData.result === 1) {
@@ -203,7 +204,8 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['SET', `${TRACKING_KEY_PREFIX}${id}`, JSON.stringify(fullReco)])
+      body: JSON.stringify(['SET', `${TRACKING_KEY_PREFIX}${id}`, JSON.stringify(fullReco)]),
+      cache: 'no-store'
     })
     
     // Add to time index (sorted set with timestamp as score)
@@ -213,7 +215,8 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['ZADD', TRACKING_INDEX_KEY, now.getTime(), id])
+      body: JSON.stringify(['ZADD', TRACKING_INDEX_KEY, now.getTime(), id]),
+      cache: 'no-store'
     })
     
     // Add to pending set
@@ -223,7 +226,8 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['SADD', TRACKING_PENDING_KEY, id])
+      body: JSON.stringify(['SADD', TRACKING_PENDING_KEY, id]),
+      cache: 'no-store'
     })
     
     console.log(`[Tracking] Logged recommendation: ${id} - ${reco.selection}`)
@@ -248,7 +252,8 @@ export async function getRecommendation(id: string): Promise<TrackedRecommendati
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['GET', `${TRACKING_KEY_PREFIX}${id}`])
+      body: JSON.stringify(['GET', `${TRACKING_KEY_PREFIX}${id}`]),
+      cache: 'no-store'
     })
     
     const data = await response.json()
@@ -306,7 +311,8 @@ export async function updateRecommendation(id: string, updates: Partial<TrackedR
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['SET', `${TRACKING_KEY_PREFIX}${id}`, serialized])
+      body: JSON.stringify(['SET', `${TRACKING_KEY_PREFIX}${id}`, serialized]),
+      cache: 'no-store'
     })
     
     if (!setResponse.ok) {
@@ -329,7 +335,8 @@ export async function updateRecommendation(id: string, updates: Partial<TrackedR
           Authorization: `Bearer ${redis.token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(['SREM', TRACKING_PENDING_KEY, id])
+        body: JSON.stringify(['SREM', TRACKING_PENDING_KEY, id]),
+        cache: 'no-store'
       })
       
       if (!sremResponse.ok) {
@@ -360,7 +367,8 @@ export async function getPendingRecommendations(): Promise<TrackedRecommendation
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['SMEMBERS', TRACKING_PENDING_KEY])
+      body: JSON.stringify(['SMEMBERS', TRACKING_PENDING_KEY]),
+      cache: 'no-store'
     })
     
     const data = await response.json()
@@ -395,7 +403,8 @@ export async function getRecentRecommendations(limit: number = 100): Promise<Tra
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['ZREVRANGE', TRACKING_INDEX_KEY, 0, limit - 1])
+      body: JSON.stringify(['ZREVRANGE', TRACKING_INDEX_KEY, 0, limit - 1]),
+      cache: 'no-store'
     })
     
     const data = await response.json()
