@@ -395,14 +395,20 @@ export async function GET(request: Request) {
           }
           
           if (result) {
-            await updateRecommendation(reco.id, {
+            const updateSuccess = await updateRecommendation(reco.id, {
               status: result.status,
               settledAt: now.toISOString(),
               actualResult: result.actualResult,
               profit: result.profit
             })
-            settled++
-            results.push({ id: reco.id, status: result.status, selection: reco.selection })
+            if (updateSuccess) {
+              settled++
+              results.push({ id: reco.id, status: result.status, selection: reco.selection })
+            } else {
+              console.error(`[SettleBets] Failed to persist settlement for ${reco.id}: ${reco.selection}`)
+              errors++
+              results.push({ id: reco.id, status: 'write_failed', selection: reco.selection })
+            }
           } else {
             console.log(`[SettleBets] Could not settle ${reco.id}: ${reco.selection} (betType: ${reco.betType})`)
             skipped++

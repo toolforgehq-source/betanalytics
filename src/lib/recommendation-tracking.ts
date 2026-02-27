@@ -284,26 +284,46 @@ export async function getRecommendation(id: string): Promise<TrackedRecommendati
  */
 export async function updateRecommendation(id: string, updates: Partial<TrackedRecommendation>): Promise<boolean> {
   const redis = await getRedisClient()
-  if (!redis) return false
+  if (!redis) {
+    console.error('[Tracking] updateRecommendation: Redis not configured')
+    return false
+  }
   
   const existing = await getRecommendation(id)
-  if (!existing) return false
+  if (!existing) {
+    console.error(`[Tracking] updateRecommendation: Could not find existing recommendation ${id}`)
+    return false
+  }
   
   const updated = { ...existing, ...updates }
+  const serialized = JSON.stringify(updated)
   
   try {
-    await fetch(redis.url, {
+    // Write updated recommendation to Redis
+    const setResponse = await fetch(redis.url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['SET', `${TRACKING_KEY_PREFIX}${id}`, JSON.stringify(updated)])
+      body: JSON.stringify(['SET', `${TRACKING_KEY_PREFIX}${id}`, serialized])
     })
     
-    // If settled, remove from pending
+    if (!setResponse.ok) {
+      const errorText = await setResponse.text()
+      console.error(`[Tracking] Redis SET failed for ${id}: HTTP ${setResponse.status} - ${errorText}`)
+      return false
+    }
+    
+    const setResult = await setResponse.json()
+    if (setResult.error) {
+      console.error(`[Tracking] Redis SET error for ${id}:`, setResult.error)
+      return false
+    }
+    
+    // If settled, remove from pending set
     if (updates.status && updates.status !== 'pending') {
-      await fetch(redis.url, {
+      const sremResponse = await fetch(redis.url, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${redis.token}`,
@@ -311,11 +331,16 @@ export async function updateRecommendation(id: string, updates: Partial<TrackedR
         },
         body: JSON.stringify(['SREM', TRACKING_PENDING_KEY, id])
       })
+      
+      if (!sremResponse.ok) {
+        const errorText = await sremResponse.text()
+        console.error(`[Tracking] Redis SREM failed for ${id}: HTTP ${sremResponse.status} - ${errorText}`)
+      }
     }
     
     return true
   } catch (error) {
-    console.error('[Tracking] Error updating recommendation:', error)
+    console.error(`[Tracking] Error updating recommendation ${id}:`, error)
     return false
   }
 }
