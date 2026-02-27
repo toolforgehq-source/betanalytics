@@ -41,9 +41,30 @@ function getESPNSportLeague(sport: string): { espnSport: string; espnLeague: str
   } else if (sport.includes('ncaab') || (sport.includes('basketball') && sport.includes('ncaa'))) {
     espnSport = 'basketball'
     espnLeague = 'mens-college-basketball'
-  } else if (sport.includes('soccer') || sport.includes('epl')) {
+  } else if (sport.includes('epl') || sport === 'soccer_epl') {
     espnSport = 'soccer'
     espnLeague = 'eng.1'
+  } else if (sport.includes('serie_a') || sport === 'soccer_italy_serie_a') {
+    espnSport = 'soccer'
+    espnLeague = 'ita.1'
+  } else if (sport.includes('la_liga') || sport === 'soccer_spain_la_liga') {
+    espnSport = 'soccer'
+    espnLeague = 'esp.1'
+  } else if (sport.includes('bundesliga') || sport === 'soccer_germany_bundesliga') {
+    espnSport = 'soccer'
+    espnLeague = 'ger.1'
+  } else if (sport.includes('ligue_one') || sport === 'soccer_france_ligue_one') {
+    espnSport = 'soccer'
+    espnLeague = 'fra.1'
+  } else if (sport.includes('uefa_champs') || sport === 'soccer_uefa_champs_league') {
+    espnSport = 'soccer'
+    espnLeague = 'uefa.champions'
+  } else if (sport.includes('mls') || sport === 'soccer_usa_mls') {
+    espnSport = 'soccer'
+    espnLeague = 'usa.1'
+  } else if (sport.includes('soccer')) {
+    espnSport = 'soccer'
+    espnLeague = 'eng.1' // Default to EPL for unknown soccer leagues
   }
   
   return { espnSport, espnLeague }
@@ -310,16 +331,169 @@ function settleTotalBet(reco: TrackedRecommendation, gameResult: GameResult): { 
 }
 
 /**
- * Settle a prop bet
+ * Map our prop market names to ESPN box score stat keys
+ */
+function getESPNStatKey(market: string): string | null {
+  const mapping: Record<string, string> = {
+    'player_points': 'points',
+    'player_rebounds': 'rebounds',
+    'player_assists': 'assists',
+    'player_threes': 'threePointFieldGoalsMade',
+    'player_steals': 'steals',
+    'player_blocks': 'blocks',
+    'player_turnovers': 'turnovers',
+  }
+  return mapping[market] || null
+}
+
+/**
+ * Extract a player's stat value from ESPN box score data
+ */
+function extractPlayerStat(
+  boxscorePlayers: Record<string, unknown>[],
+  playerName: string,
+  statKey: string
+): number | null {
+  const normalizedTarget = playerName.toLowerCase().trim()
+  
+  for (const teamData of boxscorePlayers) {
+    const statistics = (teamData as Record<string, unknown>).statistics as Record<string, unknown>[] | undefined
+    if (!statistics || statistics.length === 0) continue
+    
+    const statSection = statistics[0]
+    const keys = (statSection as Record<string, unknown>).keys as string[] | undefined
+    const athletes = (statSection as Record<string, unknown>).athletes as Record<string, unknown>[] | undefined
+    
+    if (!keys || !athletes) continue
+    
+    for (const athlete of athletes) {
+      const athleteInfo = (athlete as Record<string, unknown>).athlete as Record<string, unknown> | undefined
+      if (!athleteInfo) continue
+      
+      const displayName = String(athleteInfo.displayName || '').toLowerCase().trim()
+      const shortName = String(athleteInfo.shortName || '').toLowerCase().trim()
+      
+      // Match by full name or short name
+      if (displayName !== normalizedTarget && !displayName.includes(normalizedTarget) && !normalizedTarget.includes(displayName) && shortName !== normalizedTarget) {
+        continue
+      }
+      
+      const stats = (athlete as Record<string, unknown>).stats as string[] | undefined
+      if (!stats) continue
+      
+      // Find the stat index
+      const statIndex = keys.findIndex(k => {
+        if (statKey === 'threePointFieldGoalsMade') {
+          return k.startsWith('threePointFieldGoalsMade')
+        }
+        return k === statKey
+      })
+      
+      if (statIndex === -1) continue
+      
+      const rawValue = stats[statIndex]
+      
+      // Handle composite stats like "3-7" (made-attempted) — extract the made portion
+      if (rawValue.includes('-')) {
+        return parseInt(rawValue.split('-')[0]) || 0
+      }
+      
+      return parseInt(rawValue) || 0
+    }
+  }
+  
+  return null
+}
+
+/**
+ * Settle a prop bet using ESPN box score data
  */
 async function settlePropBet(reco: TrackedRecommendation): Promise<{ status: 'won' | 'lost' | 'push'; actualResult: string; profit: number; actualStat: number } | null> {
-  // For props, we need to fetch the player's actual stat from the game
-  // This is more complex and requires fetching box score data
-  // For now, we'll skip prop settlement and mark as pending
-  // TODO: Implement prop settlement using ESPN box score API
+  if (!reco.playerName || !reco.market) {
+    console.log(`[SettleBets] Prop missing playerName or market: ${reco.selection}`)
+    return null
+  }
   
-  console.log(`[SettleBets] Prop settlement not yet implemented for: ${reco.selection}`)
-  return null
+  const statKey = getESPNStatKey(reco.market)
+  if (!statKey) {
+    console.log(`[SettleBets] Unknown prop market: ${reco.market}`)
+    return null
+  }
+  
+  try {
+    const { espnSport, espnLeague } = getESPNSportLeague(reco.sport)
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${espnSport}/${espnLeague}/summary?event=${reco.gameId}`
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store'
+    })
+    
+    if (!response.ok) {
+      console.log(`[SettleBets] ESPN API error for prop game ${reco.gameId}: ${response.status}`)
+      return null
+    }
+    
+    const data = await response.json()
+    
+    // Check if game is completed
+    const header = data.header as Record<string, unknown> | undefined
+    const competitions = header?.competitions as Record<string, unknown>[] | undefined
+    const competition = competitions?.[0]
+    const statusObj = competition?.status as Record<string, unknown> | undefined
+    const statusType = statusObj?.type as Record<string, unknown> | undefined
+    const completed = statusType?.completed === true
+    
+    if (!completed) {
+      return null
+    }
+    
+    // Extract box score
+    const boxscore = data.boxscore as Record<string, unknown> | undefined
+    const boxscorePlayers = boxscore?.players as Record<string, unknown>[] | undefined
+    
+    if (!boxscorePlayers || boxscorePlayers.length === 0) {
+      console.log(`[SettleBets] No box score data for game ${reco.gameId}`)
+      return null
+    }
+    
+    const actualStat = extractPlayerStat(boxscorePlayers, reco.playerName, statKey)
+    
+    if (actualStat === null) {
+      console.log(`[SettleBets] Could not find stats for ${reco.playerName} in game ${reco.gameId}`)
+      return null
+    }
+    
+    if (reco.line === undefined || reco.line === null) {
+      console.log(`[SettleBets] No line for prop: ${reco.selection}`)
+      return null
+    }
+    
+    const isOver = reco.selection.toLowerCase().includes('over')
+    const isUnder = reco.selection.toLowerCase().includes('under')
+    
+    if (!isOver && !isUnder) {
+      console.log(`[SettleBets] Cannot determine over/under from: ${reco.selection}`)
+      return null
+    }
+    
+    const statLabel = reco.market.replace('player_', '').replace('threes', '3-pointers')
+    const actualResult = `${reco.playerName}: ${actualStat} ${statLabel} (line: ${reco.line})`
+    
+    let status: 'won' | 'lost' | 'push'
+    if (actualStat > reco.line) status = isOver ? 'won' : 'lost'
+    else if (actualStat < reco.line) status = isUnder ? 'won' : 'lost'
+    else status = 'push'
+    
+    return {
+      status,
+      actualResult,
+      profit: status === 'push' ? 0 : calculateProfit(reco.odds, status === 'won'),
+      actualStat
+    }
+  } catch (error) {
+    console.error(`[SettleBets] Error settling prop ${reco.id}:`, error)
+    return null
+  }
 }
 
 export async function GET(request: Request) {
@@ -355,15 +529,21 @@ export async function GET(request: Request) {
           // Prop settlement
           const result = await settlePropBet(reco)
           if (result) {
-            await updateRecommendation(reco.id, {
+            const updateSuccess = await updateRecommendation(reco.id, {
               status: result.status,
               settledAt: now.toISOString(),
               actualResult: result.actualResult,
               profit: result.profit,
               actualStat: result.actualStat
             })
-            settled++
-            results.push({ id: reco.id, status: result.status, selection: reco.selection })
+            if (updateSuccess) {
+              settled++
+              results.push({ id: reco.id, status: result.status, selection: reco.selection })
+            } else {
+              console.error(`[SettleBets] Failed to persist prop settlement for ${reco.id}: ${reco.selection}`)
+              errors++
+              results.push({ id: reco.id, status: 'write_failed', selection: reco.selection })
+            }
           } else {
             skipped++
           }

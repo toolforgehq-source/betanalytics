@@ -193,7 +193,7 @@ export default function PicksClient() {
   const [data, setData] = useState<PicksData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedPeriod, setSelectedPeriod] = useState<PeriodKey>('30d')
+  const [selectedPeriod, setSelectedPeriod] = useState<PeriodKey>('all')
   const [showAllHistory, setShowAllHistory] = useState(false)
 
   useEffect(() => {
@@ -228,8 +228,25 @@ export default function PicksClient() {
     )
   }
 
-  const record = data.trackRecord?.[selectedPeriod]
-  const hasTrackRecord = data.trackRecord && record && record.total > 0
+  // Build track record from stats if trackRecord is null (recommendation tracking system has data)
+  const statsAsTrackRecord = data.stats.settledBets > 0 ? {
+    '7d': { period: '7d', wins: 0, losses: 0, pushes: 0, total: 0, winRate: 0, units: 0, roi: 0 },
+    '30d': { period: '30d', wins: 0, losses: 0, pushes: 0, total: 0, winRate: 0, units: 0, roi: 0 },
+    '90d': { period: '90d', wins: 0, losses: 0, pushes: 0, total: 0, winRate: 0, units: 0, roi: 0 },
+    'all': {
+      period: 'all',
+      wins: data.stats.wins,
+      losses: data.stats.losses,
+      pushes: data.stats.pushes,
+      total: data.stats.settledBets,
+      winRate: data.stats.winRate,
+      units: data.stats.totalProfit,
+      roi: data.stats.roi,
+    }
+  } : null
+  const effectiveTrackRecord = data.trackRecord || statsAsTrackRecord
+  const record = effectiveTrackRecord?.[selectedPeriod]
+  const hasTrackRecord = effectiveTrackRecord && record && record.total > 0
   const hasRecos = data.recentRecommendations.length > 0
   const hasTodaysRecos = (data.todaysRecommendations || []).length > 0
   const hasPicks = data.todaysPicks.length > 0 || hasTodaysRecos || data.recentSettled.length > 0
