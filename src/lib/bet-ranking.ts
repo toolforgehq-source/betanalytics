@@ -1188,6 +1188,15 @@ export async function analyzeGame(
       continue
     }
     
+    // ELO CONFIDENCE GATE: Only recommend moneylines when Elo has enough data
+    // 'very_low' = <5 games, 'low' = 5-9 games — these are essentially guesses.
+    // With so few games, Elo hasn't converged and the blend is 70-85% market anyway.
+    // Recommending based on unreliable Elo adds noise and hurts win rate.
+    if (eloConfidence === 'very_low' || eloConfidence === 'low') {
+      console.log(`[analyzeGame] Confidence gate rejection: ${team} ML — Elo confidence '${eloConfidence}' too low for moneyline`)
+      continue
+    }
+    
     // MULTI-SIGNAL CONFIRMATION: Reject bets where signals disagree
     // This is the single most impactful filter for win percentage.
     // A bet should only be recommended when MULTIPLE independent signals agree:
@@ -1217,6 +1226,35 @@ export async function analyzeGame(
     if (situationalFactors.sharpMoneyIndicator && situationalFactors.lineMovementDirection === 'away') {
       console.log(`[analyzeGame] Multi-signal rejection: ${team} ML — sharp money moving against`)
       continue
+    }
+    
+    // CLV CHECK: If the line has moved significantly against our pick, skip
+    // Closing Line Value is the #1 predictor of long-term betting profitability.
+    // If the market is moving AWAY from our recommended side, sharps disagree with us.
+    // We use line movement data (opening vs current) as a proxy for CLV direction.
+    if (lineMovement) {
+      const mlChange = isHomeTeam ? lineMovement.movement.homeMLChange : lineMovement.movement.awayMLChange
+      // If our team's ML odds have gotten worse (more negative for favorites, less positive for dogs)
+      // by a large margin, the market is moving against us
+      if (mlChange !== undefined && mlChange < -15) {
+        console.log(`[analyzeGame] CLV rejection: ${team} ML — line moved ${mlChange} against us (worse odds)`)
+        continue
+      }
+    }
+    
+    // CONFERENCE STRENGTH DISCOUNT: For NCAAB/NCAAF, penalize teams near default Elo
+    // Teams near 1500 Elo in college leagues often play in weak conferences.
+    // Their Elo is inflated because they beat other weak teams.
+    // When they face stronger competition, the model overestimates them.
+    if ((eloLeague === 'NCAAB' || eloLeague === 'NCAAF') && homeElo && awayElo) {
+      const teamElo = isHomeTeam ? homeElo : awayElo
+      const opponentElo = isHomeTeam ? awayElo : homeElo
+      // If BOTH teams are near default (1450-1550), neither has enough differentiation
+      // to generate a reliable edge. Skip these "mid-major vs mid-major" matchups.
+      if (teamElo > 1440 && teamElo < 1560 && opponentElo > 1440 && opponentElo < 1560) {
+        console.log(`[analyzeGame] Conference strength rejection: ${team} ML — both teams near default Elo (${teamElo} vs ${opponentElo}), no reliable edge`)
+        continue
+      }
     }
     
     const ev = calculateExpectedValue(bestPrice.price, adjustedModelProbability)
@@ -1492,6 +1530,26 @@ export async function analyzeGame(
         continue
       }
       
+      // CLV CHECK for spreads: If spread line has moved significantly against our pick, skip
+      if (lineMovement && lineMovement.movement.spreadChange !== undefined) {
+        // For spreads, a negative spreadChange means the line moved toward the favorite
+        // If we're betting the favorite and the spread got bigger (more points to cover), that's bad
+        // If we're betting the underdog and the spread shrank (less points cushion), that's bad
+        const spreadMoved = Math.abs(lineMovement.movement.spreadChange)
+        if (spreadMoved >= 2.0 && lineMovement.movement.sharpIndicator) {
+          console.log(`[analyzeGame] CLV rejection: ${teamName} spread — line moved ${spreadMoved} pts with sharp indicator`)
+          continue
+        }
+      }
+      
+      // CONFERENCE STRENGTH for spreads: Skip college games where both teams are near default Elo
+      if ((eloLeague === 'NCAAB' || eloLeague === 'NCAAF') && homeElo && awayElo) {
+        if (homeElo > 1440 && homeElo < 1560 && awayElo > 1440 && awayElo < 1560) {
+          console.log(`[analyzeGame] Conference strength rejection: ${teamName} spread — both teams near default Elo (${homeElo} vs ${awayElo})`)
+          continue
+        }
+      }
+      
       // Check juice constraint
       if (bestEntry.outcome.price < MAX_JUICE_ODDS) continue
       
@@ -1633,6 +1691,42 @@ export async function analyzeGame(
       )
       const totalSituationalAdj = calculateSituationalAdjustment(totalSituationalFactors, eloLeague, game.homeTeam, game.awayTeam)
       
+      // PACE-OF-PLAY ADJUSTMENT: Use margin stats as a scoring pace proxy
+      // Teams with high average margins (both positive for winners and negative for losers) 
+      // tend to be in high-scoring games. We use the combined absolute margin to estimate
+      // whether a game is likely to be high or low scoring relative to the total line.
+      // This is the best proxy we have without external pace-of-play data.
+      const homeMarginStats = await getTeamMarginStatsByName(eloLeague, game.homeTeam)
+      const awayMarginStats = await getTeamMarginStatsByName(eloLeague, game.awayTeam)
+      let paceAdjustment = 0
+      if (homeMarginStats && awayMarginStats && homeMarginStats.marginCount >= 5 && awayMarginStats.marginCount >= 5) {
+        // Combined average margin magnitude tells us about game scoring environment
+        // High margin teams (both winning big or losing big) are in high-scoring games
+        const homeAvgAbsMargin = Math.abs(homeMarginStats.avgMargin)
+        const awayAvgAbsMargin = Math.abs(awayMarginStats.avgMargin)
+        const combinedMarginMagnitude = homeAvgAbsMargin + awayAvgAbsMargin
+        
+        // League-specific pace thresholds
+        const paceThresholds: Record<string, { high: number; low: number }> = {
+          'NBA': { high: 16, low: 8 },      // NBA: high scoring, wide margins
+          'NCAAB': { high: 18, low: 8 },     // College: even wider margins
+          'NFL': { high: 14, low: 6 },       // NFL: tighter margins
+          'NCAAF': { high: 20, low: 8 },     // College football: blowouts common
+          'NHL': { high: 4, low: 1.5 },      // Hockey: tight margins
+          'MLB': { high: 6, low: 2 },        // Baseball: moderate margins
+        }
+        const thresholds = paceThresholds[eloLeague] || { high: 14, low: 6 }
+        
+        if (combinedMarginMagnitude >= thresholds.high) {
+          // Both teams in high-scoring environments → slight over bias (+1.5%)
+          paceAdjustment = 0.015
+        } else if (combinedMarginMagnitude <= thresholds.low) {
+          // Both teams in low-scoring environments → slight under bias (-1.5%)
+          paceAdjustment = -0.015
+        }
+        // Between thresholds: no adjustment (neutral pace)
+      }
+      
       // Analyze OVER bets
       if (overEntries.length > 0) {
         const bestOverEntry = overEntries.reduce((best, curr) => 
@@ -1651,7 +1745,9 @@ export async function analyzeGame(
           : baseEloOverProb
         // WIN PCT FIX: Apply calibration to totals (was only applied to spreads)
         const calibratedOverProb = await getCalibratedProbability(blendedOverProb)
-        const eloOverProb = applyAdjustment(calibratedOverProb, totalSituationalAdj.totalAdjustment)
+        // Apply pace adjustment: positive pace = high-scoring game = boosts over probability
+        const paceAdjustedOverProb = applyAdjustment(calibratedOverProb, paceAdjustment)
+        const eloOverProb = applyAdjustment(paceAdjustedOverProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
         const impliedProb = marketOverProb
@@ -1775,7 +1871,9 @@ export async function analyzeGame(
           : baseEloUnderProb
         // WIN PCT FIX: Apply calibration to totals (was only applied to spreads)
         const calibratedUnderProb = await getCalibratedProbability(blendedUnderProb)
-        const eloUnderProb = applyAdjustment(calibratedUnderProb, totalSituationalAdj.totalAdjustment)
+        // Apply pace adjustment: negative pace = low-scoring game = boosts under probability
+        const paceAdjustedUnderProb = applyAdjustment(calibratedUnderProb, -paceAdjustment)
+        const eloUnderProb = applyAdjustment(paceAdjustedUnderProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
         const impliedProb = marketUnderProb
@@ -2723,8 +2821,27 @@ export async function computeBestBets(
   // recommendation is powered by our proprietary Elo system.
   const eloPoweredBets = filteredRankedBets.filter(bet => bet.eloProbability !== undefined)
   
-  const bestBet = eloPoweredBets[0] || null
-  const runnerUp = eloPoweredBets[1] || null
+  // ============================================
+  // SELECTIVITY FILTER: Top picks per sport
+  // ============================================
+  // Being more selective dramatically increases win rate. Instead of recommending
+  // every qualifying bet, limit to the top 3 picks per sport per day.
+  // The highest-edge bets win at a much higher rate than the average qualifying bet.
+  // This reduces volume but increases the quality of every recommendation.
+  const MAX_PICKS_PER_SPORT = 3
+  const sportCounts: Record<string, number> = {}
+  const selectiveBets: RankedBet[] = []
+  for (const bet of eloPoweredBets) {
+    const sport = bet.sport
+    if (!sportCounts[sport]) sportCounts[sport] = 0
+    if (sportCounts[sport] < MAX_PICKS_PER_SPORT) {
+      selectiveBets.push(bet)
+      sportCounts[sport]++
+    }
+  }
+  
+  const bestBet = selectiveBets[0] || null
+  const runnerUp = selectiveBets[1] || null
   
   let reason: string | null = null
   if (!bestBet) {
@@ -2795,7 +2912,7 @@ export async function computeBestBets(
   return {
     bestBet,
     runnerUp,
-    allRankedBets: eloPoweredBets,  // All Elo-powered bets (used for parlays + alternatives)
+    allRankedBets: selectiveBets,  // Top picks per sport (selective for higher win rate)
     allEloBets: filteredEloBets,  // Filtered bets with Elo data for sport-specific queries (star player filter applied)
     calculatedAt: now,
     gamesAnalyzed: games.length,
