@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Trophy, Target, TrendingUp, BarChart3, Clock, Lock, Zap, CheckCircle, XCircle, Minus } from 'lucide-react'
+import { Trophy, TrendingUp, BarChart3, Clock, Lock, Zap, CheckCircle, XCircle, Minus } from 'lucide-react'
 import Footer from '@/components/Footer'
 
 interface TierStats {
@@ -18,7 +18,6 @@ interface PerformanceData {
   overall: TierStats
   lock: TierStats
   strong: TierStats
-  value: TierStats
   recentPicks: RecentPick[]
   startDate: string
 }
@@ -101,16 +100,19 @@ export default function PerformancePage() {
           return { wins, losses, pushes, total, winRate: total > 0 ? (wins / total) * 100 : 0 }
         }
 
+        // Only count Lock and Strong Play picks (value spots are not publicly tracked)
+        const trackedPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
         const lockPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock')
         const strongPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'strong')
-        const valuePicks = settled.filter((r: RecentPick) => r.confidenceTier === 'value' || !r.confidenceTier)
+
+        // Only show lock + strong picks in recent list
+        const trackedRecos = recos.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
 
         setData({
-          overall: buildStats(settled),
+          overall: buildStats(trackedPicks),
           lock: buildStats(lockPicks),
           strong: buildStats(strongPicks),
-          value: buildStats(valuePicks),
-          recentPicks: recos.slice(0, 30),
+          recentPicks: trackedRecos.slice(0, 30),
           startDate: new Date().toISOString()
         })
       } catch {
@@ -235,12 +237,6 @@ export default function PerformancePage() {
                 stats={data.strong}
                 color="text-blue-400"
               />
-              <TierRow
-                label="Value Spot"
-                icon={<Target className="w-4 h-4 text-slate-400" />}
-                stats={data.value}
-                color="text-slate-300"
-              />
             </div>
 
             {/* Recent Picks */}
@@ -271,7 +267,6 @@ export default function PerformancePage() {
                             <td className="py-2.5 pr-4">
                               {pick.confidenceTier === 'lock' && <span className="text-yellow-400 text-xs font-bold">LOCK</span>}
                               {pick.confidenceTier === 'strong' && <span className="text-blue-400 text-xs font-bold">STRONG</span>}
-                              {(!pick.confidenceTier || pick.confidenceTier === 'value') && <span className="text-slate-500 text-xs">VALUE</span>}
                             </td>
                             <td className="py-2.5 pr-4 text-slate-300">
                               {displayOdds !== 0 ? (displayOdds > 0 ? `+${displayOdds}` : displayOdds) : '--'}

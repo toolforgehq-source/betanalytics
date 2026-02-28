@@ -697,6 +697,10 @@ function buildSelection(bet: RankedBet): string {
  * Track a best bet recommendation
  */
 export async function trackBestBet(bet: RankedBet): Promise<string | null> {
+  // Only track Lock and Strong Play picks publicly — value spots are excluded
+  if (!bet.confidenceTier || bet.confidenceTier === 'value') {
+    return null
+  }
   return trackRecommendation({
     sport: bet.sport,
     sportName: bet.sportName,
@@ -748,6 +752,10 @@ export async function trackParlay(parlay: RankedBet[], parlayType: 'safe' | 'agg
  * Track a sport-specific best bet
  */
 export async function trackSportBet(bet: RankedBet, sportName: string): Promise<string | null> {
+  // Only track Lock and Strong Play picks publicly — value spots are excluded
+  if (!bet.confidenceTier || bet.confidenceTier === 'value') {
+    return null
+  }
   return trackRecommendation({
     sport: bet.sport,
     sportName,
