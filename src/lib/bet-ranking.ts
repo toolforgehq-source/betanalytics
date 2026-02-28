@@ -601,6 +601,31 @@ function calculateBetScore(
   const edgeScore = Math.max(-35, Math.min(35, (edgePercent / 10) * 35))
   
   // ============================================
+  // SPREAD QUALITY BONUS: up to +10 points
+  // ============================================
+  // Tight spreads (≤ 10 pts) with good cover probability (55%+) are where
+  // our Elo model is most accurate. These bets deserve a scoring boost because:
+  // 1. Elo predicts close games much better than blowouts
+  // 2. Tight spreads have more reliable cover rates historically
+  // 3. 55%+ cover prob on a tight spread is a genuine, bankable edge
+  //
+  // Formula: probability bonus + spread tightness bonus
+  // - Probability part: (coverProb% - 55) * 1.0 (rewards higher probability)
+  // - Tightness part: (10 - spreadSize) * 0.5 (rewards tighter spreads)
+  // Examples:
+  //   -3.5 spread, 57.7% prob = (2.7) + (3.25) = +5.95
+  //   -5.5 spread, 57.6% prob = (2.6) + (2.25) = +4.85
+  //   -1.5 spread, 60.0% prob = (5.0) + (4.25) = +9.25
+  //   +7.5 spread, 58.0% prob = (3.0) + (1.25) = +4.25
+  //   +21.5 spread = no bonus (> 10 pts)
+  let spreadQualityBonus = 0
+  if (spreadSize !== undefined && spreadSize > 0 && spreadSize <= 10 && probPercent >= 55) {
+    const probBonus = (probPercent - 55) * 1.0
+    const tightnessBonus = (10 - spreadSize) * 0.5
+    spreadQualityBonus = Math.min(10, probBonus + tightnessBonus)
+  }
+  
+  // ============================================
   // SPREAD SIZE PENALTY: up to -20 points
   // ============================================
   // Large spreads on bad teams look like "value" but are unreliable.
@@ -632,10 +657,11 @@ function calculateBetScore(
   // ============================================
   // TOTAL SCORE
   // ============================================
-  // Possible range: -100 to 100 points
+  // Possible range: -100 to 110 points
   // - Base: probScore + roiScore + edgeScore (-65 to 100)
+  // - Bonus: spreadQualityBonus (+10 max for tight spreads with good prob)
   // - Penalties: spreadPenalty (-20 max) + eloGapPenalty (-15 max)
-  return Math.round(probScore + roiScore + edgeScore + spreadPenalty + eloGapPenalty)
+  return Math.round(probScore + roiScore + edgeScore + spreadQualityBonus + spreadPenalty + eloGapPenalty)
 }
 
 /**
