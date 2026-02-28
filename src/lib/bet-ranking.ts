@@ -544,7 +544,9 @@ export function calculateROI(expectedValue: number): number {
 function calculateBetScore(
   winProbability: number,  // 0-1 (e.g., 0.67 = 67%)
   edge: number,            // decimal (e.g., 0.03 = 3%)
-  roi: number              // percentage (e.g., 5.0 = 5%)
+  roi: number,             // percentage (e.g., 5.0 = 5%)
+  spreadSize?: number,     // absolute spread size (e.g., 21.5)
+  eloGap?: number          // absolute Elo difference between teams (e.g., 351)
 ): number {
   // ============================================
   // WIN PCT FIX: Re-balanced scoring to weight edge more heavily
@@ -599,12 +601,41 @@ function calculateBetScore(
   const edgeScore = Math.max(-35, Math.min(35, (edgePercent / 10) * 35))
   
   // ============================================
+  // SPREAD SIZE PENALTY: up to -20 points
+  // ============================================
+  // Large spreads on bad teams look like "value" but are unreliable.
+  // Elo cover probability is less accurate on huge spreads because:
+  // 1. Bad teams get blown out more often than Elo predicts
+  // 2. Garbage time scoring inflates cover rates in historical data
+  // 3. Vegas is better at pricing blowout games than close ones
+  //
+  // Penalty kicks in at spreads > 10 points:
+  // 10 pts = 0 penalty, 15 pts = -5, 20 pts = -10, 25 pts = -15, 30+ pts = -20
+  let spreadPenalty = 0
+  if (spreadSize !== undefined && spreadSize > 10) {
+    spreadPenalty = -Math.min(20, (spreadSize - 10) * 1.0)
+  }
+  
+  // ============================================
+  // ELO GAP PENALTY: up to -15 points
+  // ============================================
+  // When the Elo gap between teams is massive (300+), the model's probability
+  // estimates become less reliable. Prefer games between more evenly matched teams.
+  //
+  // Penalty kicks in at Elo gap > 200:
+  // 200 = 0, 300 = -5, 400 = -10, 500+ = -15
+  let eloGapPenalty = 0
+  if (eloGap !== undefined && eloGap > 200) {
+    eloGapPenalty = -Math.min(15, (eloGap - 200) * 0.05)
+  }
+  
+  // ============================================
   // TOTAL SCORE
   // ============================================
-  // Possible range: -65 to 100 points
-  // - Worst possible: 0 + (-30) + (-35) = -65 points
-  // - Best possible: 35 + 30 + 35 = 100 points
-  return Math.round(probScore + roiScore + edgeScore)
+  // Possible range: -100 to 100 points
+  // - Base: probScore + roiScore + edgeScore (-65 to 100)
+  // - Penalties: spreadPenalty (-20 max) + eloGapPenalty (-15 max)
+  return Math.round(probScore + roiScore + edgeScore + spreadPenalty + eloGapPenalty)
 }
 
 /**
@@ -1269,7 +1300,8 @@ export async function analyzeGame(
     if (roi < 1) continue
     
     // Calculate score using EV-based scoring system with adjusted probability
-    const score = calculateBetScore(adjustedModelProbability, edge, roi)
+    const eloGapForScore = homeElo && awayElo ? Math.abs(homeElo - awayElo) : undefined
+    const score = calculateBetScore(adjustedModelProbability, edge, roi, undefined, eloGapForScore)
     
     rankedBets.push({
       gameId: game.id,
@@ -1556,8 +1588,10 @@ export async function analyzeGame(
       // Check juice constraint
       if (bestEntry.outcome.price < MAX_JUICE_ODDS) continue
       
-      // Calculate score
-      const score = calculateBetScore(eloCoverProb, edge, roi)
+      // Calculate score — penalize large spreads and huge Elo gaps
+      const spreadSizeForScore = Math.abs(point)
+      const eloGapForScore = homeElo && awayElo ? Math.abs(homeElo - awayElo) : undefined
+      const score = calculateBetScore(eloCoverProb, edge, roi, spreadSizeForScore, eloGapForScore)
       
       // Collect all book prices for this spread
       const allBookPrices = entries.map(e => ({
@@ -2181,7 +2215,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     
     const ev = calculateExpectedValue(bestPrice.price, modelProbability)
     const roi = calculateROI(ev)
-    const score = calculateBetScore(modelProbability, edge, roi)
+    const sportQueryEloGap = eloResult?.homeRating && eloResult?.awayRating ? Math.abs(eloResult.homeRating - eloResult.awayRating) : undefined
+    const score = calculateBetScore(modelProbability, edge, roi, undefined, sportQueryEloGap)
     
     rankedBets.push({
       gameId: game.id,
@@ -2316,7 +2351,9 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       const edge = coverProb - impliedProb
       const ev = calculateExpectedValue(bestEntry.outcome.price, coverProb)
       const roi = calculateROI(ev)
-      const score = calculateBetScore(coverProb, edge, roi)
+      const sportQuerySpreadSize = Math.abs(point)
+      const sportQuerySpreadEloGap = homeEloRating && awayEloRating ? Math.abs(homeEloRating - awayEloRating) : undefined
+      const score = calculateBetScore(coverProb, edge, roi, sportQuerySpreadSize, sportQuerySpreadEloGap)
       
       // Collect all book prices for this spread
       const allBookPrices = entries.map(e => ({
@@ -2835,13 +2872,16 @@ export async function computeBestBets(
   //   - Elo confidence 'high' or 'very_high'
   //   - No sharp money against (no negative sharp indicator)
   //   - Positive or neutral situational factors
-  //   - Spread ≤ 15 points (avoid massive spreads)
+  //   - Spread ≤ 10 points (avoid massive spreads on bad teams)
+  //   - Elo gap ≤ 300 (avoid hugely mismatched games)
   //   - Maximum 2 locks per day across all sports
   //
   // STRONG PLAY (58-65% expected win rate):
   //   - Elo probability 57%+
   //   - Edge 4%+
   //   - Elo confidence 'medium' or higher
+  //   - Spread ≤ 14 points
+  //   - Elo gap ≤ 300
   //   - Maximum 5 strong plays per day
   //
   // VALUE SPOT (55-58% expected win rate):
@@ -2859,7 +2899,11 @@ export async function computeBestBets(
     const confidence = bet.eloConfidence || 'medium'
     const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
     const totalSitAdj = bet.situationalAdjustment || 0
-    const isLargeSpread = bet.betType === 'spread' && bet.line !== undefined && Math.abs(bet.line) > 15
+    const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
+    const isLargeSpread = spreadSize > 10  // Tightened from 15 to 10
+    const isHugeSpread = spreadSize > 14   // Block from Strong too
+    const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
+    const isHugeEloGap = eloGap > 300      // 300+ Elo gap = unreliable
     
     // LOCK criteria: highest conviction picks
     const isLockCandidate = 
@@ -2869,6 +2913,7 @@ export async function computeBestBets(
       !hasSharpAgainst &&
       totalSitAdj >= -0.01 &&
       !isLargeSpread &&
+      !isHugeEloGap &&
       lockCount < MAX_LOCKS
     
     // STRONG criteria: solid picks with good edge
@@ -2876,6 +2921,8 @@ export async function computeBestBets(
       prob >= 57 &&
       edge >= 4 &&
       (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
+      !isHugeSpread &&
+      !isHugeEloGap &&
       strongCount < MAX_STRONG
     
     let tier: 'lock' | 'strong' | 'value'
