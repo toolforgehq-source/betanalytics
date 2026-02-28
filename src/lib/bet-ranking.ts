@@ -237,14 +237,23 @@ const MAX_SANE_EDGE = 0.15           // 15% maximum edge - anything higher is fl
 // Fix: Blend Elo probability with market consensus based on confidence level.
 // High confidence = trust Elo heavily. Low confidence = lean on market pricing.
 // WIN PCT FIX: More conservative blending — sports markets are extremely efficient.
-// Even with high confidence (20+ games), the Elo model should incorporate more market signal.
-// Academic research shows even the best models benefit from 25-40% market weight.
-// Previous weights (90/70/40/20) were too aggressive, causing overconfident predictions.
+// ELO CALIBRATION FIX: With sport-specific scaling (elo.ts) and static compression
+// (calibration.ts) now preventing overconfident probabilities, Elo deserves meaningful
+// weight again. But market consensus is still extremely efficient — the best sports
+// models in the world (FiveThirtyEight, etc.) still give markets 40-50% weight.
+//
+// Previous weights (75/60/40/25) were too aggressive with uncalibrated Elo:
+//   - High confidence Elo was producing 81% when reality was ~70%
+//   - 75% weight amplified this into massive phantom edges
+//   - The filters then SELECTED for maximum Elo error → 14.8% win rate
+//
+// Now that Elo is calibrated (scaling + compression), these weights produce
+// a balanced blend where Elo provides genuine edge over pure market pricing.
 const ELO_CONFIDENCE_WEIGHTS: Record<string, number> = {
-  'high': 0.75,      // >= 20 games: 75% Elo, 25% market (was 90/10)
-  'medium': 0.60,    // >= 10 games: 60% Elo, 40% market (was 70/30)
-  'low': 0.40,       // >= 5 games:  40% Elo, 60% market (unchanged)
-  'very_low': 0.25,  // < 5 games:   25% Elo, 75% market (was 20/80)
+  'high': 0.55,      // >= 20 games: 55% Elo, 45% market (balanced — Elo has real data)
+  'medium': 0.45,    // >= 10 games: 45% Elo, 55% market (market slightly leads)
+  'low': 0.30,       // >= 5 games:  30% Elo, 70% market (lean heavily on market)
+  'very_low': 0.15,  // < 5 games:   15% Elo, 85% market (Elo barely trusted)
 }
 
 function blendWithMarket(
