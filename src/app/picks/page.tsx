@@ -13,19 +13,24 @@ interface TieredPick {
   betType: string
   line?: number
   bestPrice: number
-  bestBook: string
+  bestBook?: string
   eloProbability?: number
-  edge: number
-  roi: number
-  score: number
+  edge?: number
+  roi?: number
+  score?: number
   confidenceTier?: 'lock' | 'strong' | 'value'
   commenceTime: string
   sport: string
-  sportName: string
+  sportName?: string
   homeElo?: number
   awayElo?: number
   eloConfidence?: string
   situationalNotes?: string[]
+  // Fields from tracked recommendations
+  selection?: string
+  odds?: number
+  probability?: number
+  gameName?: string
 }
 
 interface PicksData {
@@ -78,10 +83,19 @@ function TierBadge({ tier }: { tier: string }) {
 }
 
 function PickCard({ pick }: { pick: TieredPick }) {
-  const betLabel = pick.betType === 'moneyline' ? 'ML'
+  // Handle both RankedBet shape (team/homeTeam/awayTeam) and TrackedRecommendation shape (selection/gameName)
+  const displaySelection = pick.selection || (pick.team ? `${pick.team} ${
+    pick.betType === 'moneyline' ? 'ML'
     : pick.betType === 'spread' ? `${pick.line !== undefined && pick.line > 0 ? '+' : ''}${pick.line}`
-    : pick.betType === 'total' ? `${pick.team} ${pick.line}` 
+    : pick.betType === 'total' ? `${pick.line}` 
     : pick.betType
+  }` : 'Unknown')
+
+  const displayGame = pick.gameName || (pick.homeTeam && pick.awayTeam ? `${pick.awayTeam} @ ${pick.homeTeam}` : '')
+  const displayOdds = pick.odds ?? pick.bestPrice ?? 0
+  const displayProb = pick.eloProbability ?? pick.probability
+  const displayScore = pick.score
+  const displaySport = pick.sportName || pick.sport || ''
 
   const tierColors = {
     lock: 'border-yellow-500/30 bg-gradient-to-br from-yellow-900/10 to-amber-900/10',
@@ -96,15 +110,15 @@ function PickCard({ pick }: { pick: TieredPick }) {
         <div>
           <TierBadge tier={tier} />
           <div className="mt-2 text-lg font-bold text-white">
-            {pick.team} {betLabel}
+            {displaySelection}
           </div>
           <div className="text-sm text-slate-400">
-            {getSportEmoji(pick.sport)} {pick.homeTeam} vs {pick.awayTeam}
+            {getSportEmoji(displaySport)} {displayGame}
           </div>
         </div>
         <div className="text-right">
-          <div className="text-2xl font-bold text-white">{formatOdds(pick.bestPrice)}</div>
-          <div className="text-xs text-slate-500">{pick.bestBook}</div>
+          <div className="text-2xl font-bold text-white">{displayOdds !== 0 ? formatOdds(displayOdds) : '--'}</div>
+          <div className="text-xs text-slate-500">{pick.bestBook || ''}</div>
         </div>
       </div>
 
@@ -112,23 +126,23 @@ function PickCard({ pick }: { pick: TieredPick }) {
         <div className="bg-slate-800/40 rounded-lg p-2.5 text-center">
           <div className="text-xs text-slate-500 mb-0.5">Probability</div>
           <div className="text-sm font-bold text-green-400">
-            {pick.eloProbability?.toFixed(1) || '--'}%
+            {displayProb != null ? `${Number(displayProb).toFixed(1)}%` : '--'}
           </div>
         </div>
         <div className="bg-slate-800/40 rounded-lg p-2.5 text-center">
           <div className="text-xs text-slate-500 mb-0.5">Edge</div>
-          <div className="text-sm font-bold text-cyan-400">+{pick.edge.toFixed(1)}%</div>
+          <div className="text-sm font-bold text-cyan-400">{pick.edge != null ? `+${Number(pick.edge).toFixed(1)}%` : '--'}</div>
         </div>
         <div className="bg-slate-800/40 rounded-lg p-2.5 text-center">
           <div className="text-xs text-slate-500 mb-0.5">Score</div>
-          <div className="text-sm font-bold text-white">{pick.score}/100</div>
+          <div className="text-sm font-bold text-white">{displayScore != null ? `${Math.round(Number(displayScore))}/100` : '--'}</div>
         </div>
       </div>
 
       <div className="flex items-center justify-between text-xs text-slate-500">
         <div className="flex items-center gap-1">
           <Clock className="w-3 h-3" />
-          {formatTime(pick.commenceTime)} ET
+          {pick.commenceTime ? formatTime(pick.commenceTime) : '--'} ET
         </div>
         {pick.homeElo && pick.awayElo && (
           <div>Elo: {pick.homeElo} vs {pick.awayElo}</div>
