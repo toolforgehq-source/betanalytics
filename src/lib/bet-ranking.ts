@@ -92,6 +92,9 @@ export interface RankedBet {
   // Injury disqualification flag (set when team has severe injuries)
   injuryDisqualified?: boolean
   
+  // Confidence tier for tiered pick system
+  confidenceTier?: 'lock' | 'strong' | 'value'
+  
   // Timestamp
   calculatedAt: string
 }
@@ -2822,26 +2825,84 @@ export async function computeBestBets(
   const eloPoweredBets = filteredRankedBets.filter(bet => bet.eloProbability !== undefined)
   
   // ============================================
-  // SELECTIVITY FILTER: Top picks per sport
+  // TIERED CONFIDENCE SYSTEM
   // ============================================
-  // Being more selective dramatically increases win rate. Instead of recommending
-  // every qualifying bet, limit to the top 3 picks per sport per day.
-  // The highest-edge bets win at a much higher rate than the average qualifying bet.
-  // This reduces volume but increases the quality of every recommendation.
-  const MAX_PICKS_PER_SPORT = 3
-  const sportCounts: Record<string, number> = {}
-  const selectiveBets: RankedBet[] = []
-  for (const bet of eloPoweredBets) {
-    const sport = bet.sport
-    if (!sportCounts[sport]) sportCounts[sport] = 0
-    if (sportCounts[sport] < MAX_PICKS_PER_SPORT) {
-      selectiveBets.push(bet)
-      sportCounts[sport]++
-    }
-  }
+  // Instead of flat selectivity, classify every qualifying bet into confidence tiers:
+  //
+  // LOCK OF THE DAY (70%+ expected win rate):
+  //   - Elo probability 62%+ 
+  //   - Edge 5%+
+  //   - Elo confidence 'high' or 'very_high'
+  //   - No sharp money against (no negative sharp indicator)
+  //   - Positive or neutral situational factors
+  //   - Spread ≤ 15 points (avoid massive spreads)
+  //   - Maximum 2 locks per day across all sports
+  //
+  // STRONG PLAY (58-65% expected win rate):
+  //   - Elo probability 57%+
+  //   - Edge 4%+
+  //   - Elo confidence 'medium' or higher
+  //   - Maximum 5 strong plays per day
+  //
+  // VALUE SPOT (55-58% expected win rate):
+  //   - Everything else that passes base filters
+  //   - Higher volume, lower certainty
   
-  const bestBet = selectiveBets[0] || null
-  const runnerUp = selectiveBets[1] || null
+  const MAX_LOCKS = 2
+  const MAX_STRONG = 5
+  let lockCount = 0
+  let strongCount = 0
+  
+  const tieredBets: RankedBet[] = eloPoweredBets.map(bet => {
+    const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+    const edge = bet.edge
+    const confidence = bet.eloConfidence || 'medium'
+    const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
+    const totalSitAdj = bet.situationalAdjustment || 0
+    const isLargeSpread = bet.betType === 'spread' && bet.line !== undefined && Math.abs(bet.line) > 15
+    
+    // LOCK criteria: highest conviction picks
+    const isLockCandidate = 
+      prob >= 62 &&
+      edge >= 5 &&
+      (confidence === 'high' || confidence === 'very_high') &&
+      !hasSharpAgainst &&
+      totalSitAdj >= -0.01 &&
+      !isLargeSpread &&
+      lockCount < MAX_LOCKS
+    
+    // STRONG criteria: solid picks with good edge
+    const isStrongCandidate =
+      prob >= 57 &&
+      edge >= 4 &&
+      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
+      strongCount < MAX_STRONG
+    
+    let tier: 'lock' | 'strong' | 'value'
+    if (isLockCandidate) {
+      tier = 'lock'
+      lockCount++
+    } else if (isStrongCandidate) {
+      tier = 'strong'
+      strongCount++
+    } else {
+      tier = 'value'
+    }
+    
+    return { ...bet, confidenceTier: tier }
+  })
+  
+  // Sort: locks first, then strong, then value, each sub-sorted by score
+  const tierOrder: Record<string, number> = { lock: 0, strong: 1, value: 2 }
+  tieredBets.sort((a, b) => {
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    if (tierDiff !== 0) return tierDiff
+    if (b.score !== a.score) return b.score - a.score
+    return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
+  })
+  
+  const bestBet = tieredBets[0] || null
+  const runnerUp = tieredBets[1] || null
   
   let reason: string | null = null
   if (!bestBet) {
@@ -2912,7 +2973,7 @@ export async function computeBestBets(
   return {
     bestBet,
     runnerUp,
-    allRankedBets: selectiveBets,  // Top picks per sport (selective for higher win rate)
+    allRankedBets: tieredBets,  // Tiered picks: lock > strong > value
     allEloBets: filteredEloBets,  // Filtered bets with Elo data for sport-specific queries (star player filter applied)
     calculatedAt: now,
     gamesAnalyzed: games.length,

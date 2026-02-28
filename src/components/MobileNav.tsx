@@ -22,6 +22,20 @@ export default function MobileNav() {
       {mobileMenuOpen && (
         <div className="md:hidden absolute top-full left-0 right-0 bg-slate-950/95 backdrop-blur-sm border-b border-slate-800/50 px-4 py-4 space-y-2 z-50">
           <Link 
+            href="/picks"
+            className="block w-full px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm text-slate-300 hover:text-white"
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Model Picks
+          </Link>
+          <Link 
+            href="/performance"
+            className="block w-full px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm text-slate-300 hover:text-white"
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Performance
+          </Link>
+          <Link 
             href="/odds"
             className="block w-full px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm text-slate-300 hover:text-white"
             onClick={() => setMobileMenuOpen(false)}

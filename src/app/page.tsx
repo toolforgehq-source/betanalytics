@@ -112,14 +112,14 @@ export default function HomePage() {
 
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-5">
+              <Link href="/picks" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Model Picks
+              </Link>
+              <Link href="/performance" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Performance
+              </Link>
               <Link href="/odds" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Odds Board
-              </Link>
-              <Link href="/betslip" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Parlay Builder
-              </Link>
-              <Link href="/alerts" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Alerts
               </Link>
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Methodology
@@ -317,7 +317,7 @@ export default function HomePage() {
                       icon={<BarChart3 className="w-5 h-5 text-orange-400" />}
                       title="Performance Dashboard"
                       text="Full transparency. Win rates, ROI, calibration by sport and bet type. Every pick graded."
-                      href="/chat"
+                      href="/performance"
                     />
                     <Feature
                       icon={<Activity className="w-5 h-5 text-red-400" />}
@@ -360,7 +360,8 @@ export default function HomePage() {
                     <PricingLine text="Real-time injury adjustments" />
                     <PricingLine text="Player props analysis" />
                     <PricingLine text="Customizable alerts for +EV picks" />
-                    <PricingLine text="Verified public track record" />
+                    <PricingLine text="Tiered picks: Locks, Strong Plays, Value Spots" />
+                    <PricingLine text="Verified track record" />
                   </ul>
 
                   <Link

@@ -37,6 +37,9 @@ export interface TrackedRecommendation {
   // Source of recommendation
   source: 'best_bet' | 'parlay' | 'sport_bet' | 'best_prop'
   
+  // Confidence tier from tiered system
+  confidenceTier?: 'lock' | 'strong' | 'value'
+  
   // Outcome tracking
   status: 'pending' | 'won' | 'lost' | 'push' | 'void'
   settledAt?: string            // When outcome was determined
@@ -638,7 +641,8 @@ export async function trackBestBet(bet: RankedBet): Promise<string | null> {
     odds: bet.bestPrice,
     probability: bet.consensusProbability,
     score: bet.score,
-    source: 'best_bet'
+    source: 'best_bet',
+    confidenceTier: bet.confidenceTier
   })
 }
 
@@ -688,7 +692,8 @@ export async function trackSportBet(bet: RankedBet, sportName: string): Promise<
     odds: bet.bestPrice,
     probability: bet.consensusProbability,
     score: bet.score,
-    source: 'sport_bet'
+    source: 'sport_bet',
+    confidenceTier: bet.confidenceTier
   })
 }
 

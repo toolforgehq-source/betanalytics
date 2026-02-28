@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { TrendingUp, Trophy, Target, BarChart3, Activity } from 'lucide-react'
+import { TrendingUp, Trophy, Target, BarChart3, Activity, Lock } from 'lucide-react'
 
 interface StatsData {
   winRate: number
@@ -75,9 +75,15 @@ export default function LiveStats() {
     )
   }
 
-  // Otherwise show static credibility signals
+  // Show tiered system credibility signals
   return (
     <div className="flex flex-wrap justify-center gap-4 md:gap-8">
+      <StatPill
+        icon={<Lock className="w-4 h-4" />}
+        label="Lock of the Day"
+        value="70%+ Target"
+        color="text-yellow-400"
+      />
       <StatPill
         icon={<Activity className="w-4 h-4" />}
         label="Teams Tracked"
