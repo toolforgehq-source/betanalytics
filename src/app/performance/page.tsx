@@ -24,16 +24,23 @@ interface PerformanceData {
 }
 
 interface RecentPick {
-  team: string
+  team?: string
   betType: string
   line?: number
-  bestPrice: number
+  bestPrice?: number
   confidenceTier?: string
   sport: string
   status: string
   result?: string
   createdAt: string
   settledAt?: string
+  // TrackedRecommendation fields
+  selection?: string
+  gameName?: string
+  odds?: number
+  probability?: number
+  score?: number
+  sportName?: string
 }
 
 function StatCard({ label, value, subtext, color }: { label: string; value: string; subtext?: string; color: string }) {
@@ -253,15 +260,13 @@ export default function PerformancePage() {
                     </thead>
                     <tbody>
                       {data.recentPicks.map((pick, i) => {
-                        const betLabel = pick.betType === 'moneyline' ? 'ML'
-                          : pick.betType === 'spread' ? `${pick.line !== undefined && pick.line > 0 ? '+' : ''}${pick.line}`
-                          : pick.betType === 'total' ? `${pick.team} ${pick.line}`
-                          : pick.betType
+                        // Handle both RankedBet and TrackedRecommendation field names
+                        const displayPick = pick.selection || (pick.team ? `${pick.team} ${pick.betType === 'moneyline' ? 'ML' : pick.betType === 'spread' ? `${pick.line !== undefined && pick.line > 0 ? '+' : ''}${pick.line}` : pick.betType}` : pick.betType)
+                        const displayOdds = pick.odds ?? pick.bestPrice ?? 0
                         return (
                           <tr key={i} className="border-b border-slate-800/20 last:border-b-0">
                             <td className="py-2.5 pr-4">
-                              <span className="font-medium text-white">{pick.team}</span>
-                              <span className="text-slate-500 ml-1">{betLabel}</span>
+                              <span className="font-medium text-white">{displayPick}</span>
                             </td>
                             <td className="py-2.5 pr-4">
                               {pick.confidenceTier === 'lock' && <span className="text-yellow-400 text-xs font-bold">LOCK</span>}
@@ -269,7 +274,7 @@ export default function PerformancePage() {
                               {(!pick.confidenceTier || pick.confidenceTier === 'value') && <span className="text-slate-500 text-xs">VALUE</span>}
                             </td>
                             <td className="py-2.5 pr-4 text-slate-300">
-                              {pick.bestPrice > 0 ? '+' : ''}{pick.bestPrice}
+                              {displayOdds !== 0 ? (displayOdds > 0 ? `+${displayOdds}` : displayOdds) : '--'}
                             </td>
                             <td className="py-2.5 pr-4">
                               <div className="flex items-center gap-1.5">

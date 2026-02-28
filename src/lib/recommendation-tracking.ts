@@ -427,6 +427,74 @@ export async function getRecentRecommendations(limit: number = 100): Promise<Tra
   }
 }
 
+/**
+ * Clear all recommendation tracking data (fresh start)
+ */
+export async function clearAllRecommendations(): Promise<{ deleted: number }> {
+  const redis = await getRedisClient()
+  if (!redis) return { deleted: 0 }
+  
+  try {
+    // Get all IDs from the index
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['ZRANGE', TRACKING_INDEX_KEY, 0, -1]),
+      cache: 'no-store'
+    })
+    
+    const data = await response.json()
+    const ids: string[] = Array.isArray(data.result) ? data.result : []
+    
+    let deleted = 0
+    
+    // Delete each recommendation key
+    for (const id of ids) {
+      await fetch(redis.url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${redis.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(['DEL', `${TRACKING_KEY_PREFIX}${id}`]),
+        cache: 'no-store'
+      })
+      deleted++
+    }
+    
+    // Clear the index
+    await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['DEL', TRACKING_INDEX_KEY]),
+      cache: 'no-store'
+    })
+    
+    // Clear the pending set
+    await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['DEL', TRACKING_PENDING_KEY]),
+      cache: 'no-store'
+    })
+    
+    console.log(`[Tracking] Cleared ${deleted} recommendations`)
+    return { deleted }
+  } catch (error) {
+    console.error('[Tracking] Error clearing recommendations:', error)
+    return { deleted: 0 }
+  }
+}
+
 // ============================================
 // PROFIT CALCULATION
 // ============================================
