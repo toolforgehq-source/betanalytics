@@ -1,9 +1,13 @@
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
+import { redirect } from 'next/navigation'
+import { auth } from '@/auth'
 import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
 import PicksClient from './PicksClient'
+
+export const dynamic = 'force-dynamic'
 
 export const metadata = {
   title: 'Model Picks & Track Record | BetAnalytics.ai',
@@ -19,7 +23,12 @@ export const metadata = {
   },
 }
 
-export default function PicksPage() {
+export default async function PicksPage() {
+  const session = await auth()
+  if (!session?.user) {
+    redirect('/login')
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white flex flex-col">
       <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm relative">
