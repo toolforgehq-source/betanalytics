@@ -449,7 +449,8 @@ export function calculateSituationalFactors(
   opponentLastGameDate?: string | null,
   weather?: WeatherData | null,
   lineMovement?: LineMovement | null,
-  gameDate?: Date | null
+  gameDate?: Date | null,
+  last10RecordInput?: { wins: number; losses: number } | null
 ): SituationalFactors {
   const now = gameDate || new Date()
   
@@ -495,10 +496,11 @@ export function calculateSituationalFactors(
   const parsedRecord = parseRecord(teamRecord)
   const seasonWinPct = calculateWinPct(parsedRecord)
   
-  // For now, we don't have last 10 games data - this would need to be fetched
-  // TODO: Add last 10 games tracking
-  const last10Record = null
-  const last10WinPct = null
+  // Use last-10 record from Elo tracking if provided, otherwise null
+  const last10Record = last10RecordInput || null
+  const last10WinPct = last10Record 
+    ? last10Record.wins / (last10Record.wins + last10Record.losses)
+    : null
   const formTrend = determineFormTrend(last10WinPct, seasonWinPct)
   
   // Weather impact

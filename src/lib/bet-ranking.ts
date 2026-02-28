@@ -25,6 +25,7 @@ import {
   calculateSpreadCoverProbability,
   calculateTotalProbability,
   getTeamMarginStatsByName,
+  getTeamLast10ByName,
   type InjuryInfo,
   type PlayerImportance
 } from './elo'
@@ -210,7 +211,9 @@ const FALLBACK_ODDS_RELAXED = -300   // Relaxed odds limit
 const FALLBACK_PROB_RELAXED = 0.50   // Relaxed probability floor
 
 // Legacy thresholds (for qualified bets - stricter)
-const MIN_EDGE = 0.03             // 3% minimum edge for "qualified" bets
+// Raised from 3% to 4%: a 3% edge on a -150 favorite is barely breakeven after juice.
+// 4% provides a meaningful buffer that survives real-world variance.
+const MIN_EDGE = 0.04             // 4% minimum edge for "qualified" moneyline bets
 
 // Spread-specific thresholds (more relaxed since spreads are ~50% probability)
 const MIN_SPREAD_PROBABILITY = 0.48  // 48% minimum for spreads (they're designed to be ~50%)
@@ -218,14 +221,16 @@ const MIN_SPREAD_EDGE = 0.01         // 1% minimum edge for spreads (edges are s
 const MIN_SPREAD_ROI = 0.5           // 0.5% minimum ROI for spreads
 
 // Total-specific thresholds (FIX 2: tighter filters to prevent inflated totals edges from dominating)
-const MIN_TOTAL_PROBABILITY = 0.52   // 52% minimum for totals — same as moneyline, prevents weak picks
-const MIN_TOTAL_EDGE = 0.02          // 2% minimum edge for totals — between spread (1%) and moneyline (3%)
-const MIN_TOTAL_ROI = 1.0            // 1% minimum ROI for totals — same as moneyline
+const MIN_TOTAL_PROBABILITY = 0.53   // 53% minimum for totals — slightly above moneyline to be more selective
+const MIN_TOTAL_EDGE = 0.03          // 3% minimum edge for totals — aligned with moneyline selectivity
+const MIN_TOTAL_ROI = 1.5            // 1.5% minimum ROI for totals — higher bar since totals are noisier
 
-// SANITY CHECK: Maximum edge threshold - edges > 15% are almost certainly calculation errors
-// Real market inefficiencies rarely exceed 5-10%, and even sharp bettors rarely find 10%+ edges
-// FIX: Tightened from 25% to 15% — a 25% edge is essentially impossible in efficient markets
-const MAX_SANE_EDGE = 0.15           // 15% maximum edge - anything higher is flagged as suspicious
+// SANITY CHECK: Maximum edge threshold
+// Real market inefficiencies rarely exceed 3-5%. Even the best models in the world
+// (FiveThirtyEight, Pinnacle sharp lines) find edges in the 2-6% range.
+// Anything above 8% is almost certainly a data error or model miscalibration.
+// Previous value of 15% was far too high — it let through phantom edges that destroyed win rate.
+const MAX_SANE_EDGE = 0.08           // 8% maximum edge - anything higher is flagged as suspicious
 
 // ============================================
 // ELO CONFIDENCE BLENDING
@@ -1144,6 +1149,9 @@ export async function analyzeGame(
     const teamLastGameDate = isHomeTeam ? homeLastGameDate : awayLastGameDate
     const opponentLastGameDate = isHomeTeam ? awayLastGameDate : homeLastGameDate
     
+    // Fetch last-10 record from Elo tracking for form analysis
+    const teamLast10 = await getTeamLast10ByName(eloLeagueForSituational, team)
+    
     const situationalFactors = calculateSituationalFactors(
       team,
       opponentName,
@@ -1154,7 +1162,8 @@ export async function analyzeGame(
       opponentLastGameDate || undefined,  // opponentLastGameDate from schedule data
       weather,   // Weather data for outdoor sports
       lineMovement,  // Line movement data for sharp money detection
-      game.commenceTime ? new Date(game.commenceTime) : null
+      game.commenceTime ? new Date(game.commenceTime) : null,
+      teamLast10  // Last 10 game record from Elo tracking
     )
     
     const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational, team, opponentName)
@@ -1176,6 +1185,37 @@ export async function analyzeGame(
     
     if (edge > MAX_SANE_EDGE) {
       console.warn(`[analyzeGame] SANITY CHECK FAILED: ${team} ML has edge ${(edge * 100).toFixed(1)}% > ${(MAX_SANE_EDGE * 100).toFixed(0)}% max. Skipping.`)
+      continue
+    }
+    
+    // MULTI-SIGNAL CONFIRMATION: Reject bets where signals disagree
+    // This is the single most impactful filter for win percentage.
+    // A bet should only be recommended when MULTIPLE independent signals agree:
+    //   1. Elo model favors this team (eloProbability > 50%)
+    //   2. Market consensus isn't too far off (consensus > 45%)
+    //   3. Situational factors aren't negative (no back-to-back + travel fatigue against you)
+    //   4. Sharp money isn't against you
+    //
+    // The old system would recommend a bet purely on edge size — even if Elo said 55%
+    // but sharp money was moving the line against the team. Multi-signal kills these.
+    if (eloProbability !== undefined && eloProbability < 0.50) {
+      // Elo says this team is the underdog — don't recommend their ML even if market disagrees
+      console.log(`[analyzeGame] Multi-signal rejection: ${team} ML — Elo probability ${(eloProbability * 100).toFixed(1)}% < 50%`)
+      continue
+    }
+    if (consensus.consensusProb < 0.45) {
+      // Market consensus says this team has less than 45% chance — too risky for ML
+      console.log(`[analyzeGame] Multi-signal rejection: ${team} ML — market consensus ${(consensus.consensusProb * 100).toFixed(1)}% < 45%`)
+      continue
+    }
+    if (situationalAdj.totalAdjustment < -0.03) {
+      // Significant situational headwinds (B2B + travel + cold streak, etc.)
+      console.log(`[analyzeGame] Multi-signal rejection: ${team} ML — situational adjustment ${(situationalAdj.totalAdjustment * 100).toFixed(1)}% < -3%`)
+      continue
+    }
+    // Sharp money contra-filter: if sharp money is explicitly against this team, skip
+    if (situationalFactors.sharpMoneyIndicator && situationalFactors.lineMovementDirection === 'away') {
+      console.log(`[analyzeGame] Multi-signal rejection: ${team} ML — sharp money moving against`)
       continue
     }
     
@@ -1386,6 +1426,9 @@ export async function analyzeGame(
       const spreadTeamLastGameDate = isHomeTeam ? homeLastGameDate : awayLastGameDate
       const spreadOpponentLastGameDate = isHomeTeam ? awayLastGameDate : homeLastGameDate
       
+      // Fetch last-10 record for spread team
+      const spreadTeamLast10 = await getTeamLast10ByName(eloLeague, teamName)
+      
       const spreadSituationalFactors = calculateSituationalFactors(
         teamName,
         opponentName,
@@ -1396,7 +1439,8 @@ export async function analyzeGame(
         spreadOpponentLastGameDate || undefined,  // opponentLastGameDate from schedule data
         weather,   // Weather data for outdoor sports
         lineMovement,  // Line movement data for sharp money detection
-        game.commenceTime ? new Date(game.commenceTime) : null
+        game.commenceTime ? new Date(game.commenceTime) : null,
+        spreadTeamLast10  // Last 10 game record from Elo tracking
       )
       const spreadSituationalAdj = calculateSituationalAdjustment(spreadSituationalFactors, eloLeague, teamName, opponentName)
       const eloCoverProb = applyAdjustment(baseEloCoverProb, spreadSituationalAdj.totalAdjustment)
@@ -1433,7 +1477,18 @@ export async function analyzeGame(
       
       // SANITY CHECK: Reject bets with impossibly large edges (likely calculation errors)
       if (edge > MAX_SANE_EDGE) {
-        console.warn(`[analyzeGame] SANITY CHECK FAILED: ${teamName} spread ${point} has edge ${(edge * 100).toFixed(1)}% > 25% max. Skipping.`)
+        console.warn(`[analyzeGame] SANITY CHECK FAILED: ${teamName} spread ${point} has edge ${(edge * 100).toFixed(1)}% > ${(MAX_SANE_EDGE * 100).toFixed(0)}% max. Skipping.`)
+        continue
+      }
+      
+      // MULTI-SIGNAL: Reject spreads with major situational headwinds
+      if (spreadSituationalAdj.totalAdjustment < -0.04) {
+        console.log(`[analyzeGame] Multi-signal rejection: ${teamName} spread — situational ${(spreadSituationalAdj.totalAdjustment * 100).toFixed(1)}% < -4%`)
+        continue
+      }
+      // MULTI-SIGNAL: Sharp money contra-filter for spreads
+      if (spreadSituationalFactors.sharpMoneyIndicator && spreadSituationalFactors.lineMovementDirection === 'away') {
+        console.log(`[analyzeGame] Multi-signal rejection: ${teamName} spread — sharp money moving against`)
         continue
       }
       
@@ -1561,6 +1616,8 @@ export async function analyzeGame(
       
       // Calculate situational factors for totals (weather is especially important for outdoor sports)
       // For totals, use home team's lastGameDate and away team's as opponent
+      const totalHomeLast10 = await getTeamLast10ByName(eloLeague, game.homeTeam)
+      
       const totalSituationalFactors = calculateSituationalFactors(
         game.homeTeam,
         game.awayTeam,
@@ -1571,7 +1628,8 @@ export async function analyzeGame(
         awayLastGameDate || undefined,  // opponentLastGameDate from schedule data (away team)
         weather,   // Weather data - critical for outdoor sports totals
         lineMovement,  // Line movement data for sharp money detection
-        game.commenceTime ? new Date(game.commenceTime) : null
+        game.commenceTime ? new Date(game.commenceTime) : null,
+        totalHomeLast10  // Last 10 game record from Elo tracking
       )
       const totalSituationalAdj = calculateSituationalAdjustment(totalSituationalFactors, eloLeague, game.homeTeam, game.awayTeam)
       
@@ -1609,6 +1667,12 @@ export async function analyzeGame(
         // SANITY CHECK: Reject bets with impossibly large edges (likely calculation errors)
         if (edge > MAX_SANE_EDGE) {
           console.warn(`[analyzeGame] SANITY CHECK FAILED: Over ${line} has edge ${(edge * 100).toFixed(1)}% > ${(MAX_SANE_EDGE * 100).toFixed(0)}% max. Skipping.`)
+        // MULTI-SIGNAL: Reject totals with major situational headwinds
+        } else if (totalSituationalAdj.totalAdjustment < -0.04) {
+          console.log(`[analyzeGame] Multi-signal rejection: Over ${line} — situational ${(totalSituationalAdj.totalAdjustment * 100).toFixed(1)}% < -4%`)
+        // MULTI-SIGNAL: Sharp money contra-filter for totals
+        } else if (totalSituationalFactors.sharpMoneyIndicator && totalSituationalFactors.lineMovementDirection === 'away') {
+          console.log(`[analyzeGame] Multi-signal rejection: Over ${line} — sharp money moving against`)
         } else if (eloOverProb >= MIN_TOTAL_PROBABILITY && edge >= MIN_TOTAL_EDGE && ev > 0 && roi >= MIN_TOTAL_ROI) {
           if (bestOverEntry.outcome.price >= MAX_JUICE_ODDS) {
             const score = calculateBetScore(eloOverProb, edge, roi)
@@ -1727,6 +1791,12 @@ export async function analyzeGame(
         // SANITY CHECK: Reject bets with impossibly large edges (likely calculation errors)
         if (edge > MAX_SANE_EDGE) {
           console.warn(`[analyzeGame] SANITY CHECK FAILED: Under ${line} has edge ${(edge * 100).toFixed(1)}% > ${(MAX_SANE_EDGE * 100).toFixed(0)}% max. Skipping.`)
+        // MULTI-SIGNAL: Reject totals with major situational headwinds
+        } else if (totalSituationalAdj.totalAdjustment < -0.04) {
+          console.log(`[analyzeGame] Multi-signal rejection: Under ${line} — situational ${(totalSituationalAdj.totalAdjustment * 100).toFixed(1)}% < -4%`)
+        // MULTI-SIGNAL: Sharp money contra-filter for totals
+        } else if (totalSituationalFactors.sharpMoneyIndicator && totalSituationalFactors.lineMovementDirection === 'away') {
+          console.log(`[analyzeGame] Multi-signal rejection: Under ${line} — sharp money moving against`)
         } else if (eloUnderProb >= MIN_TOTAL_PROBABILITY && edge >= MIN_TOTAL_EDGE && ev > 0 && roi >= MIN_TOTAL_ROI) {
           if (bestUnderEntry.outcome.price >= MAX_JUICE_ODDS) {
             const score = calculateBetScore(eloUnderProb, edge, roi)
@@ -1981,6 +2051,9 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     const teamLastGameDate = isHomeTeam ? homeLastGameDate : awayLastGameDate
     const opponentLastGameDateForTeam = isHomeTeam ? awayLastGameDate : homeLastGameDate
     
+    // Fetch last-10 record for sport query team
+    const sportQueryTeamLast10 = await getTeamLast10ByName(eloLeagueForSituational, team)
+    
     const situationalFactors = calculateSituationalFactors(
       team,
       opponentName,
@@ -1991,7 +2064,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       opponentLastGameDateForTeam || undefined,
       null,
       null,
-      game.commenceTime ? new Date(game.commenceTime) : null
+      game.commenceTime ? new Date(game.commenceTime) : null,
+      sportQueryTeamLast10  // Last 10 game record from Elo tracking
     )
     
     const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational, team, opponentName)

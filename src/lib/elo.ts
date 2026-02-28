@@ -48,6 +48,20 @@ const K_FACTORS: Record<string, number> = {
 // should not be used for predictions (insufficient data)
 const MIN_GAMES_FOR_PREDICTIONS = 5
 
+// RECENCY WEIGHTING: Recent games get a higher K-factor multiplier
+// so Elo reacts more strongly to current form.
+// - Games played within 7 days of last game: 1.15x K-factor (team is in rhythm)
+// - Games played within 7-14 days: 1.0x (normal)
+// - Games played after 14+ day gap: 0.85x (rust/uncertainty, trust result less)
+// This helps Elo capture hot/cold streaks without the per-game decay problem.
+const RECENCY_K_MULTIPLIER = {
+  RECENT: 1.15,    // 0-7 days since last game
+  NORMAL: 1.0,     // 7-14 days
+  STALE: 0.85,     // 14+ days (long break, less informative)
+}
+const RECENCY_RECENT_DAYS = 7
+const RECENCY_STALE_DAYS = 14
+
 // Home advantage in Elo points (added to home team's rating for prediction)
 // Calibrated to match real-world home win rates:
 //   55 pts → 57.8%  (modern NBA)
@@ -447,6 +461,9 @@ export interface TeamRating {
     marginVariance: number   // Variance of margins
     marginStdDev: number     // Standard deviation of margins (team-specific sigma)
   }
+  // Last 10 game results for form tracking (1 = win, 0 = loss, 0.5 = draw)
+  // Most recent result is at the END of the array (push new, shift old)
+  recentResults?: number[]
 }
 
 export interface EloRatings {
@@ -549,7 +566,8 @@ export function updateRatingsAfterGame(
   awayRating: number,
   homeScore: number,
   awayScore: number,
-  league: string
+  league: string,
+  recencyMultiplier: number = 1.0
 ): { newHomeRating: number; newAwayRating: number } {
   const baseKFactor = K_FACTORS[league] || 24
   const homeAdvantage = HOME_ADVANTAGE[league] || 70
@@ -597,8 +615,8 @@ export function updateRatingsAfterGame(
   // Calculate MOV multiplier (blowouts = more rating change)
   const movMultiplier = calculateMOVMultiplier(margin, winnerEloDiff, league)
   
-  // Apply MOV multiplier to K-factor
-  const adjustedKFactor = baseKFactor * movMultiplier
+  // Apply MOV multiplier and recency multiplier to K-factor
+  const adjustedKFactor = baseKFactor * movMultiplier * recencyMultiplier
   
   // Calculate new ratings (without home advantage - that's only for prediction)
   const newHomeRating = calculateNewRating(homeRating, homeExpected, homeActual, adjustedKFactor)
@@ -1054,17 +1072,33 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
     const homeTeam = eloData.ratings[homeKey]
     const awayTeam = eloData.ratings[awayKey]
     
-    // REMOVED: Per-game recency decay was compressing all ratings toward 1500
-    // and preventing dominant teams from building proper ratings.
-    // Between-season regression (SEASON_REGRESSION_FACTOR) handles staleness.
+    // RECENCY WEIGHTING: Apply K-factor multiplier based on days since last game
+    // Teams in active rhythm (played recently) get higher K-factor so Elo reacts
+    // more to their current form. Teams coming off long breaks get lower K-factor.
+    const gameDate = new Date(game.date)
+    const homeLastPlayed = new Date(homeTeam.lastUpdated)
+    const awayLastPlayed = new Date(awayTeam.lastUpdated)
+    const homeDaysSinceLast = Math.max(0, Math.floor((gameDate.getTime() - homeLastPlayed.getTime()) / (1000 * 60 * 60 * 24)))
+    const awayDaysSinceLast = Math.max(0, Math.floor((gameDate.getTime() - awayLastPlayed.getTime()) / (1000 * 60 * 60 * 24)))
     
-    // Update ratings
+    // Average both teams' recency to get a single game-level multiplier
+    // (both teams play the same game, so the K-factor should be symmetric)
+    const homeRecency = homeDaysSinceLast <= RECENCY_RECENT_DAYS ? RECENCY_K_MULTIPLIER.RECENT
+      : homeDaysSinceLast >= RECENCY_STALE_DAYS ? RECENCY_K_MULTIPLIER.STALE
+      : RECENCY_K_MULTIPLIER.NORMAL
+    const awayRecency = awayDaysSinceLast <= RECENCY_RECENT_DAYS ? RECENCY_K_MULTIPLIER.RECENT
+      : awayDaysSinceLast >= RECENCY_STALE_DAYS ? RECENCY_K_MULTIPLIER.STALE
+      : RECENCY_K_MULTIPLIER.NORMAL
+    const recencyMultiplier = (homeRecency + awayRecency) / 2
+    
+    // Update ratings with recency-weighted K-factor
     const { newHomeRating, newAwayRating } = updateRatingsAfterGame(
       homeTeam.rating,
       awayTeam.rating,
       game.homeScore,
       game.awayScore,
-      game.league
+      game.league,
+      recencyMultiplier
     )
     
     homeTeam.rating = newHomeRating
@@ -1074,6 +1108,17 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
     awayTeam.rating = newAwayRating
     awayTeam.gamesPlayed++
     awayTeam.lastUpdated = game.date
+    
+    // Track last 10 game results for form tracking
+    // 1 = win, 0 = loss, 0.5 = draw
+    const homeResult = game.homeScore > game.awayScore ? 1 : game.homeScore < game.awayScore ? 0 : 0.5
+    const awayResult = game.awayScore > game.homeScore ? 1 : game.awayScore < game.homeScore ? 0 : 0.5
+    if (!homeTeam.recentResults) homeTeam.recentResults = []
+    homeTeam.recentResults.push(homeResult)
+    if (homeTeam.recentResults.length > 10) homeTeam.recentResults.shift()
+    if (!awayTeam.recentResults) awayTeam.recentResults = []
+    awayTeam.recentResults.push(awayResult)
+    if (awayTeam.recentResults.length > 10) awayTeam.recentResults.shift()
     
     // FIX 2: Track margin statistics for team-specific variance
     // Margin is from the team's perspective (positive = win, negative = loss)
@@ -1195,6 +1240,33 @@ export async function getTeamMarginStatsByName(
     avgMargin: team.marginStats.avgMargin,
     marginCount: team.marginStats.marginCount
   }
+}
+
+/**
+ * Get last-10 game record for a team by name
+ * Returns { wins, losses } or null if no data
+ */
+export async function getTeamLast10ByName(
+  league: string,
+  teamName: string
+): Promise<{ wins: number; losses: number } | null> {
+  const eloData = await getEloRatings()
+  if (!eloData) return null
+  
+  const teamKey = Object.keys(eloData.ratings).find(key => {
+    const rating = eloData.ratings[key]
+    return rating.league === league && 
+           rating.teamName.toLowerCase().includes(teamName.toLowerCase())
+  })
+  
+  if (!teamKey) return null
+  
+  const team = eloData.ratings[teamKey]
+  if (!team.recentResults || team.recentResults.length === 0) return null
+  
+  const wins = team.recentResults.filter(r => r === 1).length
+  const losses = team.recentResults.filter(r => r === 0).length
+  return { wins, losses }
 }
 
 /**
