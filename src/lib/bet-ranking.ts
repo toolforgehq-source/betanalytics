@@ -3955,7 +3955,7 @@ const BEST_BET_CACHE_KEY = 'betanalytics:best-bet'
 // Bump this version whenever the best-bet algorithm changes materially
 // (e.g. injury disqualification, scoring changes, filter changes).
 // Cached results with a different version are automatically invalidated.
-const BEST_BET_CACHE_VERSION = 2  // v2: injury disqualification for spreads/totals (PR #101)
+const BEST_BET_CACHE_VERSION = 3  // v3: spread quality bonus + spread/Elo penalties
 
 /**
  * Get Redis client for caching
