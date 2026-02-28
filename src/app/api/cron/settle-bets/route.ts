@@ -406,7 +406,85 @@ function extractPlayerStat(
 }
 
 /**
- * Settle a prop bet using ESPN box score data
+ * Find ESPN event ID by searching scoreboards using team names and game date.
+ * Prop bets store Odds API hashes as gameId, not ESPN event IDs.
+ * This function searches ESPN scoreboards to find the matching game.
+ */
+async function findESPNEventId(sport: string, gameName: string, commenceTime: string): Promise<string | null> {
+  try {
+    const { espnSport, espnLeague } = getESPNSportLeague(sport)
+    
+    // Parse team names from gameName (format: "Team A @ Team B")
+    const parts = gameName.split(/\s+@\s+|\s+vs\.?\s+/i)
+    if (parts.length < 2) {
+      console.log(`[SettleBets] Cannot parse team names from: ${gameName}`)
+      return null
+    }
+    const team1 = parts[0].trim()
+    const team2 = parts[1].trim()
+    
+    // Search scoreboards around the game date (game day and day before/after for timezone differences)
+    const gameDate = new Date(commenceTime)
+    const datesToCheck: string[] = []
+    for (let offset = -1; offset <= 1; offset++) {
+      const d = new Date(gameDate)
+      d.setDate(d.getDate() + offset)
+      datesToCheck.push(d.toISOString().slice(0, 10).replace(/-/g, ''))
+    }
+    
+    for (const dateStr of datesToCheck) {
+      const url = `https://site.api.espn.com/apis/site/v2/sports/${espnSport}/${espnLeague}/scoreboard?dates=${dateStr}`
+      const response = await fetch(url, {
+        headers: { 'Accept': 'application/json' },
+        cache: 'no-store'
+      })
+      
+      if (!response.ok) continue
+      
+      const data = await response.json()
+      const events = data.events as Record<string, unknown>[] | undefined
+      if (!events) continue
+      
+      for (const event of events) {
+        const competitions = (event as Record<string, unknown>).competitions as Record<string, unknown>[] | undefined
+        const competition = competitions?.[0]
+        if (!competition) continue
+        
+        const competitors = competition.competitors as Record<string, unknown>[] | undefined
+        if (!competitors || competitors.length < 2) continue
+        
+        const homeCompetitor = competitors.find((c) => (c as Record<string, unknown>).homeAway === 'home')
+        const awayCompetitor = competitors.find((c) => (c as Record<string, unknown>).homeAway === 'away')
+        if (!homeCompetitor || !awayCompetitor) continue
+        
+        const homeTeamObj = (homeCompetitor as Record<string, unknown>).team as Record<string, unknown> | undefined
+        const awayTeamObj = (awayCompetitor as Record<string, unknown>).team as Record<string, unknown> | undefined
+        const homeName = String(homeTeamObj?.displayName || homeTeamObj?.name || '')
+        const awayName = String(awayTeamObj?.displayName || awayTeamObj?.name || '')
+        
+        // Match if both teams are found (in either order)
+        const matchesTeam1 = teamsMatch(team1, homeName) || teamsMatch(team1, awayName)
+        const matchesTeam2 = teamsMatch(team2, homeName) || teamsMatch(team2, awayName)
+        
+        if (matchesTeam1 && matchesTeam2) {
+          const eventId = String((event as Record<string, unknown>).id || '')
+          console.log(`[SettleBets] Found ESPN event ${eventId} for "${gameName}" (${homeName} vs ${awayName})`)
+          return eventId
+        }
+      }
+    }
+    
+    console.log(`[SettleBets] Could not find ESPN event for "${gameName}" on dates ${datesToCheck.join(', ')}`)
+    return null
+  } catch (error) {
+    console.error(`[SettleBets] Error finding ESPN event for "${gameName}":`, error)
+    return null
+  }
+}
+
+/**
+ * Settle a prop bet using ESPN box score data.
+ * Handles both ESPN event IDs (numeric) and Odds API hashes (hex) as gameId.
  */
 async function settlePropBet(reco: TrackedRecommendation): Promise<{ status: 'won' | 'lost' | 'push'; actualResult: string; profit: number; actualStat: number } | null> {
   if (!reco.playerName || !reco.market) {
@@ -422,14 +500,28 @@ async function settlePropBet(reco: TrackedRecommendation): Promise<{ status: 'wo
   
   try {
     const { espnSport, espnLeague } = getESPNSportLeague(reco.sport)
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${espnSport}/${espnLeague}/summary?event=${reco.gameId}`
+    
+    // Determine ESPN event ID: if gameId looks like an ESPN ID (numeric), use it directly.
+    // Otherwise, search scoreboards to find the ESPN event by team names.
+    const isESPNId = /^\d+$/.test(reco.gameId)
+    let espnEventId = isESPNId ? reco.gameId : null
+    
+    if (!espnEventId) {
+      espnEventId = await findESPNEventId(reco.sport, reco.gameName, reco.commenceTime)
+      if (!espnEventId) {
+        console.log(`[SettleBets] Could not resolve ESPN event for prop: ${reco.selection} (game: ${reco.gameName})`)
+        return null
+      }
+    }
+    
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${espnSport}/${espnLeague}/summary?event=${espnEventId}`
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
       cache: 'no-store'
     })
     
     if (!response.ok) {
-      console.log(`[SettleBets] ESPN API error for prop game ${reco.gameId}: ${response.status}`)
+      console.log(`[SettleBets] ESPN API error for prop game ${espnEventId}: ${response.status}`)
       return null
     }
     
@@ -452,14 +544,14 @@ async function settlePropBet(reco: TrackedRecommendation): Promise<{ status: 'wo
     const boxscorePlayers = boxscore?.players as Record<string, unknown>[] | undefined
     
     if (!boxscorePlayers || boxscorePlayers.length === 0) {
-      console.log(`[SettleBets] No box score data for game ${reco.gameId}`)
+      console.log(`[SettleBets] No box score data for game ${espnEventId}`)
       return null
     }
     
     const actualStat = extractPlayerStat(boxscorePlayers, reco.playerName, statKey)
     
     if (actualStat === null) {
-      console.log(`[SettleBets] Could not find stats for ${reco.playerName} in game ${reco.gameId}`)
+      console.log(`[SettleBets] Could not find stats for ${reco.playerName} in game ${espnEventId}`)
       return null
     }
     
