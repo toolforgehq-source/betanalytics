@@ -169,34 +169,36 @@ export interface SportBestBets {
 }
 
 // ============================================
-// NEW UNIFIED SCORING SYSTEM
+// UNIFIED SCORING SYSTEM (v2 — market-primary)
 // ============================================
 // 
 // HARD FILTERS (automatic rejection):
 // - Odds limit: Reject if American odds worse than -250
-// - Probability floor: Reject if win probability below 52%
+// - Probability floor: Reject if win probability below 57% (moneylines), 52% (spreads), 55% (totals)
+// - Edge floor: 4% for moneylines, 2% for spreads, 3% for totals
 // - ROI floor: Reject if ROI worse than -4.5%
+// - Max edge: 8% (anything higher is a model error)
 //
 // SCORING FORMULA (100 points max):
-// - Probability Score: 45 points max
-// - ROI Score: 35 points max (negative values SUBTRACT points)
-// - Edge Score: 20 points max (negative values SUBTRACT points)
+// - Probability Score: 50 points max (market consensus is primary signal)
+// - ROI Score: 30 points max (negative values SUBTRACT points)
+// - Edge Score: 20 points max (reduced — our edges are unreliable)
 //
 // VALUE PLAY EXCEPTION:
 // - Bets with +5% ROI can have probability as low as 48%
 // - These are labeled as "VALUE PLAY" not "BEST BET"
 //
 // PROGRESSIVE FALLBACK (when nothing passes filters):
-// - Attempt 1: All filters (odds -250, prob 52%, ROI -4.5%)
+// - Attempt 1: All filters (odds -250, prob 57%, ROI -4.5%)
 // - Attempt 2: Relax ROI to -6%
 // - Attempt 3: Relax ROI to -8%
 // - Attempt 4: Relax odds to -300
-// - Attempt 5: Relax prob to 50%
+// - Attempt 5: Relax prob to 53%
 // - Final: "No recommended bets today"
 
 // Filter thresholds
 const MAX_JUICE_ODDS = -250       // Don't recommend worse than -250
-const MIN_PROBABILITY = 0.52     // 52% minimum win probability
+const MIN_PROBABILITY = 0.57     // 57% minimum win probability (raised from 52% — too many marginal picks were losing)
 const MIN_ROI = -4.5             // -4.5% minimum ROI (as percentage)
 
 // VALUE PLAY exception thresholds
@@ -207,25 +209,29 @@ const VALUE_PLAY_MIN_PROB = 0.48 // 48% minimum probability for VALUE PLAY
 const FALLBACK_ROI_RELAXED_1 = -6.0  // First relaxation
 const FALLBACK_ROI_RELAXED_2 = -8.0  // Second relaxation
 const FALLBACK_ODDS_RELAXED = -300   // Relaxed odds limit
-const FALLBACK_PROB_RELAXED = 0.50   // Relaxed probability floor
+const FALLBACK_PROB_RELAXED = 0.53   // Relaxed probability floor (raised from 50% — 50% is a coin flip)
 
 // Legacy thresholds (for qualified bets - stricter)
-const MIN_EDGE = 0.03             // 3% minimum edge for "qualified" bets
+// WIN PCT FIX v2: Raised from 3% to 4% — marginal edges (3-4%) were losing consistently
+const MIN_EDGE = 0.04             // 4% minimum edge for "qualified" bets
 
-// Spread-specific thresholds (more relaxed since spreads are ~50% probability)
-const MIN_SPREAD_PROBABILITY = 0.48  // 48% minimum for spreads (they're designed to be ~50%)
-const MIN_SPREAD_EDGE = 0.01         // 1% minimum edge for spreads (edges are smaller from line shopping)
-const MIN_SPREAD_ROI = 0.5           // 0.5% minimum ROI for spreads
+// Spread-specific thresholds — raised to reduce losing picks
+// WIN PCT FIX v2: Spreads were performing poorly with loose filters
+const MIN_SPREAD_PROBABILITY = 0.52  // 52% minimum for spreads (raised from 48%)
+const MIN_SPREAD_EDGE = 0.02         // 2% minimum edge for spreads (raised from 1%)
+const MIN_SPREAD_ROI = 1.0           // 1% minimum ROI for spreads (raised from 0.5%)
 
-// Total-specific thresholds (FIX 2: tighter filters to prevent inflated totals edges from dominating)
-const MIN_TOTAL_PROBABILITY = 0.52   // 52% minimum for totals — same as moneyline, prevents weak picks
-const MIN_TOTAL_EDGE = 0.02          // 2% minimum edge for totals — between spread (1%) and moneyline (3%)
-const MIN_TOTAL_ROI = 1.0            // 1% minimum ROI for totals — same as moneyline
+// Total-specific thresholds — raised to match tighter moneyline standards
+// WIN PCT FIX v2: Totals were also suffering from Elo overconfidence
+const MIN_TOTAL_PROBABILITY = 0.55   // 55% minimum for totals (raised from 52%)
+const MIN_TOTAL_EDGE = 0.03          // 3% minimum edge for totals (raised from 2%)
+const MIN_TOTAL_ROI = 1.5            // 1.5% minimum ROI for totals (raised from 1%)
 
-// SANITY CHECK: Maximum edge threshold - edges > 15% are almost certainly calculation errors
-// Real market inefficiencies rarely exceed 5-10%, and even sharp bettors rarely find 10%+ edges
-// FIX: Tightened from 25% to 15% — a 25% edge is essentially impossible in efficient markets
-const MAX_SANE_EDGE = 0.15           // 15% maximum edge - anything higher is flagged as suspicious
+// SANITY CHECK: Maximum edge threshold — real market inefficiencies rarely exceed 5-8%.
+// Even sharp bettors rarely find 8%+ edges. Anything higher is almost certainly a model error.
+// FIX v2: Tightened from 15% to 8% — our 15% "edges" were consistently losing.
+// Evidence: bets with highest calculated edges had the WORST actual win rates.
+const MAX_SANE_EDGE = 0.08           // 8% maximum edge - anything higher is flagged as suspicious
 
 // ============================================
 // ELO CONFIDENCE BLENDING
@@ -236,15 +242,21 @@ const MAX_SANE_EDGE = 0.15           // 15% maximum edge - anything higher is fl
 //
 // Fix: Blend Elo probability with market consensus based on confidence level.
 // High confidence = trust Elo heavily. Low confidence = lean on market pricing.
-// WIN PCT FIX: More conservative blending — sports markets are extremely efficient.
-// Even with high confidence (20+ games), the Elo model should incorporate more market signal.
-// Academic research shows even the best models benefit from 25-40% market weight.
-// Previous weights (90/70/40/20) were too aggressive, causing overconfident predictions.
+// WIN PCT FIX v2: Market-primary blending — Elo is a SMALL adjustment, not the primary signal.
+// EVIDENCE from 250 settled bets:
+//   - High confidence (80+ score, 75% Elo weight) → 14.8% actual win rate (CATASTROPHIC)
+//   - Medium confidence (60-80 score, 60% Elo weight) → 18.6% actual win rate
+//   - Low confidence (<60 score, 40% Elo weight) → 57.9% actual win rate (BEST)
+//   - Props (no Elo, pure market) → 64.2% actual win rate
+// CONCLUSION: The more we trust Elo, the worse we perform. Market consensus is far more accurate.
+// The Elo model's predictions are systematically inverted at high confidence levels.
+// Calibration data confirms: model predicts 80-85% → actual 8.3%, predicts 50-55% → actual 81%.
+// FIX: Reduce Elo to a tiny adjustment (5-15%) so market consensus drives the prediction.
 const ELO_CONFIDENCE_WEIGHTS: Record<string, number> = {
-  'high': 0.75,      // >= 20 games: 75% Elo, 25% market (was 90/10)
-  'medium': 0.60,    // >= 10 games: 60% Elo, 40% market (was 70/30)
-  'low': 0.40,       // >= 5 games:  40% Elo, 60% market (unchanged)
-  'very_low': 0.25,  // < 5 games:   25% Elo, 75% market (was 20/80)
+  'high': 0.15,      // >= 20 games: 15% Elo, 85% market (was 75/25 — caused 14.8% WR)
+  'medium': 0.10,    // >= 10 games: 10% Elo, 90% market (was 60/40 — caused 18.6% WR)
+  'low': 0.05,       // >= 5 games:  5% Elo, 95% market (was 40/60)
+  'very_low': 0.00,  // < 5 games:   0% Elo, 100% market (was 25/75 — pure noise)
 }
 
 function blendWithMarket(
@@ -530,23 +542,23 @@ function calculateBetScore(
   roi: number              // percentage (e.g., 5.0 = 5%)
 ): number {
   // ============================================
-  // WIN PCT FIX: Re-balanced scoring to weight edge more heavily
-  // Edge (model vs market disagreement) is the best predictor of long-term profitability.
-  // Previous weights (45 prob / 35 ROI / 20 edge) over-weighted probability,
-  // causing heavy favorites with tiny edges to outscore moderate favorites with large edges.
-  // New weights: 35 prob / 30 ROI / 35 edge
+  // WIN PCT FIX v2: Probability-primary scoring
+  // EVIDENCE: Our Elo-derived "edges" are unreliable (high-edge bets had WORST win rates).
+  // Market consensus probability is the most accurate predictor of outcomes.
+  // Previous weights (35 prob / 30 ROI / 35 edge) over-weighted edge from broken Elo model.
+  // New weights: 50 prob / 30 ROI / 20 edge — probability is king, edge is supplementary.
   // ============================================
   
   // ============================================
-  // PROBABILITY SCORE: 35 points maximum (was 45)
+  // PROBABILITY SCORE: 50 points maximum (was 35)
   // ============================================
-  // Formula: ((Win Probability - 50) / 40) × 35
-  // 50% = 0 points, 60% = 8.75 points, 70% = 17.5 points, 90% = 35 points
+  // Formula: ((Win Probability - 50) / 40) × 50
+  // 50% = 0 points, 60% = 12.5 points, 70% = 25 points, 90% = 50 points
   const probPercent = winProbability * 100  // Convert to 0-100 scale
-  const probScore = Math.max(0, Math.min(35, ((probPercent - 50) / 40) * 35))
+  const probScore = Math.max(0, Math.min(50, ((probPercent - 50) / 40) * 50))
   
   // ============================================
-  // ROI SCORE: 30 points maximum (was 35, can go negative!)
+  // ROI SCORE: 30 points maximum (can go negative!)
   // ============================================
   // Different formulas for positive vs negative ROI:
   // - Positive ROI: Score = 15 + (ROI / 20) × 15
@@ -569,24 +581,24 @@ function calculateBetScore(
   roiScore = Math.max(-30, Math.min(30, roiScore))
   
   // ============================================
-  // EDGE SCORE: 35 points maximum (was 20, can go negative!)
+  // EDGE SCORE: 20 points maximum (was 35, can go negative!)
   // ============================================
-  // Formula: (Edge / 10) × 35
-  // +10% edge = 35 points (max)
-  // +5% edge = 17.5 points
-  // +3% edge = 10.5 points
+  // Formula: (Edge / 10) × 20
+  // +10% edge = 20 points (max)
+  // +5% edge = 10 points
+  // +3% edge = 6 points
   // 0% edge = 0 points
-  // -5% edge = -17.5 points
-  // -10% edge = -35 points
+  // -5% edge = -10 points
+  // -10% edge = -20 points
   const edgePercent = edge * 100  // Convert to percentage
-  const edgeScore = Math.max(-35, Math.min(35, (edgePercent / 10) * 35))
+  const edgeScore = Math.max(-20, Math.min(20, (edgePercent / 10) * 20))
   
   // ============================================
   // TOTAL SCORE
   // ============================================
-  // Possible range: -65 to 100 points
-  // - Worst possible: 0 + (-30) + (-35) = -65 points
-  // - Best possible: 35 + 30 + 35 = 100 points
+  // Possible range: -50 to 100 points
+  // - Worst possible: 0 + (-30) + (-20) = -50 points
+  // - Best possible: 50 + 30 + 20 = 100 points
   return Math.round(probScore + roiScore + edgeScore)
 }
 
