@@ -38,7 +38,7 @@ const faqSchema = {
       name: 'How accurate are AI sports picks?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: 'We show probabilities, not guarantees. When we say 60%, you should expect to win roughly 60% of similar bets over time. We log every recommendation so you can verify our accuracy on our Model Picks page.',
+        text: 'We show probabilities, not guarantees. When we say 60%, you should expect to win roughly 60% of similar bets over time. We log every recommendation so you can verify our accuracy.',
       },
     },
     {
@@ -78,7 +78,7 @@ const faqSchema = {
       name: 'Can I see your track record before subscribing?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: "Yes. Our Model Picks page is completely public. Every pick our model makes is recorded and automatically graded after games complete. You can see win rates, ROI, and performance breakdowns by sport and bet type.",
+        text: "Yes. Every pick our model makes is recorded and automatically graded after games complete. Subscribers can see win rates, ROI, and performance breakdowns by sport and bet type.",
       },
     },
   ],
@@ -112,14 +112,8 @@ export default function HomePage() {
 
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-5">
-              <Link href="/picks" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Track Record
-              </Link>
               <Link href="/odds" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Odds Board
-              </Link>
-              <Link href="/performance" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Performance
               </Link>
               <Link href="/betslip" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Parlay Builder
@@ -177,11 +171,11 @@ export default function HomePage() {
                 <ArrowRight className="w-5 h-5" />
               </Link>
               <Link
-                href="/picks"
+                href="/methodology"
                 className="px-8 py-4 bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/40 rounded-xl font-semibold text-lg transition-colors flex items-center justify-center gap-2"
               >
                 <Eye className="w-5 h-5" />
-                See Track Record
+                See Our Methodology
               </Link>
             </div>
             <p className="text-sm text-slate-500">
@@ -305,7 +299,7 @@ export default function HomePage() {
                       icon={<Target className="w-5 h-5 text-blue-400" />}
                       title="Elo Edge Detection"
                       text="Independent probabilities for 692 teams. Find where the model disagrees with the market."
-                      href="/picks"
+                      href="/chat"
                     />
                     <Feature
                       icon={<Search className="w-5 h-5 text-green-400" />}
@@ -323,7 +317,7 @@ export default function HomePage() {
                       icon={<BarChart3 className="w-5 h-5 text-orange-400" />}
                       title="Performance Dashboard"
                       text="Full transparency. Win rates, ROI, calibration by sport and bet type. Every pick graded."
-                      href="/performance"
+                      href="/chat"
                     />
                     <Feature
                       icon={<Activity className="w-5 h-5 text-red-400" />}
@@ -399,7 +393,7 @@ export default function HomePage() {
                 />
                 <FAQItem
                   question="Can I see your track record before subscribing?"
-                  answer="Yes. Our Model Picks page is 100% public. Every pick is recorded and graded after games complete. You can see win rates, ROI, and performance breakdowns by sport and bet type before you pay anything."
+                  answer="Yes. Every pick our model makes is recorded and graded after games complete. Subscribers can see win rates, ROI, and performance breakdowns by sport and bet type."
                 />
                 <FAQItem
                   question="What makes this different from other betting tools?"
@@ -440,11 +434,11 @@ export default function HomePage() {
                 <ArrowRight className="w-5 h-5" />
               </Link>
               <Link
-                href="/picks"
+                href="/methodology"
                 className="px-8 py-4 bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/40 rounded-xl font-semibold text-lg transition-colors flex items-center justify-center gap-2"
               >
                 <Eye className="w-5 h-5" />
-                View Track Record
+                See Our Methodology
               </Link>
             </div>
           </div>

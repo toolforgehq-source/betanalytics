@@ -31,12 +31,6 @@ export default function BetSlipPage() {
 
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-6">
-              <Link href="/picks" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Model Picks
-              </Link>
-              <Link href="/performance" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Performance
-              </Link>
               <Link href="/odds" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Odds Board
               </Link>
