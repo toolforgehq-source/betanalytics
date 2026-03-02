@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Trophy, TrendingUp, BarChart3, Clock, Lock, Zap, Target, CheckCircle, XCircle, Minus } from 'lucide-react'
+import { Trophy, TrendingUp, BarChart3, Clock, Lock, Zap, CheckCircle, XCircle, Minus } from 'lucide-react'
 import Footer from '@/components/Footer'
 
 interface TierStats {
@@ -18,7 +18,6 @@ interface PerformanceData {
   overall: TierStats
   lock: TierStats
   strong: TierStats
-  value: TierStats
   recentPicks: RecentPick[]
   startDate: string
 }
@@ -101,20 +100,18 @@ export default function PerformancePage() {
           return { wins, losses, pushes, total, winRate: total > 0 ? (wins / total) * 100 : 0 }
         }
 
-        // Count all settled picks across all tiers
-        const trackedPicks = settled
+        // Only count Lock and Strong Play picks (value spots are not publicly tracked)
+        const trackedPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
         const lockPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock')
         const strongPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'strong')
-        const valuePicks = settled.filter((r: RecentPick) => r.confidenceTier === 'value' || !r.confidenceTier)
 
-        // Show all picks in recent list
-        const trackedRecos = recos
+        // Only show lock + strong picks in recent list
+        const trackedRecos = recos.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
 
         setData({
           overall: buildStats(trackedPicks),
           lock: buildStats(lockPicks),
           strong: buildStats(strongPicks),
-          value: buildStats(valuePicks),
           recentPicks: trackedRecos.slice(0, 30),
           startDate: new Date().toISOString()
         })
@@ -164,6 +161,7 @@ export default function PerformancePage() {
           </h1>
           <p className="text-slate-400 max-w-2xl mx-auto">
             Every pick is tracked and graded automatically. Full transparency — see exactly how each confidence tier performs.
+            Fresh tracking started with our upgraded model.
           </p>
         </div>
 
@@ -219,31 +217,26 @@ export default function PerformancePage() {
               <StatCard
                 label="Total Picks Tracked"
                 value={`${data.overall.total + data.overall.pushes}`}
+                subtext="Since model upgrade"
                 color="text-cyan-400"
               />
             </div>
 
             {/* Tier Breakdown */}
             <div className="bg-slate-900/30 border border-slate-800/50 rounded-xl p-6 mb-10">
-                <h3 className="text-lg font-bold mb-4">Performance by Tier</h3>
-                <TierRow
-                  label="Lock of the Day"
-                  icon={<Lock className="w-4 h-4 text-yellow-400" />}
-                  stats={data.lock}
-                  color="text-yellow-400"
-                />
-                <TierRow
-                  label="Strong Play"
-                  icon={<Zap className="w-4 h-4 text-blue-400" />}
-                  stats={data.strong}
-                  color="text-blue-400"
-                />
-                <TierRow
-                  label="Value Spot"
-                  icon={<Target className="w-4 h-4 text-slate-400" />}
-                  stats={data.value}
-                  color="text-slate-400"
-                />
+              <h3 className="text-lg font-bold mb-4">Performance by Tier</h3>
+              <TierRow
+                label="Lock of the Day"
+                icon={<Lock className="w-4 h-4 text-yellow-400" />}
+                stats={data.lock}
+                color="text-yellow-400"
+              />
+              <TierRow
+                label="Strong Play"
+                icon={<Zap className="w-4 h-4 text-blue-400" />}
+                stats={data.strong}
+                color="text-blue-400"
+              />
             </div>
 
             {/* Recent Picks */}

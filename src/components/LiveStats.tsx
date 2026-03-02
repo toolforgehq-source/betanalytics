@@ -12,6 +12,13 @@ interface StatsData {
   losses: number
 }
 
+interface RecoData {
+  status: string
+  confidenceTier?: string
+  odds?: number
+  profit?: number
+}
+
 export default function LiveStats() {
   const [stats, setStats] = useState<StatsData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -22,14 +29,41 @@ export default function LiveStats() {
         const res = await fetch('/api/picks')
         if (!res.ok) return
         const data = await res.json()
-        if (data.success && data.stats) {
+        if (data.success && data.recentRecommendations) {
+          // Filter to Lock + Strong only to match performance page
+          const recos: RecoData[] = data.recentRecommendations || []
+          const tracked = recos.filter((r) => 
+            (r.status === 'won' || r.status === 'lost') &&
+            (r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
+          )
+          const wins = tracked.filter(r => r.status === 'won').length
+          const losses = tracked.filter(r => r.status === 'lost').length
+          const total = wins + losses
+          const winRate = total > 0 ? (wins / total) * 100 : 0
+
+          // Calculate ROI from profit data
+          let totalProfit = 0
+          for (const r of tracked) {
+            if (r.profit != null) {
+              totalProfit += r.profit
+            } else if (r.odds) {
+              // Estimate profit: won = payout based on odds, lost = -1 unit
+              if (r.status === 'won') {
+                totalProfit += r.odds > 0 ? r.odds / 100 : 100 / Math.abs(r.odds)
+              } else {
+                totalProfit -= 1
+              }
+            }
+          }
+          const roi = total > 0 ? (totalProfit / total) * 100 : 0
+
           setStats({
-            winRate: data.stats.winRate || 0,
-            totalBets: data.stats.totalBets || 0,
-            settledBets: data.stats.settledBets || 0,
-            roi: data.stats.roi || 0,
-            wins: data.stats.wins || 0,
-            losses: data.stats.losses || 0,
+            winRate,
+            totalBets: total,
+            settledBets: total,
+            roi,
+            wins,
+            losses,
           })
         }
       } catch {
