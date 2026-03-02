@@ -158,7 +158,7 @@ export default async function MethodologyPage() {
           <section className="mb-12">
             <h2 className="text-2xl font-bold mb-4">Our Implementation</h2>
             <p className="text-slate-300 mb-6">
-              We track <strong className="text-white">692 teams</strong> across all major sports leagues using <strong className="text-white">3+ months</strong> of historical game data. Our system processes results daily to keep ratings current.
+              We track <strong className="text-white">800+ teams</strong> across all major sports leagues using <strong className="text-white">3+ months</strong> of historical game data. Our system processes results daily to keep ratings current.
             </p>
             
             <h3 className="text-xl font-semibold mb-3">Sports Covered</h3>

@@ -22,7 +22,7 @@ const posts: BlogPost[] = [
     tags: ["elo-ratings", "sports-betting", "strategy"],
     content: `Sports bettors are always looking for an edge. Most rely on gut feelings, trends, or whatever the talking heads on TV say. But what if there was a mathematical system that could independently calculate win probabilities and compare them to what the market thinks? That system exists, and it is called Elo ratings.
 
-Originally developed by physicist Arpad Elo for chess, the Elo rating system has become one of the most reliable methods for measuring relative team strength in sports. At BetAnalytics.ai, we use Elo ratings as the foundation of our entire betting analytics platform, tracking 692 teams across every major sport.
+Originally developed by physicist Arpad Elo for chess, the Elo rating system has become one of the most reliable methods for measuring relative team strength in sports. At BetAnalytics.ai, we use Elo ratings as the foundation of our entire betting analytics platform, tracking 800+ teams across every major sport.
 
 ## What Are Elo Ratings?
 
@@ -163,7 +163,7 @@ Absolutely. The math is straightforward, and historical game results are freely 
 
 Elo ratings are a powerful, transparent, and mathematically sound way to find betting edges. Unlike black-box models that give you a pick without explanation, Elo shows you exactly why a bet has value.
 
-At BetAnalytics.ai, we have done the heavy lifting: tracking 692 teams, calculating injury adjustments in real-time, and comparing our probabilities to the market across every major sport. You see the math behind every recommendation.
+At BetAnalytics.ai, we have done the heavy lifting: tracking 800+ teams, calculating injury adjustments in real-time, and comparing our probabilities to the market across every major sport. You see the math behind every recommendation.
 
 **Ready to find edges the market is missing?** [Start your 3-day free trial](/signup) and see our Elo-based analysis in action. No credit card required.
 
@@ -219,7 +219,7 @@ To find the true implied probability, remove the vig:
 
 ### Method 1: Build Your Own Model
 
-The most reliable way to find value is to independently calculate win probabilities. At BetAnalytics.ai, we use Elo ratings across 692 teams to do exactly this. When our model says 65% but the market implies 58%, that 7% gap is potential value.
+The most reliable way to find value is to independently calculate win probabilities. At BetAnalytics.ai, we use Elo ratings across 800+ teams to do exactly this. When our model says 65% but the market implies 58%, that 7% gap is potential value.
 
 The key word is *independently*. If your probability estimate is just the market odds repackaged, you will never find value. Your model must use different data, different methods, or different assumptions than what the market is pricing in.
 
@@ -1271,7 +1271,7 @@ Does the platform publish historical results? Can you verify their claimed accur
 
 **Best for:** Bettors who want to understand the math behind every recommendation
 
-**What it does:** Uses Elo ratings to calculate independent win probabilities across 692 teams in NBA, NFL, NHL, MLB, college sports, and major soccer leagues. Compares model probabilities to market odds to find edges.
+**What it does:** Uses Elo ratings to calculate independent win probabilities across 800+ teams in NBA, NFL, NHL, MLB, college sports, and major soccer leagues. Compares model probabilities to market odds to find edges.
 
 **Key features:**
 - Real-time injury adjustments (quantified, not just mentioned)
@@ -2461,7 +2461,7 @@ The EV formula requires you to know the true probability of an outcome. But how 
 
 ### Method 1: Build a Model
 
-This is the gold standard. At BetAnalytics.ai, we use Elo ratings across 692 teams to calculate independent win probabilities. The model accounts for:
+This is the gold standard. At BetAnalytics.ai, we use Elo ratings across 800+ teams to calculate independent win probabilities. The model accounts for:
 
 - Team strength (Elo ratings)
 - Injury adjustments (real-time ESPN data)

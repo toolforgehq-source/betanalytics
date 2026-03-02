@@ -96,7 +96,7 @@ export function welcomeEmail(name: string | null): { subject: string; html: stri
         </tr>
       </table>
       <p style="color:${TEXT_COLOR};font-size:16px;line-height:1.6;margin:0 0 8px 0;">
-        We cover NBA, NFL, NHL, MLB, college sports, and major soccer leagues — 692 teams total.
+        We cover NBA, NFL, NHL, MLB, college sports, and major soccer leagues — 800+ teams total.
       </p>
       ${ctaButton('Start Exploring Edges', 'https://betanalytics.ai/chat')}
       <p style="color:${MUTED_COLOR};font-size:14px;margin:0;">
@@ -192,7 +192,7 @@ export function day3TrialEnding(name: string | null): { subject: string; html: s
         </tr>
         <tr>
           <td style="padding:6px 12px 6px 0;color:${ACCENT_COLOR};font-size:16px;">&#10003;</td>
-          <td style="padding:6px 0;color:${TEXT_COLOR};font-size:15px;">Hourly odds updates across 692 teams</td>
+          <td style="padding:6px 0;color:${TEXT_COLOR};font-size:15px;">Hourly odds updates across 800+ teams</td>
         </tr>
       </table>
 
@@ -224,7 +224,7 @@ export function day5TrialExpired(name: string | null): { subject: string; html: 
 
       <table cellpadding="0" cellspacing="0" style="margin:0 0 20px 0;">
         <tr>
-          <td style="padding:6px 12px 6px 0;color:${ACCENT_COLOR};font-size:18px;font-weight:700;">692</td>
+          <td style="padding:6px 12px 6px 0;color:${ACCENT_COLOR};font-size:18px;font-weight:700;">800+</td>
           <td style="padding:6px 0;color:${TEXT_COLOR};font-size:15px;">teams tracked and rated daily</td>
         </tr>
         <tr>

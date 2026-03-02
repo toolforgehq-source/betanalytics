@@ -132,7 +132,7 @@ export default function BlogPage() {
           <div className="mt-16 text-center bg-gradient-to-br from-blue-900/20 to-cyan-900/20 backdrop-blur-sm border border-blue-500/30 rounded-2xl p-8">
             <h2 className="text-2xl font-bold mb-3">Ready to Find Edges The Market Is Missing?</h2>
             <p className="text-slate-300 mb-6">
-              Our Elo rating system tracks 692 teams with real-time injury adjustments across every major sport.
+              Our Elo rating system tracks 800+ teams with real-time injury adjustments across every major sport.
             </p>
             <Link
               href="/signup"

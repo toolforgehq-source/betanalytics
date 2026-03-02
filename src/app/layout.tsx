@@ -23,7 +23,7 @@ export const metadata: Metadata = {
     template: "%s | BetAnalytics.ai",
   },
   description:
-    "AI-powered sports betting analytics using Elo ratings. Find edges where our model disagrees with the market. 692 teams tracked across NBA, NFL, NHL, MLB. Start your 3-day free trial.",
+    "AI-powered sports betting analytics using Elo ratings. Find edges where our model disagrees with the market. 800+ teams tracked across NBA, NFL, NHL, MLB. Start your 3-day free trial.",
   metadataBase: new URL(siteUrl),
   alternates: {
     canonical: "/",
@@ -127,7 +127,7 @@ export default function RootLayout({
                 "Real-time injury-adjusted probabilities",
                 "Player prop analysis",
                 "Full methodology transparency",
-                "692 teams tracked",
+                "800+ teams tracked",
                 "Hourly data updates",
               ],
             }),

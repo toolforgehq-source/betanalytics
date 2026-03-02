@@ -87,7 +87,7 @@ export default function LiveStats() {
       <StatPill
         icon={<Activity className="w-4 h-4" />}
         label="Teams Tracked"
-        value="692"
+        value="800+"
         color="text-cyan-400"
       />
       <StatPill

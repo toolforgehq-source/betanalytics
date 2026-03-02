@@ -103,7 +103,7 @@ export default function EloLookupPage() {
           <div className="text-center mb-12">
             <h1 className="text-3xl md:text-4xl font-bold mb-4">Elo Rating Lookup</h1>
             <p className="text-slate-400 text-lg max-w-xl mx-auto">
-              Search Elo ratings for 692 teams across NBA, NFL, NHL, MLB, college sports, and soccer. See where every team ranks.
+              Search Elo ratings for 800+ teams across NBA, NFL, NHL, MLB, college sports, and soccer. See where every team ranks.
             </p>
           </div>
 
@@ -131,7 +131,7 @@ export default function EloLookupPage() {
               </select>
             </div>
 
-            <div className="text-xs text-slate-500 mb-4">{filteredTeams.length} teams shown (sample data &mdash; subscribe for live ratings across all 692 teams)</div>
+            <div className="text-xs text-slate-500 mb-4">{filteredTeams.length} teams shown (sample data &mdash; subscribe for live ratings across all 800+ teams)</div>
 
             <div className="space-y-2">
               {filteredTeams.map((team) => {
@@ -211,7 +211,7 @@ export default function EloLookupPage() {
           </div>
 
           <div className="text-center">
-            <h2 className="text-2xl font-bold mb-3">Get Live Elo Ratings for All 692 Teams</h2>
+            <h2 className="text-2xl font-bold mb-3">Get Live Elo Ratings for All 800+ Teams</h2>
             <p className="text-slate-400 mb-6">This is a sample. Subscribe to get real-time Elo ratings updated after every game, with injury adjustments and edge detection.</p>
             <Link href="/signup" className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25">
               Start Free Trial <ArrowRight className="w-5 h-5" />

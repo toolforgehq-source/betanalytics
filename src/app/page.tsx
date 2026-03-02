@@ -9,13 +9,13 @@ import ScrollReveal from '@/components/ScrollReveal'
 
 export const metadata = {
   title: 'Sports Betting AI | Elo-Based Edge Detection - BetAnalytics.ai',
-  description: 'AI-powered sports betting analytics using Elo ratings. Find edges where our model disagrees with the market. 692 teams tracked across NBA, NFL, NHL, MLB. Every pick tracked and verified. 3-day free trial.',
+  description: 'AI-powered sports betting analytics using Elo ratings. Find edges where our model disagrees with the market. 800+ teams tracked across NBA, NFL, NHL, MLB. Every pick tracked and verified. 3-day free trial.',
   alternates: {
     canonical: 'https://betanalytics.ai',
   },
   openGraph: {
     title: 'Sports Betting AI | Elo-Based Edge Detection - BetAnalytics.ai',
-    description: 'Find edges where our Elo model disagrees with the market. Every pick tracked and verified. 692 teams, real-time injury adjustments. 3-day free trial.',
+    description: 'Find edges where our Elo model disagrees with the market. Every pick tracked and verified. 800+ teams, real-time injury adjustments. 3-day free trial.',
     url: 'https://betanalytics.ai',
     type: 'website' as const,
   },
@@ -257,7 +257,7 @@ export default function HomePage() {
                 <StepCard
                   number={1}
                   title="Elo Ratings"
-                  description="We rate every team like chess. Win = rating up, lose = rating down. 692 teams across all major sports, updated daily."
+                  description="We rate every team like chess. Win = rating up, lose = rating down. 800+ teams across all major sports, updated daily."
                   detail="3+ months of game history, recency-weighted"
                 />
                 <StepCard
@@ -299,7 +299,7 @@ export default function HomePage() {
                     <Feature
                       icon={<Target className="w-5 h-5 text-blue-400" />}
                       title="Elo Edge Detection"
-                      text="Independent probabilities for 692 teams. Find where the model disagrees with the market."
+                      text="Independent probabilities for 800+ teams. Find where the model disagrees with the market."
                       href="/chat"
                     />
                     <Feature
