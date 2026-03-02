@@ -78,7 +78,7 @@ export default function LiveStats() {
   if (loading) return null
 
   // If we have enough settled bets, show real stats
-  if (stats && stats.settledBets >= 5) {
+  if (stats && stats.settledBets >= 3) {
     return (
       <div className="flex flex-wrap justify-center gap-4 md:gap-8">
         <StatPill
