@@ -38,19 +38,19 @@ export const metadata: Metadata = {
       "Elo-based edge detection across NBA, NFL, NHL, MLB & more. Quantified injury adjustments, full methodology transparency. 3-day free trial.",
     images: [
       {
-        url: `${siteUrl}/logo.png`,
-        width: 512,
-        height: 512,
-        alt: "BetAnalytics.ai Logo",
+        url: `${siteUrl}/og-image.png`,
+        width: 1200,
+        height: 630,
+        alt: "BetAnalytics.ai - The Sports Betting AI That Shows Its Math",
       },
     ],
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "BetAnalytics.ai - AI-Powered Sports Betting Intelligence",
     description:
       "Elo-based edge detection across NBA, NFL, NHL, MLB & more. Quantified injury adjustments. 3-day free trial.",
-    images: [`${siteUrl}/logo.png`],
+    images: [`${siteUrl}/og-image.png`],
   },
   robots: {
     index: true,
