@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Logo from '@/components/Logo'
@@ -14,6 +14,19 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+
+  // Read referral code from cookie
+  const [refCode, setRefCode] = useState<string | null>(null)
+  useEffect(() => {
+    const cookies = document.cookie.split(';')
+    for (const cookie of cookies) {
+      const [key, value] = cookie.trim().split('=')
+      if (key === 'ref_code' && value) {
+        setRefCode(decodeURIComponent(value))
+        break
+      }
+    }
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -37,7 +50,7 @@ export default function SignupPage() {
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password, refCode: refCode || undefined }),
       })
 
       const data = await response.json()

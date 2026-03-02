@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server"
+import { cookies } from "next/headers"
 import { auth } from "@/auth"
 import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { db } from "@/db"
@@ -31,6 +32,10 @@ export async function POST() {
       return NextResponse.json({ error: "Already subscribed" }, { status: 400 })
     }
 
+    // Check for referral code in cookie
+    const cookieStore = await cookies()
+    const refCode = cookieStore.get('ref_code')?.value || undefined
+
     const checkoutSession = await stripe.checkout.sessions.create({
       customer_email: user.email,
       line_items: [
@@ -44,6 +49,7 @@ export async function POST() {
       cancel_url: `${process.env.NEXTAUTH_URL}/pricing?canceled=true`,
       metadata: {
         userId: session.user.id,
+        ...(refCode ? { refCode } : {}),
       },
     })
 

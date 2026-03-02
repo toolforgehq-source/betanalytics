@@ -6,7 +6,7 @@ import { isEmailConfigured } from "@/lib/email"
 
 export async function POST(request: Request) {
   try {
-    const { email, password, name } = await request.json()
+    const { email, password, name, refCode } = await request.json()
 
     if (!email || !password) {
       return NextResponse.json(
@@ -48,6 +48,27 @@ export async function POST(request: Request) {
       termsAcceptedAt: null,
       questionCount: 0,
     })
+
+    // Track referral conversion if a referral code was provided
+    if (refCode) {
+      try {
+        const referral = await db.referrals.findByCode(refCode)
+        if (referral && referral.active) {
+          await db.referralConversions.create({
+            referralId: referral.id,
+            referralCode: referral.code,
+            userId: newUser.id,
+            stripeSubscriptionId: null,
+            status: 'signed_up',
+            subscribedAt: null,
+          })
+          console.log(`[Signup] Referral conversion tracked: code=${refCode}, userId=${newUser.id}`)
+        }
+      } catch (refErr) {
+        // Don't fail signup if referral tracking fails
+        console.error('[Signup] Failed to track referral:', refErr)
+      }
+    }
 
     if (isEmailConfigured()) {
       sendWelcomeEmail(newUser.id, newUser.email, newUser.name).catch((err) => {

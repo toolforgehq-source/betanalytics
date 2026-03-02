@@ -68,6 +68,38 @@ export async function POST(request: Request) {
         cancelAtPeriodEnd: subscription.cancel_at_period_end,
       })
 
+      // Update referral conversion to 'subscribed' if this user was referred
+      const refCode = session.metadata?.refCode
+      if (refCode) {
+        try {
+          const existingConversion = await db.referralConversions.findByUserId(userId)
+          if (existingConversion) {
+            await db.referralConversions.update(existingConversion.id, {
+              status: 'subscribed',
+              stripeSubscriptionId: subscription.id,
+              subscribedAt: new Date().toISOString(),
+            })
+            console.log(`[Stripe Webhook] Referral conversion updated to subscribed: userId=${userId}, refCode=${refCode}`)
+          } else {
+            // User might have signed up without the referral tracking, but used ref link for checkout
+            const referral = await db.referrals.findByCode(refCode)
+            if (referral && referral.active) {
+              await db.referralConversions.create({
+                referralId: referral.id,
+                referralCode: referral.code,
+                userId,
+                stripeSubscriptionId: subscription.id,
+                status: 'subscribed',
+                subscribedAt: new Date().toISOString(),
+              })
+              console.log(`[Stripe Webhook] New referral conversion created at subscription: userId=${userId}, refCode=${refCode}`)
+            }
+          }
+        } catch (refErr) {
+          console.error('[Stripe Webhook] Failed to update referral conversion:', refErr)
+        }
+      }
+
       markUserConverted(userId).catch((err) => {
         console.error('[Stripe Webhook] Failed to mark user converted for email sequence:', err)
       })
@@ -93,6 +125,21 @@ export async function POST(request: Request) {
       await db.subscriptions.updateByStripeSubscriptionId(subscription.id, {
         status: 'canceled',
       })
+
+      // Mark referral conversion as churned if applicable
+      const canceledSub = await db.subscriptions.findByStripeSubscriptionId(subscription.id)
+      if (canceledSub) {
+        try {
+          const refConversion = await db.referralConversions.findByUserId(canceledSub.userId)
+          if (refConversion && refConversion.status === 'subscribed') {
+            await db.referralConversions.update(refConversion.id, {
+              status: 'churned',
+            })
+          }
+        } catch (refErr) {
+          console.error('[Stripe Webhook] Failed to update referral churn:', refErr)
+        }
+      }
       break
     }
   }

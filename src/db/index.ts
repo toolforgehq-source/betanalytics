@@ -27,6 +27,27 @@ export interface Subscription {
   updatedAt: string
 }
 
+export interface Referral {
+  id: string
+  code: string
+  partnerName: string
+  partnerEmail: string | null
+  commissionPercent: number
+  active: boolean
+  createdAt: string
+}
+
+export interface ReferralConversion {
+  id: string
+  referralId: string
+  referralCode: string
+  userId: string
+  stripeSubscriptionId: string | null
+  status: 'signed_up' | 'subscribed' | 'churned'
+  createdAt: string
+  subscribedAt: string | null
+}
+
 export interface Conversation {
   id: string
   userId: string
@@ -76,6 +97,8 @@ async function redisCommand(command: string[]): Promise<unknown> {
 // In-memory fallback storage for local development
 const memoryUsers: Map<string, User> = new Map()
 const memorySubscriptions: Map<string, Subscription> = new Map()
+const memoryReferrals: Map<string, Referral> = new Map()
+const memoryReferralConversions: Map<string, ReferralConversion> = new Map()
 const memoryConversations: Map<string, Conversation> = new Map()
 const memoryMessages: Map<string, Message> = new Map()
 
@@ -232,6 +255,165 @@ export const db = {
     },
   },
   
+  referrals: {
+    create: async (data: Omit<Referral, 'id' | 'createdAt'>): Promise<Referral> => {
+      const referral: Referral = {
+        id: uuidv4(),
+        createdAt: new Date().toISOString(),
+        ...data,
+      }
+
+      const { useRedis } = getRedisConfig()
+      if (useRedis) {
+        await redisCommand(['SET', `referral:${referral.id}`, JSON.stringify(referral)])
+        await redisCommand(['SET', `referral_code:${referral.code.toLowerCase()}`, referral.id])
+        await redisCommand(['LPUSH', 'referral_list', referral.id])
+      } else {
+        memoryReferrals.set(referral.id, referral)
+      }
+
+      return referral
+    },
+
+    findByCode: async (code: string): Promise<Referral | undefined> => {
+      const { useRedis } = getRedisConfig()
+      if (useRedis) {
+        const referralId = await redisCommand(['GET', `referral_code:${code.toLowerCase()}`]) as string | null
+        if (!referralId) return undefined
+        const data = await redisCommand(['GET', `referral:${referralId}`]) as string | null
+        if (!data) return undefined
+        return JSON.parse(data) as Referral
+      } else {
+        return Array.from(memoryReferrals.values()).find(r => r.code.toLowerCase() === code.toLowerCase())
+      }
+    },
+
+    findById: async (id: string): Promise<Referral | undefined> => {
+      const { useRedis } = getRedisConfig()
+      if (useRedis) {
+        const data = await redisCommand(['GET', `referral:${id}`]) as string | null
+        if (!data) return undefined
+        return JSON.parse(data) as Referral
+      } else {
+        return memoryReferrals.get(id)
+      }
+    },
+
+    listAll: async (): Promise<Referral[]> => {
+      const { useRedis } = getRedisConfig()
+      if (useRedis) {
+        const ids = await redisCommand(['LRANGE', 'referral_list', '0', '-1']) as string[]
+        if (!ids || ids.length === 0) return []
+        const referrals: Referral[] = []
+        for (const id of ids) {
+          const data = await redisCommand(['GET', `referral:${id}`]) as string | null
+          if (data) {
+            referrals.push(JSON.parse(data) as Referral)
+          }
+        }
+        return referrals.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      } else {
+        return Array.from(memoryReferrals.values())
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      }
+    },
+
+    update: async (id: string, data: Partial<Referral>): Promise<Referral | undefined> => {
+      const { useRedis } = getRedisConfig()
+      if (useRedis) {
+        const existing = await db.referrals.findById(id)
+        if (!existing) return undefined
+        const updated = { ...existing, ...data }
+        await redisCommand(['SET', `referral:${id}`, JSON.stringify(updated)])
+        return updated
+      } else {
+        const referral = memoryReferrals.get(id)
+        if (!referral) return undefined
+        const updated = { ...referral, ...data }
+        memoryReferrals.set(id, updated)
+        return updated
+      }
+    },
+  },
+
+  referralConversions: {
+    create: async (data: Omit<ReferralConversion, 'id' | 'createdAt'>): Promise<ReferralConversion> => {
+      const conversion: ReferralConversion = {
+        id: uuidv4(),
+        createdAt: new Date().toISOString(),
+        ...data,
+      }
+
+      const { useRedis } = getRedisConfig()
+      if (useRedis) {
+        await redisCommand(['SET', `ref_conversion:${conversion.id}`, JSON.stringify(conversion)])
+        await redisCommand(['SET', `ref_conv_user:${conversion.userId}`, conversion.id])
+        await redisCommand(['LPUSH', `ref_conversions:${conversion.referralId}`, conversion.id])
+      } else {
+        memoryReferralConversions.set(conversion.id, conversion)
+      }
+
+      return conversion
+    },
+
+    findByUserId: async (userId: string): Promise<ReferralConversion | undefined> => {
+      const { useRedis } = getRedisConfig()
+      if (useRedis) {
+        const convId = await redisCommand(['GET', `ref_conv_user:${userId}`]) as string | null
+        if (!convId) return undefined
+        const data = await redisCommand(['GET', `ref_conversion:${convId}`]) as string | null
+        if (!data) return undefined
+        return JSON.parse(data) as ReferralConversion
+      } else {
+        return Array.from(memoryReferralConversions.values()).find(c => c.userId === userId)
+      }
+    },
+
+    findByReferralId: async (referralId: string): Promise<ReferralConversion[]> => {
+      const { useRedis } = getRedisConfig()
+      if (useRedis) {
+        const ids = await redisCommand(['LRANGE', `ref_conversions:${referralId}`, '0', '-1']) as string[]
+        if (!ids || ids.length === 0) return []
+        const conversions: ReferralConversion[] = []
+        for (const id of ids) {
+          const data = await redisCommand(['GET', `ref_conversion:${id}`]) as string | null
+          if (data) {
+            conversions.push(JSON.parse(data) as ReferralConversion)
+          }
+        }
+        return conversions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      } else {
+        return Array.from(memoryReferralConversions.values())
+          .filter(c => c.referralId === referralId)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      }
+    },
+
+    update: async (id: string, data: Partial<ReferralConversion>): Promise<ReferralConversion | undefined> => {
+      const { useRedis } = getRedisConfig()
+      if (useRedis) {
+        const existingData = await redisCommand(['GET', `ref_conversion:${id}`]) as string | null
+        if (!existingData) return undefined
+        const existing = JSON.parse(existingData) as ReferralConversion
+        const updated = { ...existing, ...data }
+        await redisCommand(['SET', `ref_conversion:${id}`, JSON.stringify(updated)])
+        return updated
+      } else {
+        const conversion = memoryReferralConversions.get(id)
+        if (!conversion) return undefined
+        const updated = { ...conversion, ...data }
+        memoryReferralConversions.set(id, updated)
+        return updated
+      }
+    },
+
+    updateByUserId: async (userId: string, data: Partial<ReferralConversion>): Promise<ReferralConversion | undefined> => {
+      const conversion = await db.referralConversions.findByUserId(userId)
+      if (!conversion) return undefined
+      return db.referralConversions.update(conversion.id, data)
+    },
+  },
+
   conversations: {
     create: async (data: Omit<Conversation, 'id' | 'createdAt' | 'updatedAt'>): Promise<Conversation> => {
       const conversation: Conversation = {
