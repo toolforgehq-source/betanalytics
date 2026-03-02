@@ -7,7 +7,7 @@ import { getCachedESPNOdds, getCachedESPNData, cacheESPNOdds, searchESPNGameByTe
 import { analyzeSpecificGame, formatGameAnalysisForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext, formatBestBetForContext, formatFilteredBestBetResponse, getCachedBestBet } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 import { fetchAllOdds, fetchSportOdds } from "@/lib/odds"
-import { storePick, getAllPicks } from "@/lib/pick-tracking"
+// storePick/getAllPicks removed — chat no longer tracks picks (only the cron job does)
 import { analyzePlayerProp, analyzeAllPlayerProps, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
 import { checkRateLimit } from "@/lib/rate-limit"
 
@@ -1005,43 +1005,8 @@ async function handleAnalyzeGame(input: AnalyzeGameInput): Promise<string> {
   
   console.log(`[tool:analyze_game] Analysis complete: ${gameAnalysis.bets.length} betting options found`)
   
-  // Track the best bet for outcome tracking
-  if (gameAnalysis.bets.length > 0) {
-    try {
-      const bestBet = gameAnalysis.bets[0]
-      const existingPicks = await getAllPicks()
-      const alreadyTracked = existingPicks.some(p => 
-        p.gameId === enrichedGame.id && 
-        p.team === bestBet.team &&
-        p.betType === bestBet.betType &&
-        p.pickType === 'game_specific' &&
-        p.status === 'pending'
-      )
-      
-      if (!alreadyTracked) {
-        await storePick({
-          gameId: enrichedGame.id,
-          sport: enrichedGame.sport,
-          sportName: enrichedGame.sportName,
-          homeTeam: gameAnalysis.game.homeTeam,
-          awayTeam: gameAnalysis.game.awayTeam,
-          gameTime: enrichedGame.commenceTime,
-          pickType: 'game_specific',
-          team: bestBet.team,
-          betType: bestBet.betType,
-          line: bestBet.line,
-          odds: bestBet.bestPrice,
-          consensusProbability: bestBet.eloProbability ? bestBet.eloProbability * 100 : 0,
-          impliedProbability: bestBet.impliedProbability,
-          edge: bestBet.edge,
-          bestBook: bestBet.bestBook
-        })
-        console.log(`[tool:analyze_game] Tracked recommendation: ${bestBet.team} ${bestBet.betType}`)
-      }
-    } catch (trackErr) {
-      console.error('[tool:analyze_game] Error tracking bet:', trackErr)
-    }
-  }
+  // Chat does NOT track picks — only the automated cron job (fetch-odds) creates tracked picks
+  // This keeps the public record clean and controlled
   
   return formattedAnalysis
 }
@@ -1122,79 +1087,13 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
     const alternatives = filteredBets.slice(1, 10)
     const filterDesc = input.sport ? `Best ${input.sport.toUpperCase()} bet` : 'Filtered best bet'
     
-    // Track the recommendation
-    try {
-      const existingPicks = await getAllPicks()
-      const alreadyTracked = existingPicks.some(p => 
-        p.gameId === topBet.gameId && 
-        p.team === topBet.team &&
-        p.betType === topBet.betType &&
-        p.pickType === 'best_bet' &&
-        p.status === 'pending'
-      )
-      if (!alreadyTracked) {
-        await storePick({
-          gameId: topBet.gameId,
-          sport: topBet.sport,
-          sportName: topBet.sportName,
-          homeTeam: topBet.homeTeam,
-          awayTeam: topBet.awayTeam,
-          gameTime: topBet.commenceTime,
-          pickType: 'best_bet',
-          team: topBet.team,
-          betType: topBet.betType,
-          line: topBet.line,
-          odds: topBet.bestPrice,
-          consensusProbability: topBet.consensusProbability,
-          impliedProbability: topBet.impliedProbability,
-          edge: topBet.edge,
-          bestBook: topBet.bestBook
-        })
-        console.log(`[tool:get_best_bet] Tracked: ${topBet.team} ${topBet.betType}`)
-      }
-    } catch (trackErr) {
-      console.error('[tool:get_best_bet] Error tracking bet:', trackErr)
-    }
+    // Chat does NOT track picks — only the automated cron job (fetch-odds) creates tracked picks
     
     return formatFilteredBestBetResponse(topBet, filterDesc, alternatives)
   }
   
   // No filters -- return overall best bet
-  if (bestBetResult.bestBet) {
-    // Track the recommendation
-    try {
-      const existingPicks = await getAllPicks()
-      const alreadyTracked = existingPicks.some(p => 
-        p.gameId === bestBetResult.bestBet!.gameId && 
-        p.team === bestBetResult.bestBet!.team &&
-        p.betType === bestBetResult.bestBet!.betType &&
-        p.pickType === 'best_bet' &&
-        p.status === 'pending'
-      )
-      if (!alreadyTracked) {
-        await storePick({
-          gameId: bestBetResult.bestBet.gameId,
-          sport: bestBetResult.bestBet.sport,
-          sportName: bestBetResult.bestBet.sportName,
-          homeTeam: bestBetResult.bestBet.homeTeam,
-          awayTeam: bestBetResult.bestBet.awayTeam,
-          gameTime: bestBetResult.bestBet.commenceTime,
-          pickType: 'best_bet',
-          team: bestBetResult.bestBet.team,
-          betType: bestBetResult.bestBet.betType,
-          line: bestBetResult.bestBet.line,
-          odds: bestBetResult.bestBet.bestPrice,
-          consensusProbability: bestBetResult.bestBet.consensusProbability,
-          impliedProbability: bestBetResult.bestBet.impliedProbability,
-          edge: bestBetResult.bestBet.edge,
-          bestBook: bestBetResult.bestBet.bestBook
-        })
-        console.log(`[tool:get_best_bet] Tracked: ${bestBetResult.bestBet.team} ${bestBetResult.bestBet.betType}`)
-      }
-    } catch (trackErr) {
-      console.error('[tool:get_best_bet] Error tracking bet:', trackErr)
-    }
-  }
+  // Chat does NOT track picks — only the automated cron job (fetch-odds) creates tracked picks
   
   return formatBestBetForContext(bestBetResult)
 }
@@ -1337,41 +1236,7 @@ async function handleBuildParlay(input: BuildParlayInput): Promise<string> {
     return `I couldn't build an optimal ${legCount}-leg parlay because there aren't enough independent matchups available right now. Want me to try with fewer legs, or find you the best single bet of the day instead?`
   }
   
-  // Track parlay legs
-  try {
-    const existingPicks = await getAllPicks()
-    for (const leg of enhancedParlay.legs) {
-      const alreadyTracked = existingPicks.some(p => 
-        p.gameId === leg.gameId && 
-        p.team === leg.team &&
-        p.betType === leg.betType &&
-        p.pickType === 'parlay_leg' &&
-        p.status === 'pending'
-      )
-      if (!alreadyTracked) {
-        await storePick({
-          gameId: leg.gameId,
-          sport: leg.sport,
-          sportName: leg.sportName,
-          homeTeam: leg.homeTeam,
-          awayTeam: leg.awayTeam,
-          gameTime: leg.commenceTime,
-          pickType: 'parlay_leg',
-          team: leg.team,
-          betType: leg.betType,
-          line: leg.line,
-          odds: leg.bestPrice,
-          consensusProbability: leg.consensusProbability,
-          impliedProbability: leg.impliedProbability,
-          edge: leg.edge,
-          bestBook: leg.bestBook
-        })
-      }
-    }
-    console.log(`[tool:build_parlay] Tracked ${enhancedParlay.legs.length} parlay legs`)
-  } catch (trackErr) {
-    console.error('[tool:build_parlay] Error tracking parlay:', trackErr)
-  }
+  // Chat does NOT track picks — only the automated cron job (fetch-odds) creates tracked picks
   
   return formatEnhancedParlayForContext(enhancedParlay)
 }

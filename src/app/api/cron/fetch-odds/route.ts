@@ -273,60 +273,65 @@ export async function GET(request: Request) {
     await cacheSportBets(sportBets)
     console.log(`[fetch-odds] Sport bets computed: ${Object.keys(sportBets).length} sports (from ${bestBetResult.allEloBets.length} Elo bets)`)
     
-    // Store the best bet pick for track record (if we have one and it's a new game)
+    // Store the best bet pick for track record (only Lock + Strong tier picks)
     let pickStored = false
     if (bestBetResult.bestBet) {
-      const existingPicks = await getAllPicks()
-      const alreadyHavePick = existingPicks.some(p => 
-        p.gameId === bestBetResult.bestBet!.gameId && 
-        p.pickType === 'best_bet' &&
-        p.status === 'pending'
-      )
-      
-      if (!alreadyHavePick) {
-        const bet = bestBetResult.bestBet
-        await storePick({
-          gameId: bet.gameId,
-          sport: bet.sport,
-          sportName: bet.sportName,
-          homeTeam: bet.homeTeam,
-          awayTeam: bet.awayTeam,
-          gameTime: bet.commenceTime,
-          pickType: 'best_bet',
-          team: bet.team,
-          betType: bet.betType,
-          odds: bet.bestPrice,
-          consensusProbability: bet.consensusProbability,
-          impliedProbability: bet.impliedProbability,
-          edge: bet.edge,
-          bestBook: bet.bestBook
-        })
-        pickStored = true
-        console.log(`Stored pick for track record: ${bet.team}`)
+      const tier = bestBetResult.bestBet.confidenceTier
+      if (tier === 'lock' || tier === 'strong') {
+        const existingPicks = await getAllPicks()
+        const alreadyHavePick = existingPicks.some(p => 
+          p.gameId === bestBetResult.bestBet!.gameId && 
+          p.pickType === 'best_bet' &&
+          p.status === 'pending'
+        )
         
-        // Track CLV for this pick (stores the line at pick time)
-        await storeCLVPick({
-          gameId: bet.gameId,
-          sport: bet.sport,
-          betType: bet.betType as 'spread' | 'moneyline' | 'total' | 'prop',
-          team: bet.team,
-          pickLine: bet.line ?? 0, // Spread/total line, 0 for moneyline
-          pickPrice: bet.bestPrice,
-          pickProbability: bet.consensusProbability / 100, // Convert from percentage
-          pickTimestamp: new Date().toISOString(),
-          gameTimestamp: bet.commenceTime
-        })
-        console.log(`[CLV] Tracked pick: ${bet.team} ${bet.betType} at line ${bet.line ?? 'ML'}`)
+        if (!alreadyHavePick) {
+          const bet = bestBetResult.bestBet
+          await storePick({
+            gameId: bet.gameId,
+            sport: bet.sport,
+            sportName: bet.sportName,
+            homeTeam: bet.homeTeam,
+            awayTeam: bet.awayTeam,
+            gameTime: bet.commenceTime,
+            pickType: 'best_bet',
+            team: bet.team,
+            betType: bet.betType,
+            odds: bet.bestPrice,
+            consensusProbability: bet.consensusProbability,
+            impliedProbability: bet.impliedProbability,
+            edge: bet.edge,
+            bestBook: bet.bestBook
+          })
+          pickStored = true
+          console.log(`Stored pick for track record: ${bet.team} (tier: ${tier})`)
         
-        // Store calibration record (tracks predicted probability vs actual outcome)
-        await storeCalibrationRecord({
-          gameId: bet.gameId,
-          sport: bet.sport,
-          betType: bet.betType as 'spread' | 'moneyline' | 'total' | 'prop',
-          team: bet.team,
-          predictedProbability: bet.consensusProbability / 100 // Convert from percentage
-        })
-        console.log(`[Calibration] Tracked prediction: ${bet.team} at ${bet.consensusProbability}%`)
+          // Track CLV for this pick (stores the line at pick time)
+          await storeCLVPick({
+            gameId: bet.gameId,
+            sport: bet.sport,
+            betType: bet.betType as 'spread' | 'moneyline' | 'total' | 'prop',
+            team: bet.team,
+            pickLine: bet.line ?? 0, // Spread/total line, 0 for moneyline
+            pickPrice: bet.bestPrice,
+            pickProbability: bet.consensusProbability / 100, // Convert from percentage
+            pickTimestamp: new Date().toISOString(),
+            gameTimestamp: bet.commenceTime
+          })
+          console.log(`[CLV] Tracked pick: ${bet.team} ${bet.betType} at line ${bet.line ?? 'ML'}`)
+          
+          // Store calibration record (tracks predicted probability vs actual outcome)
+          await storeCalibrationRecord({
+            gameId: bet.gameId,
+            sport: bet.sport,
+            betType: bet.betType as 'spread' | 'moneyline' | 'total' | 'prop',
+            team: bet.team,
+            predictedProbability: bet.consensusProbability / 100 // Convert from percentage
+          })
+          console.log(`[Calibration] Tracked prediction: ${bet.team} at ${bet.consensusProbability}%`)
+        }
+      } else {
+        console.log(`[fetch-odds] Best bet ${bestBetResult.bestBet.team} is tier "${tier}" — not tracked (only lock/strong are tracked)`)
       }
     }
     
