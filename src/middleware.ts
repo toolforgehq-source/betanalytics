@@ -13,7 +13,7 @@ export function middleware(request: NextRequest) {
   const refCode = request.nextUrl.searchParams.get('ref')
   if (refCode && !request.cookies.get('ref_code')) {
     response.cookies.set('ref_code', refCode, {
-      httpOnly: true,
+      httpOnly: false, // Needs to be readable by client-side JS (signup page)
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
       maxAge: 60 * 60 * 24 * 30, // 30 days
