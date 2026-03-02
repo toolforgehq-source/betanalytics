@@ -262,7 +262,7 @@ export default function PicksPage() {
               <Target className="w-5 h-5 text-slate-400" />
               <span className="font-bold text-slate-300">Value Spot</span>
             </div>
-            <p className="text-xs text-slate-400">Passes all base filters. Higher volume, moderate confidence. Not included in public track record.</p>
+            <p className="text-xs text-slate-400">Passes all base filters. Higher volume, moderate confidence. All picks tracked on our performance page.</p>
           </div>
         </div>
 
