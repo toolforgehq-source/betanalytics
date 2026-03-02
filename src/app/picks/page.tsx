@@ -82,6 +82,14 @@ function TierBadge({ tier }: { tier: string }) {
   )
 }
 
+function calculateImpliedProbability(odds: number): number {
+  if (odds > 0) {
+    return (100 / (odds + 100)) * 100
+  } else {
+    return (Math.abs(odds) / (Math.abs(odds) + 100)) * 100
+  }
+}
+
 function PickCard({ pick }: { pick: TieredPick }) {
   // Handle both RankedBet shape (team/homeTeam/awayTeam) and TrackedRecommendation shape (selection/gameName)
   const displaySelection = pick.selection || (pick.team ? `${pick.team} ${
@@ -95,6 +103,13 @@ function PickCard({ pick }: { pick: TieredPick }) {
   const displayOdds = pick.odds ?? pick.bestPrice ?? 0
   const displayProb = pick.eloProbability ?? pick.probability
   const displayScore = pick.score
+
+  // Calculate edge from probability and odds if not directly available
+  const displayEdge = pick.edge != null ? pick.edge : (
+    displayProb != null && displayOdds !== 0
+      ? displayProb - calculateImpliedProbability(displayOdds)
+      : null
+  )
   const displaySport = pick.sportName || pick.sport || ''
 
   const tierColors = {
@@ -131,7 +146,7 @@ function PickCard({ pick }: { pick: TieredPick }) {
         </div>
         <div className="bg-slate-800/40 rounded-lg p-2.5 text-center">
           <div className="text-xs text-slate-500 mb-0.5">Edge</div>
-          <div className="text-sm font-bold text-cyan-400">{pick.edge != null ? `+${Number(pick.edge).toFixed(1)}%` : '--'}</div>
+          <div className="text-sm font-bold text-cyan-400">{displayEdge != null ? `${Number(displayEdge) >= 0 ? '+' : ''}${Number(displayEdge).toFixed(1)}%` : '--'}</div>
         </div>
         <div className="bg-slate-800/40 rounded-lg p-2.5 text-center">
           <div className="text-xs text-slate-500 mb-0.5">Score</div>
