@@ -114,8 +114,8 @@ export default function LiveStats() {
     <div className="flex flex-wrap justify-center gap-4 md:gap-8">
       <StatPill
         icon={<Lock className="w-4 h-4" />}
-        label="Lock of the Day"
-        value="70%+ Target"
+        label="Lock & Strong Plays"
+        value="Tracked"
         color="text-yellow-400"
       />
       <StatPill
