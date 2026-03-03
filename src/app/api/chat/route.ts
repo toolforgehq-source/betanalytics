@@ -1056,7 +1056,13 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   
   // If sport filter or exclusions requested, filter the results
   if (input.sport || (input.exclude_sports && input.exclude_sports.length > 0)) {
-    const allBets = bestBetResult.allEloBets || bestBetResult.allRankedBets || []
+    // Merge both paths and deduplicate before filtering, same as unfiltered path below.
+    // This ensures "best NBA bet" also uses the highest-scored pick across both analysis paths.
+    const strict = bestBetResult.allRankedBets || []
+    const elo = bestBetResult.allEloBets || []
+    const seen = new Set(strict.map(b => `${b.gameId}:${b.team}:${b.betType}`))
+    const additional = elo.filter(b => !seen.has(`${b.gameId}:${b.team}:${b.betType}`))
+    const allBets = [...strict, ...additional].sort((a, b) => b.score - a.score)
     
     if (allBets.length === 0) {
       return formatBestBetForContext(bestBetResult)
@@ -1105,18 +1111,20 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   // No filters -- return overall best bet
   // Chat does NOT track picks — only the automated cron job (fetch-odds) creates tracked picks
   
-  // ALWAYS use allEloBets (score-sorted) for the unfiltered path, same as the filtered path.
-  // This ensures "best bet today" and "best bet not soccer" use the same data source
-  // and return consistent, score-ranked results. Without this, the unfiltered path
-  // could return a lower-scored tier pick (e.g. Everton 52/100) while the filtered
-  // path correctly returns a higher-scored pick (e.g. Alabama A&M 88/100).
-  if (bestBetResult.allEloBets && bestBetResult.allEloBets.length > 0) {
-    const topBet = bestBetResult.allEloBets[0]
-    // If bestBet exists and has a higher score than allEloBets[0], prefer bestBet
-    if (bestBetResult.bestBet && bestBetResult.bestBet.score >= topBet.score) {
-      return formatBestBetForContext(bestBetResult)
-    }
-    const alternatives = bestBetResult.allEloBets.slice(1, 10)
+  // Merge picks from BOTH strict (allRankedBets) and relaxed (allEloBets) paths,
+  // deduplicate, and sort by score descending. This ensures the chat always recommends
+  // the absolute highest-scored pick regardless of which analysis path found it.
+  // Previously, the chat used allEloBets[0] which was sorted by tier first (locks before
+  // strong), so a Score 73 Lock would be recommended over a Score 87 Strong Play.
+  const strictPicks = bestBetResult.allRankedBets || []
+  const eloPicks = bestBetResult.allEloBets || []
+  const seenKeys = new Set(strictPicks.map(b => `${b.gameId}:${b.team}:${b.betType}`))
+  const additionalEloPicks = eloPicks.filter(b => !seenKeys.has(`${b.gameId}:${b.team}:${b.betType}`))
+  const mergedPicks = [...strictPicks, ...additionalEloPicks].sort((a, b) => b.score - a.score)
+  
+  if (mergedPicks.length > 0) {
+    const topBet = mergedPicks[0]
+    const alternatives = mergedPicks.slice(1, 10)
     return formatFilteredBestBetResponse(topBet, 'Best bet today', alternatives)
   }
   
