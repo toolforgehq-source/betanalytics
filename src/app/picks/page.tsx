@@ -36,7 +36,6 @@ interface TieredPick {
 interface PicksData {
   locks: TieredPick[]
   strong: TieredPick[]
-  value: TieredPick[]
   lastUpdated: string
 }
 
@@ -190,12 +189,10 @@ export default function PicksPage() {
         
         const locks = allRecos.filter((r: TieredPick) => r.confidenceTier === 'lock')
         const strong = allRecos.filter((r: TieredPick) => r.confidenceTier === 'strong')
-        const value = allRecos.filter((r: TieredPick) => r.confidenceTier === 'value' || !r.confidenceTier)
         
         setData({
           locks,
           strong,
-          value,
           lastUpdated: json.lastUpdated || new Date().toISOString()
         })
       } catch (err) {
@@ -243,12 +240,11 @@ export default function PicksPage() {
           <p className="text-slate-400 max-w-2xl mx-auto">
             Every pick is classified by confidence level. Locks and Strong Plays are tracked on our
             {' '}<Link href="/performance" className="text-cyan-400 hover:underline">performance page</Link> with verified results.
-            Value spots offer additional volume with moderate confidence.
           </p>
         </div>
 
         {/* Tier Legend */}
-        <div className="grid md:grid-cols-3 gap-4 mb-10">
+        <div className="grid md:grid-cols-2 gap-4 mb-10">
           <div className="bg-gradient-to-br from-yellow-900/20 to-amber-900/10 border border-yellow-500/30 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2">
               <Lock className="w-5 h-5 text-yellow-400" />
@@ -262,13 +258,6 @@ export default function PicksPage() {
               <span className="font-bold text-blue-400">Strong Play</span>
             </div>
             <p className="text-xs text-slate-400">Solid conviction. 57%+ probability, 4%+ edge, medium+ Elo confidence. Target: 60-65% win rate.</p>
-          </div>
-          <div className="bg-slate-900/30 border border-slate-700/50 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Target className="w-5 h-5 text-slate-400" />
-              <span className="font-bold text-slate-300">Value Spot</span>
-            </div>
-            <p className="text-xs text-slate-400">Passes all base filters. Higher volume, moderate confidence. Not included in public track record.</p>
           </div>
         </div>
 
@@ -316,21 +305,7 @@ export default function PicksPage() {
               </section>
             )}
 
-            {/* Value Spots Section */}
-            {data.value.length > 0 && (
-              <section className="mb-10">
-                <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                  <Target className="w-5 h-5 text-slate-400" />
-                  Value Spots
-                  <span className="text-sm font-normal text-slate-500">({data.value.length})</span>
-                </h2>
-                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {data.value.map((pick, i) => <PickCard key={`value-${i}`} pick={pick} />)}
-                </div>
-              </section>
-            )}
-
-            {data.locks.length === 0 && data.strong.length === 0 && data.value.length === 0 && (
+            {data.locks.length === 0 && data.strong.length === 0 && (
               <div className="text-center py-20 bg-slate-900/30 border border-slate-800/50 rounded-xl">
                 <Shield className="w-12 h-12 text-slate-600 mx-auto mb-4" />
                 <h3 className="text-xl font-bold mb-2">No Picks Yet Today</h3>

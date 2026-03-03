@@ -88,16 +88,19 @@ export async function GET() {
         return betDate === todayStr
       })
       
-      // Sort: locks first, then strong, then value, each sub-sorted by score desc
-      const tierOrder: Record<string, number> = { lock: 0, strong: 1, value: 2 }
+      // Only include locks and strong plays — value spots are excluded from the public picks page
+      livePicks = livePicks.filter((bet: RankedBet) => bet.confidenceTier === 'lock' || bet.confidenceTier === 'strong')
+      
+      // Sort: locks first, then strong, each sub-sorted by score desc
+      const tierOrder: Record<string, number> = { lock: 0, strong: 1 }
       livePicks.sort((a: RankedBet, b: RankedBet) => {
-        const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+        const tierDiff = (tierOrder[a.confidenceTier || 'strong'] ?? 1) - (tierOrder[b.confidenceTier || 'strong'] ?? 1)
         if (tierDiff !== 0) return tierDiff
         if (b.score !== a.score) return b.score - a.score
         return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
       })
       
-      console.log(`[API /picks] Live picks from cache: ${livePicks.length} total (${livePicks.filter(p => p.confidenceTier === 'lock').length} locks, ${livePicks.filter(p => p.confidenceTier === 'strong').length} strong, ${livePicks.filter(p => p.confidenceTier === 'value').length} value)`)
+      console.log(`[API /picks] Live picks from cache: ${livePicks.length} total (${livePicks.filter(p => p.confidenceTier === 'lock').length} locks, ${livePicks.filter(p => p.confidenceTier === 'strong').length} strong)`)
     } else {
       console.log('[API /picks] No cached best bet available — falling back to stored recommendations only')
     }
