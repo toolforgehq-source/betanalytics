@@ -10,6 +10,7 @@ import {
   cacheSportBets
 } from "@/lib/bet-ranking"
 import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
+import { trackBestBet } from "@/lib/recommendation-tracking"
 import { getWeatherForGames } from "@/lib/weather"
 import { getLineMovement } from "@/lib/line-movement"
 import { getCachedTeamScheduleData } from "@/lib/team-schedule"
@@ -323,6 +324,12 @@ export async function GET(request: Request) {
           })
           picksStored++
           console.log(`Stored pick for track record: ${bet.team} (tier: ${bet.confidenceTier})`)
+          
+          // Also track in recommendation system (this is what the /picks page reads from)
+          // storePick() writes to pick-tracking, but the picks page uses getRecentRecommendations()
+          // which reads from the recommendation-tracking system — a separate Redis store.
+          await trackBestBet(bet)
+          console.log(`[Tracking] Tracked recommendation: ${bet.team} (tier: ${bet.confidenceTier})`)
         
           // Track CLV for this pick (stores the line at pick time)
           await storeCLVPick({
