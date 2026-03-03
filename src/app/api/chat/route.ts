@@ -1019,13 +1019,23 @@ interface GetBestBetInput {
 async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   console.log(`[tool:get_best_bet] sport="${input.sport || ''}", exclude=${JSON.stringify(input.exclude_sports || [])}`)
   
-  // Try cached best bet first for speed — but validate it contains today's games
+  // Try cached best bet first for speed — but validate freshness
   let bestBetResult = await getCachedBestBet()
   
-  // Invalidate cache if best bet is not from today
-  if (bestBetResult?.bestBet?.commenceTime && !isGameToday(bestBetResult.bestBet.commenceTime)) {
-    console.log(`[tool:get_best_bet] Cached best bet is not from today (${bestBetResult.bestBet.commenceTime}), recomputing...`)
-    bestBetResult = null
+  // Invalidate cache if: (1) best bet is not from today, or (2) cache is older than 30 minutes
+  // This prevents serving stale results when new games/odds become available
+  if (bestBetResult) {
+    const isStale = bestBetResult.calculatedAt && 
+      (Date.now() - new Date(bestBetResult.calculatedAt).getTime()) > 30 * 60 * 1000
+    const isNotToday = bestBetResult.bestBet?.commenceTime && !isGameToday(bestBetResult.bestBet.commenceTime)
+    
+    if (isStale) {
+      console.log(`[tool:get_best_bet] Cache is stale (calculated at ${bestBetResult.calculatedAt}), recomputing...`)
+      bestBetResult = null
+    } else if (isNotToday) {
+      console.log(`[tool:get_best_bet] Cached best bet is not from today (${bestBetResult.bestBet!.commenceTime}), recomputing...`)
+      bestBetResult = null
+    }
   }
   
   if (!bestBetResult) {
