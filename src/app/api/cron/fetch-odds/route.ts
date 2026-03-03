@@ -273,20 +273,24 @@ export async function GET(request: Request) {
     await cacheSportBets(sportBets)
     console.log(`[fetch-odds] Sport bets computed: ${Object.keys(sportBets).length} sports (from ${bestBetResult.allEloBets.length} Elo bets)`)
     
-    // Store the best bet pick for track record (only Lock + Strong tier picks)
-    let pickStored = false
-    if (bestBetResult.bestBet) {
-      const tier = bestBetResult.bestBet.confidenceTier
-      if (tier === 'lock' || tier === 'strong') {
-        const existingPicks = await getAllPicks()
+    // Store ALL Lock + Strong tier picks for track record (not just the single best bet)
+    let picksStored = 0
+    const lockStrongBets = bestBetResult.allRankedBets.filter(
+      b => b.confidenceTier === 'lock' || b.confidenceTier === 'strong'
+    )
+    console.log(`[fetch-odds] Found ${lockStrongBets.length} Lock/Strong picks out of ${bestBetResult.allRankedBets.length} total ranked bets`)
+    
+    if (lockStrongBets.length > 0) {
+      const existingPicks = await getAllPicks()
+      
+      for (const bet of lockStrongBets) {
         const alreadyHavePick = existingPicks.some(p => 
-          p.gameId === bestBetResult.bestBet!.gameId && 
+          p.gameId === bet.gameId && 
           p.pickType === 'best_bet' &&
           p.status === 'pending'
         )
         
         if (!alreadyHavePick) {
-          const bet = bestBetResult.bestBet
           await storePick({
             gameId: bet.gameId,
             sport: bet.sport,
@@ -303,8 +307,8 @@ export async function GET(request: Request) {
             edge: bet.edge,
             bestBook: bet.bestBook
           })
-          pickStored = true
-          console.log(`Stored pick for track record: ${bet.team} (tier: ${tier})`)
+          picksStored++
+          console.log(`Stored pick for track record: ${bet.team} (tier: ${bet.confidenceTier})`)
         
           // Track CLV for this pick (stores the line at pick time)
           await storeCLVPick({
@@ -312,9 +316,9 @@ export async function GET(request: Request) {
             sport: bet.sport,
             betType: bet.betType as 'spread' | 'moneyline' | 'total' | 'prop',
             team: bet.team,
-            pickLine: bet.line ?? 0, // Spread/total line, 0 for moneyline
+            pickLine: bet.line ?? 0,
             pickPrice: bet.bestPrice,
-            pickProbability: bet.consensusProbability / 100, // Convert from percentage
+            pickProbability: bet.consensusProbability / 100,
             pickTimestamp: new Date().toISOString(),
             gameTimestamp: bet.commenceTime
           })
@@ -326,13 +330,15 @@ export async function GET(request: Request) {
             sport: bet.sport,
             betType: bet.betType as 'spread' | 'moneyline' | 'total' | 'prop',
             team: bet.team,
-            predictedProbability: bet.consensusProbability / 100 // Convert from percentage
+            predictedProbability: bet.consensusProbability / 100
           })
           console.log(`[Calibration] Tracked prediction: ${bet.team} at ${bet.consensusProbability}%`)
+        } else {
+          console.log(`[fetch-odds] Pick already exists for ${bet.team} (${bet.gameId}) — skipping`)
         }
-      } else {
-        console.log(`[fetch-odds] Best bet ${bestBetResult.bestBet.team} is tier "${tier}" — not tracked (only lock/strong are tracked)`)
       }
+    } else {
+      console.log(`[fetch-odds] No Lock/Strong picks found today — best bet: ${bestBetResult.bestBet?.team || 'none'} (tier: ${bestBetResult.bestBet?.confidenceTier || 'none'})`)
     }
     
     // Check for big edge alerts (10%+ edge) and send to opted-in subscribers
@@ -360,7 +366,7 @@ export async function GET(request: Request) {
         edge: bestBetResult.bestBet.edge
       } : null,
       qualifiedBets: bestBetResult.gamesQualified,
-      pickStored,
+      picksStored,
       grading: {
         picksGraded: gradingResult.graded,
         errors: gradingResult.errors,
