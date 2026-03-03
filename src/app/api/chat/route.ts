@@ -1105,12 +1105,17 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   // No filters -- return overall best bet
   // Chat does NOT track picks — only the automated cron job (fetch-odds) creates tracked picks
   
-  // When no tier pick exists (bestBet is null), use allEloBets (score-sorted) for consistency
-  // This ensures the unfiltered "best bet today" returns the same highest-scored pick
-  // that sport-filtered queries would find, preventing inconsistency between
-  // "best bet today" and "best bet not soccer" responses
-  if (!bestBetResult.bestBet && bestBetResult.allEloBets && bestBetResult.allEloBets.length > 0) {
+  // ALWAYS use allEloBets (score-sorted) for the unfiltered path, same as the filtered path.
+  // This ensures "best bet today" and "best bet not soccer" use the same data source
+  // and return consistent, score-ranked results. Without this, the unfiltered path
+  // could return a lower-scored tier pick (e.g. Everton 52/100) while the filtered
+  // path correctly returns a higher-scored pick (e.g. Alabama A&M 88/100).
+  if (bestBetResult.allEloBets && bestBetResult.allEloBets.length > 0) {
     const topBet = bestBetResult.allEloBets[0]
+    // If bestBet exists and has a higher score than allEloBets[0], prefer bestBet
+    if (bestBetResult.bestBet && bestBetResult.bestBet.score >= topBet.score) {
+      return formatBestBetForContext(bestBetResult)
+    }
     const alternatives = bestBetResult.allEloBets.slice(1, 10)
     return formatFilteredBestBetResponse(topBet, 'Best bet today', alternatives)
   }
