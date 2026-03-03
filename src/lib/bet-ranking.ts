@@ -3029,10 +3029,12 @@ export async function computeBestBets(
     // closestMisses = bets that passed progressive filters, sorted by score
     closestMisses = passingBets.slice(0, 5)
     
-    // mostLikelyWinners = highest probability bets (for context)
+    // mostLikelyWinners = highest score bets with reasonable odds (for context)
+    // Sort by score (which weights edge, probability, and ROI) not raw probability,
+    // so a 64.9% pick with 12.6% edge ranks above a 68% pick with 2.4% edge
     mostLikelyWinners = eloFallbackBets
       .filter(b => b.bestPrice >= MAX_JUICE_ODDS)
-      .sort((a, b) => b.consensusProbability - a.consensusProbability)
+      .sort((a, b) => b.score - a.score)
       .slice(0, 5)
   }
   
