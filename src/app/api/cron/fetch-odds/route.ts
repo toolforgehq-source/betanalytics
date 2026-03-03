@@ -282,6 +282,12 @@ export async function GET(request: Request) {
     
     console.log(`[fetch-odds] Found ${lockStrongBets.length} Lock/Strong picks (${strictLockStrong.length} from strict + ${additionalEloPicks.length} from relaxed elo) out of ${bestBetResult.allRankedBets.length} strict + ${bestBetResult.allEloBets.length} elo bets`)
     
+    // Log top 5 bets by score from each source for debugging tier assignment
+    const topStrict = bestBetResult.allRankedBets.slice(0, 5)
+    const topElo = bestBetResult.allEloBets.slice(0, 5)
+    console.log(`[fetch-odds] Top strict bets: ${topStrict.map(b => `${b.team}(p=${b.eloProbability?.toFixed(1) ?? '?'},e=${b.edge.toFixed(1)},c=${b.eloConfidence},t=${b.confidenceTier})`).join(', ')}`)
+    console.log(`[fetch-odds] Top elo bets: ${topElo.map(b => `${b.team}(p=${b.eloProbability?.toFixed(1) ?? '?'},e=${b.edge.toFixed(1)},c=${b.eloConfidence},t=${b.confidenceTier})`).join(', ')}`)
+    
     if (lockStrongBets.length > 0) {
       const existingPicks = await getAllPicks()
       
@@ -372,6 +378,31 @@ export async function GET(request: Request) {
     const gradingResult = await autoGradePicks()
     console.log(`Auto-grading complete: ${gradingResult.graded} graded, ${gradingResult.errors} errors`)
     
+    // Build tier diagnostic summary for response
+    const tierSummary = {
+      strict: {
+        total: bestBetResult.allRankedBets.length,
+        locks: bestBetResult.allRankedBets.filter(b => b.confidenceTier === 'lock').length,
+        strong: bestBetResult.allRankedBets.filter(b => b.confidenceTier === 'strong').length,
+        value: bestBetResult.allRankedBets.filter(b => b.confidenceTier === 'value').length,
+      },
+      elo: {
+        total: bestBetResult.allEloBets.length,
+        locks: bestBetResult.allEloBets.filter(b => b.confidenceTier === 'lock').length,
+        strong: bestBetResult.allEloBets.filter(b => b.confidenceTier === 'strong').length,
+        value: bestBetResult.allEloBets.filter(b => b.confidenceTier === 'value').length,
+      },
+      topBets: bestBetResult.allEloBets.slice(0, 5).map(b => ({
+        team: b.team,
+        sport: b.sport,
+        prob: b.eloProbability?.toFixed(1),
+        edge: b.edge.toFixed(1),
+        confidence: b.eloConfidence,
+        tier: b.confidenceTier,
+        score: b.score,
+      })),
+    }
+    
     return NextResponse.json({
       success: true,
       source: 'ESPN (FREE)',
@@ -385,6 +416,7 @@ export async function GET(request: Request) {
       } : null,
       qualifiedBets: bestBetResult.gamesQualified,
       picksStored,
+      tierSummary,
       grading: {
         picksGraded: gradingResult.graded,
         errors: gradingResult.errors,

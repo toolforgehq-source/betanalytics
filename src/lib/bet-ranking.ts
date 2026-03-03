@@ -2893,8 +2893,8 @@ export async function computeBestBets(
   // Instead of flat selectivity, classify every qualifying bet into confidence tiers:
   //
   // LOCK OF THE DAY (70%+ expected win rate):
-  //   - Elo probability 62%+ 
-  //   - Edge 5%+
+  //   - Elo probability 60%+ 
+  //   - Edge 4%+
   //   - Elo confidence 'high' or 'very_high'
   //   - No sharp money against (no negative sharp indicator)
   //   - Positive or neutral situational factors
@@ -2903,16 +2903,20 @@ export async function computeBestBets(
   //   - Maximum 2 locks per day across all sports
   //
   // STRONG PLAY (58-65% expected win rate):
-  //   - Elo probability 57%+
-  //   - Edge 4%+
+  //   - Elo probability 55%+
+  //   - Edge 2.5%+
   //   - Elo confidence 'medium' or higher
   //   - Spread ≤ 14 points
   //   - Elo gap ≤ 300
   //   - Maximum 5 strong plays per day
   //
-  // VALUE SPOT (55-58% expected win rate):
+  // VALUE SPOT (52-55% expected win rate):
   //   - Everything else that passes base filters
   //   - Higher volume, lower certainty
+  //
+  // NOTE: Thresholds adjusted for conservative Elo blending (max 55% Elo weight).
+  // With ESPN as single data source, edges are compressed to 1-4% range typically.
+  // Previous thresholds (62%/5% Lock, 57%/4% Strong) produced 0 picks on most days.
   
   const MAX_LOCKS = 2
   const MAX_STRONG = 5
@@ -2933,8 +2937,8 @@ export async function computeBestBets(
     
     // LOCK criteria: highest conviction picks
     const isLockCandidate = 
-      prob >= 62 &&
-      edge >= 5 &&
+      prob >= 60 &&
+      edge >= 4 &&
       (confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
       totalSitAdj >= -0.01 &&
@@ -2944,8 +2948,8 @@ export async function computeBestBets(
     
     // STRONG criteria: solid picks with good edge
     const isStrongCandidate =
-      prob >= 57 &&
-      edge >= 4 &&
+      prob >= 55 &&
+      edge >= 2.5 &&
       (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
       !isHugeSpread &&
       !isHugeEloGap &&
@@ -3070,8 +3074,8 @@ export async function computeBestBets(
     const isHugeEloGap = eloGap > 300
     
     const isLockCandidate = 
-      prob >= 62 &&
-      betEdge >= 5 &&
+      prob >= 60 &&
+      betEdge >= 4 &&
       (confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
       totalSitAdj >= -0.01 &&
@@ -3080,8 +3084,8 @@ export async function computeBestBets(
       eloLockCount < MAX_LOCKS
     
     const isStrongCandidate =
-      prob >= 57 &&
-      betEdge >= 4 &&
+      prob >= 55 &&
+      betEdge >= 2.5 &&
       (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
       !isHugeSpread &&
       !isHugeEloGap &&
