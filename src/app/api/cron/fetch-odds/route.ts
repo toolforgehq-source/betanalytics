@@ -18,6 +18,9 @@ import { storeCLVPick } from "@/lib/clv-tracking"
 import { storeCalibrationRecord } from "@/lib/calibration"
 import { checkAndSendEdgeAlerts } from "@/lib/edge-alerts"
 
+// Allow up to 60 seconds for cron processing (analyzes 80+ games with Elo lookups)
+export const maxDuration = 60
+
 // Extended Game type with ESPN data for injury support
 interface EnrichedGame extends Game {
   espnData?: {
@@ -259,27 +262,11 @@ export async function GET(request: Request) {
     
     console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)
     
-    // Compute and cache parlay of the day
-    console.log("Computing parlay of the day...")
-    const parlayResult = computeParlayOfTheDay(bestBetResult.allRankedBets)
-    await cacheParlay(parlayResult)
-    console.log(`Parlay computed: ${parlayResult.safeParlay ? '2-leg safe parlay ready' : 'no parlay available'}`)
-    
-    // Compute and cache sport-specific best bets
-    // Use allEloBets (not allRankedBets) so sport-specific queries work even when
-    // no bets pass strict filters. This ensures "best NHL bet" returns Elo-based
-    // recommendations even if no NHL bets qualify for "best bet of the day"
-    console.log("[fetch-odds] Computing sport-specific best bets...")
-    const sportBets = computeSportBestBets(bestBetResult.allEloBets)
-    await cacheSportBets(sportBets)
-    console.log(`[fetch-odds] Sport bets computed: ${Object.keys(sportBets).length} sports (from ${bestBetResult.allEloBets.length} Elo bets)`)
-    
-    // Store ALL Lock + Strong tier picks for track record (not just the single best bet)
-    // CRITICAL FIX: Check BOTH allRankedBets (strict analyzeGame filters) AND allEloBets
-    // (relaxed analyzeGameForSportQuery filters). The strict path rejects many qualifying picks
-    // (e.g., NCAAB conference strength filter, Elo confidence gate, multi-signal rejection)
-    // that the relaxed path accepts. Without this, the model picks page can be empty even when
-    // the chat shows high-scoring picks like Alabama A&M (88/100, 12.6% edge).
+    // ============================================
+    // PRIORITY: Store Lock/Strong picks FIRST (before parlay, sport bets, edge alerts)
+    // This runs immediately after computeBestBets to avoid timeout before picks are stored.
+    // The cron processes 80+ games and can timeout on Vercel if pick storage runs too late.
+    // ============================================
     let picksStored = 0
     const strictLockStrong = bestBetResult.allRankedBets.filter(
       b => b.confidenceTier === 'lock' || b.confidenceTier === 'strong'
@@ -306,6 +293,7 @@ export async function GET(request: Request) {
         )
         
         if (!alreadyHavePick) {
+          // Store in pick-tracking system (for grading/track record)
           await storePick({
             gameId: bet.gameId,
             sport: bet.sport,
@@ -323,13 +311,11 @@ export async function GET(request: Request) {
             bestBook: bet.bestBook
           })
           picksStored++
-          console.log(`Stored pick for track record: ${bet.team} (tier: ${bet.confidenceTier})`)
           
-          // Also track in recommendation system (this is what the /picks page reads from)
-          // storePick() writes to pick-tracking, but the picks page uses getRecentRecommendations()
-          // which reads from the recommendation-tracking system — a separate Redis store.
+          // Store in recommendation-tracking system (this is what the /picks page reads from)
+          // These are TWO SEPARATE Redis stores — both must be written to.
           await trackBestBet(bet)
-          console.log(`[Tracking] Tracked recommendation: ${bet.team} (tier: ${bet.confidenceTier})`)
+          console.log(`[fetch-odds] Stored + tracked: ${bet.team} (tier: ${bet.confidenceTier})`)
         
           // Track CLV for this pick (stores the line at pick time)
           await storeCLVPick({
@@ -343,7 +329,6 @@ export async function GET(request: Request) {
             pickTimestamp: new Date().toISOString(),
             gameTimestamp: bet.commenceTime
           })
-          console.log(`[CLV] Tracked pick: ${bet.team} ${bet.betType} at line ${bet.line ?? 'ML'}`)
           
           // Store calibration record (tracks predicted probability vs actual outcome)
           await storeCalibrationRecord({
@@ -353,7 +338,6 @@ export async function GET(request: Request) {
             team: bet.team,
             predictedProbability: bet.consensusProbability / 100
           })
-          console.log(`[Calibration] Tracked prediction: ${bet.team} at ${bet.consensusProbability}%`)
         } else {
           console.log(`[fetch-odds] Pick already exists for ${bet.team} (${bet.gameId}) — skipping`)
         }
@@ -361,6 +345,19 @@ export async function GET(request: Request) {
     } else {
       console.log(`[fetch-odds] No Lock/Strong picks found today — best bet: ${bestBetResult.bestBet?.team || 'none'} (tier: ${bestBetResult.bestBet?.confidenceTier || 'none'})`)
     }
+    console.log(`[fetch-odds] Pick storage complete: ${picksStored} new picks stored`)
+    
+    // Compute and cache parlay of the day
+    console.log("Computing parlay of the day...")
+    const parlayResult = computeParlayOfTheDay(bestBetResult.allRankedBets)
+    await cacheParlay(parlayResult)
+    console.log(`Parlay computed: ${parlayResult.safeParlay ? '2-leg safe parlay ready' : 'no parlay available'}`)
+    
+    // Compute and cache sport-specific best bets
+    console.log("[fetch-odds] Computing sport-specific best bets...")
+    const sportBets = computeSportBestBets(bestBetResult.allEloBets)
+    await cacheSportBets(sportBets)
+    console.log(`[fetch-odds] Sport bets computed: ${Object.keys(sportBets).length} sports (from ${bestBetResult.allEloBets.length} Elo bets)`)
     
     // Check for big edge alerts (10%+ edge) and send to opted-in subscribers
     console.log("[fetch-odds] Checking for big edge alerts...")
