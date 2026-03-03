@@ -2,25 +2,32 @@
  * Public API endpoint for model picks and track record
  * 
  * Returns:
- * - Today's model picks (best bet, sport bets)
+ * - Today's model picks (best bet, sport bets) — includes LIVE picks from cached best bet
  * - Historical track record (7d, 30d, 90d, all-time)
  * - Recent settled picks with results
+ * 
+ * IMPORTANT: The picks page now uses live computed picks from the same cached best bet
+ * result that the AI chat uses. This ensures the Model Picks page shows the same
+ * high-edge picks that the chat recommends, rather than relying solely on what the
+ * cron job stored (which could be stale or incomplete).
  */
 
 import { NextResponse } from 'next/server'
 import { getTrackRecord, getAllPicks, type StoredPick } from '@/lib/pick-tracking'
 import { getRecentRecommendations, calculateTrackingStats } from '@/lib/recommendation-tracking'
+import { getCachedBestBet, type RankedBet } from '@/lib/bet-ranking'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    // Fetch all data in parallel
-    const [trackRecord, rawAllPicks, rawRecentRecos, stats] = await Promise.all([
+    // Fetch all data in parallel — including the cached best bet result (same source as chat)
+    const [trackRecord, rawAllPicks, rawRecentRecos, stats, cachedBestBet] = await Promise.all([
       getTrackRecord(),
       getAllPicks(),
       getRecentRecommendations(200),
-      calculateTrackingStats()
+      calculateTrackingStats(),
+      getCachedBestBet()
     ])
 
     // Defensive: ensure arrays are actually arrays
@@ -55,10 +62,51 @@ export async function GET() {
     // Get ALL recent recommendations (including pending) for the full history view
     const allRecentRecos = recentRecos.slice(0, 100)
 
+    // ============================================
+    // LIVE PICKS from cached best bet result
+    // ============================================
+    // The cached best bet result contains ALL tiered picks from both strict (analyzeGame)
+    // and relaxed (analyzeGameForSportQuery) analysis paths. This is the SAME data source
+    // the AI chat uses, ensuring consistency between chat recommendations and Model Picks.
+    //
+    // We merge picks from both allRankedBets (strict) and allEloBets (relaxed),
+    // deduplicating by gameId + team to avoid showing the same pick twice.
+    // The relaxed path often finds high-edge picks that the strict path misses.
+    let livePicks: RankedBet[] = []
+    if (cachedBestBet) {
+      const strictPicks = cachedBestBet.allRankedBets || []
+      const eloPicks = cachedBestBet.allEloBets || []
+      
+      // Start with strict picks, then add elo picks not already covered
+      const seenKeys = new Set(strictPicks.map((b: RankedBet) => `${b.gameId}:${b.team}:${b.betType}`))
+      const additionalEloPicks = eloPicks.filter((b: RankedBet) => !seenKeys.has(`${b.gameId}:${b.team}:${b.betType}`))
+      const allLivePicks = [...strictPicks, ...additionalEloPicks]
+      
+      // Filter to only today's games (by commence time)
+      livePicks = allLivePicks.filter((bet: RankedBet) => {
+        const betDate = new Date(bet.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+        return betDate === todayStr
+      })
+      
+      // Sort: locks first, then strong, then value, each sub-sorted by score desc
+      const tierOrder: Record<string, number> = { lock: 0, strong: 1, value: 2 }
+      livePicks.sort((a: RankedBet, b: RankedBet) => {
+        const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+        if (tierDiff !== 0) return tierDiff
+        if (b.score !== a.score) return b.score - a.score
+        return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
+      })
+      
+      console.log(`[API /picks] Live picks from cache: ${livePicks.length} total (${livePicks.filter(p => p.confidenceTier === 'lock').length} locks, ${livePicks.filter(p => p.confidenceTier === 'strong').length} strong, ${livePicks.filter(p => p.confidenceTier === 'value').length} value)`)
+    } else {
+      console.log('[API /picks] No cached best bet available — falling back to stored recommendations only')
+    }
+
     return NextResponse.json({
       success: true,
       todaysPicks,
       todaysRecommendations,
+      livePicks,  // NEW: Live computed picks from the same source as chat
       recentSettled,
       recentRecommendations: allRecentRecos,
       settledRecommendations: settledRecos,
@@ -78,7 +126,7 @@ export async function GET() {
         byConfidence: stats.byConfidence,
         calibration: stats.calibration,
       },
-      lastUpdated: new Date().toISOString()
+      lastUpdated: cachedBestBet?.calculatedAt || new Date().toISOString()
     })
   } catch (error) {
     console.error('[API /picks] Error:', error)

@@ -292,8 +292,13 @@ export async function GET(request: Request) {
       const existingPicks = await getAllPicks()
       
       for (const bet of lockStrongBets) {
+        // Check if we already have this SPECIFIC pick (same game + team + bet type)
+        // Previously only checked gameId, which blocked multiple picks from the same game
+        // (e.g., storing LSU +9.5 spread AND Auburn ML from the same game)
         const alreadyHavePick = existingPicks.some(p => 
           p.gameId === bet.gameId && 
+          p.team === bet.team &&
+          p.betType === bet.betType &&
           p.pickType === 'best_bet' &&
           p.status === 'pending'
         )

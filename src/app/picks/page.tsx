@@ -180,8 +180,14 @@ export default function PicksPage() {
         const json = await res.json()
         if (!json.success) throw new Error(json.error || 'Failed to fetch picks')
         
-        // Separate recommendations by tier
-        const allRecos = json.todaysRecommendations || []
+        // Use live picks (from cached best bet, same as chat) as PRIMARY source.
+        // Fall back to stored recommendations if live picks aren't available.
+        // This ensures the Model Picks page shows the same high-edge picks
+        // that the AI chat recommends, not just what the cron stored.
+        const livePicks = json.livePicks || []
+        const storedRecos = json.todaysRecommendations || []
+        const allRecos = livePicks.length > 0 ? livePicks : storedRecos
+        
         const locks = allRecos.filter((r: TieredPick) => r.confidenceTier === 'lock')
         const strong = allRecos.filter((r: TieredPick) => r.confidenceTier === 'strong')
         const value = allRecos.filter((r: TieredPick) => r.confidenceTier === 'value' || !r.confidenceTier)
