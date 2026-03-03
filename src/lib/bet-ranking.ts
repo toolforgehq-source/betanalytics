@@ -2923,7 +2923,12 @@ export async function computeBestBets(
   let lockCount = 0
   let strongCount = 0
   
-  const tieredBets: RankedBet[] = eloPoweredBets.map(bet => {
+  // Sort by score descending BEFORE tiering so the best picks get lock/strong slots first.
+  // Without this, the order of processing determines who gets the limited lock slots,
+  // which could promote a Score 73 pick to Lock while demoting a Score 82 pick to Strong.
+  const sortedEloPoweredBets = [...eloPoweredBets].sort((a, b) => b.score - a.score)
+  
+  const tieredBets: RankedBet[] = sortedEloPoweredBets.map(bet => {
     const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
     const edge = bet.edge
     const confidence = bet.eloConfidence || 'medium'
@@ -3061,7 +3066,10 @@ export async function computeBestBets(
   let eloLockCount = 0
   let eloStrongCount = 0
   
-  const tieredEloBets: RankedBet[] = eloPoweredEloBets.map(bet => {
+  // Sort by score descending BEFORE tiering (same fix as strict bets above)
+  const sortedEloPoweredEloBets = [...eloPoweredEloBets].sort((a, b) => b.score - a.score)
+  
+  const tieredEloBets: RankedBet[] = sortedEloPoweredEloBets.map(bet => {
     const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
     const betEdge = bet.edge
     const confidence = bet.eloConfidence || 'medium'
