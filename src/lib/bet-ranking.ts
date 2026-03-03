@@ -3045,11 +3045,78 @@ export async function computeBestBets(
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   
+  // ============================================
+  // TIER allEloBets TOO (for model picks page)
+  // ============================================
+  // The strict analyzeGame() filters (confidence gate, multi-signal, CLV, conference strength)
+  // reject many picks that the relaxed analyzeGameForSportQuery() accepts.
+  // We need to tier allEloBets so the cron can store Lock/Strong picks from BOTH sources.
+  // This ensures picks like Alabama A&M (88/100 score, 12.6% edge) that pass relaxed filters
+  // also appear on the model picks page.
+  const eloPoweredEloBets = filteredEloBets.filter(bet => bet.eloProbability !== undefined)
+  let eloLockCount = 0
+  let eloStrongCount = 0
+  
+  const tieredEloBets: RankedBet[] = eloPoweredEloBets.map(bet => {
+    const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+    const betEdge = bet.edge
+    const confidence = bet.eloConfidence || 'medium'
+    const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
+    const totalSitAdj = bet.situationalAdjustment || 0
+    const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
+    const isLargeSpread = spreadSize > 10
+    const isHugeSpread = spreadSize > 14
+    const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
+    const isHugeEloGap = eloGap > 300
+    
+    const isLockCandidate = 
+      prob >= 62 &&
+      betEdge >= 5 &&
+      (confidence === 'high' || confidence === 'very_high') &&
+      !hasSharpAgainst &&
+      totalSitAdj >= -0.01 &&
+      !isLargeSpread &&
+      !isHugeEloGap &&
+      eloLockCount < MAX_LOCKS
+    
+    const isStrongCandidate =
+      prob >= 57 &&
+      betEdge >= 4 &&
+      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
+      !isHugeSpread &&
+      !isHugeEloGap &&
+      eloStrongCount < MAX_STRONG
+    
+    let tier: 'lock' | 'strong' | 'value'
+    if (isLockCandidate) {
+      tier = 'lock'
+      eloLockCount++
+    } else if (isStrongCandidate) {
+      tier = 'strong'
+      eloStrongCount++
+    } else {
+      tier = 'value'
+    }
+    
+    return { ...bet, confidenceTier: tier }
+  })
+  
+  // Sort tieredEloBets: locks first, then strong, then value
+  tieredEloBets.sort((a, b) => {
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    if (tierDiff !== 0) return tierDiff
+    if (b.score !== a.score) return b.score - a.score
+    return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
+  })
+  
+  console.log(`[computeBestBets] Tiered strict bets: ${tieredBets.filter(b => b.confidenceTier === 'lock').length} locks, ${tieredBets.filter(b => b.confidenceTier === 'strong').length} strong, ${tieredBets.filter(b => b.confidenceTier === 'value').length} value`)
+  console.log(`[computeBestBets] Tiered elo bets: ${tieredEloBets.filter(b => b.confidenceTier === 'lock').length} locks, ${tieredEloBets.filter(b => b.confidenceTier === 'strong').length} strong, ${tieredEloBets.filter(b => b.confidenceTier === 'value').length} value`)
+  
   return {
     bestBet,
     runnerUp,
-    allRankedBets: tieredBets,  // Tiered picks: lock > strong > value
-    allEloBets: filteredEloBets,  // Filtered bets with Elo data for sport-specific queries (star player filter applied)
+    allRankedBets: tieredBets,  // Tiered picks: lock > strong > value (from strict analyzeGame)
+    allEloBets: tieredEloBets,  // Tiered picks from relaxed analyzeGameForSportQuery (star player filter applied)
     calculatedAt: now,
     gamesAnalyzed: games.length,
     gamesQualified: eloPoweredBets.length,  // Count of Elo-powered bets

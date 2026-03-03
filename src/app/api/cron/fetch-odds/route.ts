@@ -274,11 +274,25 @@ export async function GET(request: Request) {
     console.log(`[fetch-odds] Sport bets computed: ${Object.keys(sportBets).length} sports (from ${bestBetResult.allEloBets.length} Elo bets)`)
     
     // Store ALL Lock + Strong tier picks for track record (not just the single best bet)
+    // CRITICAL FIX: Check BOTH allRankedBets (strict analyzeGame filters) AND allEloBets
+    // (relaxed analyzeGameForSportQuery filters). The strict path rejects many qualifying picks
+    // (e.g., NCAAB conference strength filter, Elo confidence gate, multi-signal rejection)
+    // that the relaxed path accepts. Without this, the model picks page can be empty even when
+    // the chat shows high-scoring picks like Alabama A&M (88/100, 12.6% edge).
     let picksStored = 0
-    const lockStrongBets = bestBetResult.allRankedBets.filter(
+    const strictLockStrong = bestBetResult.allRankedBets.filter(
       b => b.confidenceTier === 'lock' || b.confidenceTier === 'strong'
     )
-    console.log(`[fetch-odds] Found ${lockStrongBets.length} Lock/Strong picks out of ${bestBetResult.allRankedBets.length} total ranked bets`)
+    const eloLockStrong = bestBetResult.allEloBets.filter(
+      b => b.confidenceTier === 'lock' || b.confidenceTier === 'strong'
+    )
+    
+    // Merge: start with strict picks, then add elo picks not already covered (by gameId + team)
+    const seenKeys = new Set(strictLockStrong.map(b => `${b.gameId}:${b.team}`))
+    const additionalEloPicks = eloLockStrong.filter(b => !seenKeys.has(`${b.gameId}:${b.team}`))
+    const lockStrongBets = [...strictLockStrong, ...additionalEloPicks]
+    
+    console.log(`[fetch-odds] Found ${lockStrongBets.length} Lock/Strong picks (${strictLockStrong.length} from strict + ${additionalEloPicks.length} from relaxed elo) out of ${bestBetResult.allRankedBets.length} strict + ${bestBetResult.allEloBets.length} elo bets`)
     
     if (lockStrongBets.length > 0) {
       const existingPicks = await getAllPicks()
