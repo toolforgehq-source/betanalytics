@@ -2893,14 +2893,9 @@ export async function computeBestBets(
   // Strict tiering to ensure only the highest-conviction picks get premium labels.
   // These labels drive our public win rate — only the best of the best qualify.
   //
-  // LOCK OF THE DAY (target: 70%+ win rate):
-  //   - Elo probability 63%+ 
-  //   - Edge 6%+
-  //   - Elo confidence 'high' or 'very_high'
-  //   - No sharp money against
-  //   - Positive or neutral situational factors
-  //   - Spread ≤ 8 points (avoid large spreads)
-  //   - Elo gap ≤ 250 (avoid hugely mismatched games)
+  // LOCK OF THE DAY (target: 65%+ win rate):
+  //   - Same criteria as Strong Play (highest-scored qualifying bet gets Lock)
+  //   - The Lock is simply the #1 bet by score that meets Strong Play criteria
   //   - Maximum 1 lock per day across all sports
   //
   // STRONG PLAY (target: 60-65% win rate):
@@ -2908,7 +2903,7 @@ export async function computeBestBets(
   //   - Edge 4%+
   //   - Elo confidence 'medium' or higher
   //   - No sharp money against
-  //   - Spread ≤ 10 points
+  //   - Spread ≤ 12 points
   //   - Elo gap ≤ 250
   //   - Maximum 3 strong plays per day
   //
@@ -2938,14 +2933,16 @@ export async function computeBestBets(
     const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
     const isHugeEloGap = eloGap > 250      // 250+ Elo gap = unreliable
     
-    // LOCK criteria: highest conviction picks — very selective
+    // LOCK criteria: the single best bet of the day
+    // Lock = highest-scored bet that meets Strong Play criteria (no extra gates)
+    // This ensures the best bet is ALWAYS the Lock, not some lower-scored bet
+    // that happens to pass arbitrary extra filters
     const isLockCandidate = 
-      prob >= 63 &&
-      edge >= 6 &&
-      (confidence === 'high' || confidence === 'very_high') &&
+      prob >= 58 &&
+      edge >= 4 &&
+      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
-      totalSitAdj >= -0.01 &&
-      !isLargeSpread &&
+      !isHugeSpread &&
       !isHugeEloGap &&
       lockCount < MAX_LOCKS
     
@@ -3091,14 +3088,13 @@ export async function computeBestBets(
     const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
     const isHugeEloGap = eloGap > 250      // Match strict pass
     
-    // Same tightened criteria as strict pass
+    // Lock = highest-scored bet meeting Strong criteria (no extra gates)
     const isLockCandidate = 
-      prob >= 63 &&
-      betEdge >= 6 &&
-      (confidence === 'high' || confidence === 'very_high') &&
+      prob >= 58 &&
+      betEdge >= 4 &&
+      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
-      totalSitAdj >= -0.01 &&
-      !isLargeSpread &&
+      !isHugeSpread &&
       !isHugeEloGap &&
       lockCount < MAX_LOCKS  // Use GLOBAL counter from strict pass
     
@@ -3178,13 +3174,14 @@ export async function computeBestBets(
     const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
     const isHugeEloGap = eloGap > 250
     
+    // Lock = highest-scored bet meeting Strong criteria (no extra gates)
+    // This ensures the globally best-scored qualifying bet is ALWAYS the Lock
     const isLockCandidate = 
-      prob >= 63 &&
-      betEdge >= 6 &&
-      (confidence === 'high' || confidence === 'very_high') &&
+      prob >= 58 &&
+      betEdge >= 4 &&
+      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
-      totalSitAdj >= -0.01 &&
-      !isLargeSpread &&
+      !isHugeSpread &&
       !isHugeEloGap &&
       globalLockCount < MAX_LOCKS
     
