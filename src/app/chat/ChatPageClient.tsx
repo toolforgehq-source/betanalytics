@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Calculator, BookOpen, User, LogOut, ArrowLeft, Activity, RefreshCw, Menu, X, Search, Layers, Bell } from 'lucide-react'
+import { Calculator, BookOpen, User, LogOut, ArrowLeft, Activity, RefreshCw, Menu, X, Search, Layers, Bell, Target, TrendingUp } from 'lucide-react'
 import { signOut } from 'next-auth/react'
 import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
@@ -141,6 +141,20 @@ export default function ChatPageClient({
             {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-1">
               <Link
+                href="/picks"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
+              >
+                <Target className="w-4 h-4" />
+                Picks
+              </Link>
+              <Link
+                href="/performance"
+                className="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
+              >
+                <TrendingUp className="w-4 h-4" />
+                Performance
+              </Link>
+              <Link
                 href="/odds"
                 className="flex items-center gap-1.5 px-3 py-2 text-slate-300 hover:text-white hover:bg-slate-800/50 rounded-lg transition-colors text-sm"
               >
@@ -210,6 +224,22 @@ export default function ChatPageClient({
           {/* Mobile Navigation Menu */}
           {mobileMenuOpen && (
             <div className="md:hidden mt-4 pt-4 border-t border-slate-800/50 space-y-2">
+              <Link
+                href="/picks"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <Target className="w-4 h-4" />
+                Model Picks
+              </Link>
+              <Link
+                href="/performance"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full flex items-center gap-2 px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm"
+              >
+                <TrendingUp className="w-4 h-4" />
+                Performance
+              </Link>
               <Link
                 href="/odds"
                 onClick={() => setMobileMenuOpen(false)}
