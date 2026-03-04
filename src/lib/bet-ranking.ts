@@ -2655,7 +2655,7 @@ export async function computeBestBets(
     // Get last game dates for rest day calculations
     let homeLastGameDate: string | null = null
     let awayLastGameDate: string | null = null
-    if (teamScheduleData) {
+    if (teamScheduleData && teamScheduleData.teams) {
       const homeKey = normalizeScheduleTeamName(game.homeTeam)
       const awayKey = normalizeScheduleTeamName(game.awayTeam)
       homeLastGameDate = teamScheduleData.teams[homeKey]?.lastGameDate || null
