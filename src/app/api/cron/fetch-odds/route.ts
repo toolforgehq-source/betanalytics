@@ -31,10 +31,19 @@ interface EnrichedGame extends Game {
 }
 
 /**
- * Get today's date string in ET timezone (America/New_York)
+ * Get today's "betting day" date string in ET timezone.
+ * A betting day runs until 2 AM ET the next morning, so at 1 AM ET on March 4
+ * we still return the March 3 date string. This keeps picks visible until 2 AM.
  */
 function getTodayET(): string {
-  return new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+  const now = new Date()
+  const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  const etNow = new Date(etStr)
+  // Before 2 AM ET = still the previous calendar day for betting purposes
+  if (etNow.getHours() < 2) {
+    etNow.setDate(etNow.getDate() - 1)
+  }
+  return etNow.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
 }
 
 /**

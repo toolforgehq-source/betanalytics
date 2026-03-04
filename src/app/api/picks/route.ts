@@ -35,8 +35,19 @@ export async function GET() {
     const recentRecos = Array.isArray(rawRecentRecos) ? rawRecentRecos : []
 
     // Separate picks into today's and historical
+    // Use the "betting day" boundary: a day runs until 2 AM ET the next morning.
+    // e.g., at 11:30 PM ET on March 3, todayStr = "3/3/2026".
+    // At 1:30 AM ET on March 4, todayStr = "3/3/2026" (still showing March 3 picks).
+    // At 2:30 AM ET on March 4, todayStr = "3/4/2026" (new day starts).
     const now = new Date()
-    const todayStr = now.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+    const etNow = new Date(etStr)
+    // If it's before 2 AM ET, treat it as the previous calendar day
+    const bettingDay = new Date(etNow)
+    if (etNow.getHours() < 2) {
+      bettingDay.setDate(bettingDay.getDate() - 1)
+    }
+    const todayStr = bettingDay.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
     
     const todaysPicks = allPicks.filter((p: StoredPick) => {
       const pickDate = new Date(p.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
@@ -82,7 +93,8 @@ export async function GET() {
       const additionalEloPicks = eloPicks.filter((b: RankedBet) => !seenKeys.has(`${b.gameId}:${b.team}:${b.betType}`))
       const allLivePicks = [...strictPicks, ...additionalEloPicks]
       
-      // Filter to only today's games (by commence time)
+      // Filter to today's games (by commence time) using the betting day boundary.
+      // Games from the current betting day (until 2 AM ET) are included.
       livePicks = allLivePicks.filter((bet: RankedBet) => {
         const betDate = new Date(bet.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
         return betDate === todayStr

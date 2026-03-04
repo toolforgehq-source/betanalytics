@@ -4033,6 +4033,34 @@ function formatTime(isoString: string): string {
 // Redis cache key for best bet
 const BEST_BET_CACHE_KEY = 'betanalytics:best-bet'
 
+/**
+ * Calculate seconds until 2 AM ET (next occurrence).
+ * Daily picks stay visible until 2 AM ET, then the cache expires and
+ * the next cron run starts fresh for the new day.
+ * Minimum TTL is 1 hour to avoid edge cases right around 2 AM.
+ */
+function getSecondsUntil2amET(): number {
+  const now = new Date()
+  // Get current time in ET
+  const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  const etNow = new Date(etStr)
+  
+  // Build next 2 AM ET
+  const next2am = new Date(etNow)
+  next2am.setHours(2, 0, 0, 0)
+  
+  // If it's already past 2 AM today, target 2 AM tomorrow
+  if (etNow.getHours() >= 2) {
+    next2am.setDate(next2am.getDate() + 1)
+  }
+  
+  const diffMs = next2am.getTime() - etNow.getTime()
+  const diffSeconds = Math.floor(diffMs / 1000)
+  
+  // Minimum 1 hour TTL to avoid edge cases
+  return Math.max(diffSeconds, 3600)
+}
+
 // Bump this version whenever the best-bet algorithm changes materially
 // (e.g. injury disqualification, scoring changes, filter changes).
 // Cached results with a different version are automatically invalidated.
@@ -4070,11 +4098,14 @@ export async function cacheBestBet(result: BestBetResult): Promise<void> {
       body: JSON.stringify(JSON.stringify({ ...result, _cacheVersion: BEST_BET_CACHE_VERSION }))
     })
     
-    // Set 4-hour expiry
-    await fetch(`${redis.url}/expire/${BEST_BET_CACHE_KEY}/${4 * 60 * 60}`, {
+    // Set TTL to expire at 2 AM ET — picks stay visible for the full day.
+    // This prevents the cache from expiring mid-evening and losing all daily picks.
+    const ttlSeconds = getSecondsUntil2amET()
+    await fetch(`${redis.url}/expire/${BEST_BET_CACHE_KEY}/${ttlSeconds}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${redis.token}` }
     })
+    console.log(`[cacheBestBet] TTL set to ${ttlSeconds}s (expires at ~2 AM ET)`)
     
     // Track the recommendation for performance monitoring
     if (result.bestBet) {
