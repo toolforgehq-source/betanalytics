@@ -399,6 +399,37 @@ No picks recorded yet. Track record will build as picks are made and graded.
 }
 
 /**
+ * Clear all picks and track record data (for resetting records to zero)
+ */
+export async function clearAllPicks(): Promise<{ deleted: number }> {
+  const redis = await getRedisClient()
+  if (!redis) return { deleted: 0 }
+  
+  try {
+    const allPicks = await getAllPicks()
+    const count = allPicks.length
+    
+    // Delete picks data
+    await fetch(`${redis.url}/del/${PICKS_CACHE_KEY}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    // Delete track record data
+    await fetch(`${redis.url}/del/${TRACK_RECORD_KEY}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${redis.token}` }
+    })
+    
+    console.log(`[clearAllPicks] Cleared ${count} picks and track record`)
+    return { deleted: count }
+  } catch (error) {
+    console.error('[clearAllPicks] Error:', error)
+    return { deleted: 0 }
+  }
+}
+
+/**
  * Get pending picks that need grading (games that have ended)
  */
 export async function getPendingPicksToGrade(): Promise<StoredPick[]> {

@@ -250,14 +250,14 @@ export default function PicksPage() {
               <Lock className="w-5 h-5 text-yellow-400" />
               <span className="font-bold text-yellow-400">Lock of the Day</span>
             </div>
-            <p className="text-xs text-slate-400">Highest conviction. All signals aligned. 62%+ probability, 5%+ edge, no sharp money against. Target: 70%+ win rate.</p>
+            <p className="text-xs text-slate-400">Highest conviction. All signals aligned. 63%+ probability, 6%+ edge, no sharp money against. Max 1 per day. Target: 70%+ win rate.</p>
           </div>
           <div className="bg-gradient-to-br from-blue-900/20 to-cyan-900/10 border border-blue-500/30 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2">
               <Zap className="w-5 h-5 text-blue-400" />
               <span className="font-bold text-blue-400">Strong Play</span>
             </div>
-            <p className="text-xs text-slate-400">Solid conviction. 57%+ probability, 4%+ edge, medium+ Elo confidence. Target: 60-65% win rate.</p>
+            <p className="text-xs text-slate-400">Solid conviction. 58%+ probability, 4%+ edge, no sharp money against. Max 3 per day. Target: 60-65% win rate.</p>
           </div>
         </div>
 

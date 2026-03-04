@@ -2890,36 +2890,34 @@ export async function computeBestBets(
   // ============================================
   // TIERED CONFIDENCE SYSTEM
   // ============================================
-  // Instead of flat selectivity, classify every qualifying bet into confidence tiers:
+  // Strict tiering to ensure only the highest-conviction picks get premium labels.
+  // These labels drive our public win rate — only the best of the best qualify.
   //
-  // LOCK OF THE DAY (70%+ expected win rate):
-  //   - Elo probability 60%+ 
-  //   - Edge 4%+
+  // LOCK OF THE DAY (target: 70%+ win rate):
+  //   - Elo probability 63%+ 
+  //   - Edge 6%+
   //   - Elo confidence 'high' or 'very_high'
-  //   - No sharp money against (no negative sharp indicator)
+  //   - No sharp money against
   //   - Positive or neutral situational factors
-  //   - Spread ≤ 10 points (avoid massive spreads on bad teams)
-  //   - Elo gap ≤ 300 (avoid hugely mismatched games)
-  //   - Maximum 2 locks per day across all sports
+  //   - Spread ≤ 8 points (avoid large spreads)
+  //   - Elo gap ≤ 250 (avoid hugely mismatched games)
+  //   - Maximum 1 lock per day across all sports
   //
-  // STRONG PLAY (58-65% expected win rate):
-  //   - Elo probability 55%+
-  //   - Edge 2.5%+
+  // STRONG PLAY (target: 60-65% win rate):
+  //   - Elo probability 58%+
+  //   - Edge 4%+
   //   - Elo confidence 'medium' or higher
-  //   - Spread ≤ 14 points
-  //   - Elo gap ≤ 300
-  //   - Maximum 5 strong plays per day
+  //   - No sharp money against
+  //   - Spread ≤ 10 points
+  //   - Elo gap ≤ 250
+  //   - Maximum 3 strong plays per day
   //
-  // VALUE SPOT (52-55% expected win rate):
+  // VALUE SPOT:
   //   - Everything else that passes base filters
-  //   - Higher volume, lower certainty
-  //
-  // NOTE: Thresholds adjusted for conservative Elo blending (max 55% Elo weight).
-  // With ESPN as single data source, edges are compressed to 1-4% range typically.
-  // Previous thresholds (62%/5% Lock, 57%/4% Strong) produced 0 picks on most days.
+  //   - Not publicly tracked — internal only
   
-  const MAX_LOCKS = 2
-  const MAX_STRONG = 5
+  const MAX_LOCKS = 1
+  const MAX_STRONG = 3
   let lockCount = 0
   let strongCount = 0
   
@@ -2935,15 +2933,15 @@ export async function computeBestBets(
     const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
     const totalSitAdj = bet.situationalAdjustment || 0
     const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
-    const isLargeSpread = spreadSize > 10  // Tightened from 15 to 10
-    const isHugeSpread = spreadSize > 14   // Block from Strong too
+    const isLargeSpread = spreadSize > 8   // Block from Lock
+    const isHugeSpread = spreadSize > 10   // Block from Strong too
     const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
-    const isHugeEloGap = eloGap > 300      // 300+ Elo gap = unreliable
+    const isHugeEloGap = eloGap > 250      // 250+ Elo gap = unreliable
     
-    // LOCK criteria: highest conviction picks
+    // LOCK criteria: highest conviction picks — very selective
     const isLockCandidate = 
-      prob >= 60 &&
-      edge >= 4 &&
+      prob >= 63 &&
+      edge >= 6 &&
       (confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
       totalSitAdj >= -0.01 &&
@@ -2951,11 +2949,12 @@ export async function computeBestBets(
       !isHugeEloGap &&
       lockCount < MAX_LOCKS
     
-    // STRONG criteria: solid picks with good edge
+    // STRONG criteria: solid picks with meaningful edge
     const isStrongCandidate =
-      prob >= 55 &&
-      edge >= 2.5 &&
+      prob >= 58 &&
+      edge >= 4 &&
       (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
+      !hasSharpAgainst &&
       !isHugeSpread &&
       !isHugeEloGap &&
       strongCount < MAX_STRONG
@@ -3060,52 +3059,65 @@ export async function computeBestBets(
   // The strict analyzeGame() filters (confidence gate, multi-signal, CLV, conference strength)
   // reject many picks that the relaxed analyzeGameForSportQuery() accepts.
   // We need to tier allEloBets so the cron can store Lock/Strong picks from BOTH sources.
-  // This ensures picks like Alabama A&M (88/100 score, 12.6% edge) that pass relaxed filters
-  // also appear on the model picks page.
+  //
+  // CRITICAL FIX: Share the global lockCount/strongCount from the strict pass above.
+  // Previously each pass had independent counters, so 2 locks from strict + 2 locks from
+  // relaxed = 4 locks total, exceeding the intended cap. Now we use the same counters
+  // so the combined total across both sources respects MAX_LOCKS and MAX_STRONG.
   const eloPoweredEloBets = filteredEloBets.filter(bet => bet.eloProbability !== undefined)
-  let eloLockCount = 0
-  let eloStrongCount = 0
+  
+  // The strict pass already consumed lock/strong slots via the shared lockCount/strongCount
+  // counters. For picks that appear in both strict and relaxed paths, we copy the strict
+  // tier to keep them consistent.
   
   // Sort by score descending BEFORE tiering (same fix as strict bets above)
   const sortedEloPoweredEloBets = [...eloPoweredEloBets].sort((a, b) => b.score - a.score)
   
   const tieredEloBets: RankedBet[] = sortedEloPoweredEloBets.map(bet => {
+    // If this pick was already tiered in the strict pass, copy that tier to stay consistent
+    const strictMatch = tieredBets.find(b => b.gameId === bet.gameId && b.team === bet.team && b.betType === bet.betType)
+    if (strictMatch) {
+      return { ...bet, confidenceTier: strictMatch.confidenceTier }
+    }
+    
     const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
     const betEdge = bet.edge
     const confidence = bet.eloConfidence || 'medium'
     const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
     const totalSitAdj = bet.situationalAdjustment || 0
     const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
-    const isLargeSpread = spreadSize > 10
-    const isHugeSpread = spreadSize > 14
+    const isLargeSpread = spreadSize > 8   // Match strict pass
+    const isHugeSpread = spreadSize > 10   // Match strict pass
     const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
-    const isHugeEloGap = eloGap > 300
+    const isHugeEloGap = eloGap > 250      // Match strict pass
     
+    // Same tightened criteria as strict pass
     const isLockCandidate = 
-      prob >= 60 &&
-      betEdge >= 4 &&
+      prob >= 63 &&
+      betEdge >= 6 &&
       (confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
       totalSitAdj >= -0.01 &&
       !isLargeSpread &&
       !isHugeEloGap &&
-      eloLockCount < MAX_LOCKS
+      lockCount < MAX_LOCKS  // Use GLOBAL counter from strict pass
     
     const isStrongCandidate =
-      prob >= 55 &&
-      betEdge >= 2.5 &&
+      prob >= 58 &&
+      betEdge >= 4 &&
       (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
+      !hasSharpAgainst &&
       !isHugeSpread &&
       !isHugeEloGap &&
-      eloStrongCount < MAX_STRONG
+      strongCount < MAX_STRONG  // Use GLOBAL counter from strict pass
     
     let tier: 'lock' | 'strong' | 'value'
     if (isLockCandidate) {
       tier = 'lock'
-      eloLockCount++
+      lockCount++  // Increment GLOBAL counter
     } else if (isStrongCandidate) {
       tier = 'strong'
-      eloStrongCount++
+      strongCount++  // Increment GLOBAL counter
     } else {
       tier = 'value'
     }
