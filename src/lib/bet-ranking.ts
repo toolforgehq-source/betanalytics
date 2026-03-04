@@ -3133,8 +3133,106 @@ export async function computeBestBets(
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   
-  console.log(`[computeBestBets] Tiered strict bets: ${tieredBets.filter(b => b.confidenceTier === 'lock').length} locks, ${tieredBets.filter(b => b.confidenceTier === 'strong').length} strong, ${tieredBets.filter(b => b.confidenceTier === 'value').length} value`)
-  console.log(`[computeBestBets] Tiered elo bets: ${tieredEloBets.filter(b => b.confidenceTier === 'lock').length} locks, ${tieredEloBets.filter(b => b.confidenceTier === 'strong').length} strong, ${tieredEloBets.filter(b => b.confidenceTier === 'value').length} value`)
+  console.log(`[computeBestBets] Pre-global tiered strict bets: ${tieredBets.filter(b => b.confidenceTier === 'lock').length} locks, ${tieredBets.filter(b => b.confidenceTier === 'strong').length} strong, ${tieredBets.filter(b => b.confidenceTier === 'value').length} value`)
+  console.log(`[computeBestBets] Pre-global tiered elo bets: ${tieredEloBets.filter(b => b.confidenceTier === 'lock').length} locks, ${tieredEloBets.filter(b => b.confidenceTier === 'strong').length} strong, ${tieredEloBets.filter(b => b.confidenceTier === 'value').length} value`)
+  
+  // ============================================
+  // GLOBAL RE-TIERING: Ensure the BEST bets globally get lock/strong slots
+  // ============================================
+  // Problem: The strict path may assign strong slots to lower-quality bets (e.g., 
+  // Northwestern score 53) via its shared counter, preventing higher-quality elo-only 
+  // bets (e.g., Memphis score 81, 68% prob, 15% edge) from qualifying.
+  //
+  // Solution: Merge both paths, deduplicate (keep highest score version), sort by score,
+  // and re-tier from scratch. Then propagate the new tiers back to both lists.
+  // This guarantees the globally top-scored bets always get lock/strong labels.
+  
+  // Step 1: Merge + deduplicate (keep highest score for each unique bet)
+  const allBetsMap = new Map<string, RankedBet>()
+  for (const bet of [...tieredBets, ...tieredEloBets]) {
+    const key = `${bet.gameId}:${bet.team}:${bet.betType}`
+    const existing = allBetsMap.get(key)
+    if (!existing || bet.score > existing.score) {
+      allBetsMap.set(key, bet)
+    }
+  }
+  
+  // Step 2: Sort by score descending
+  const allMergedBets = Array.from(allBetsMap.values()).sort((a, b) => b.score - a.score)
+  
+  // Step 3: Re-tier with fresh counters
+  let globalLockCount = 0
+  let globalStrongCount = 0
+  const globalTierMap = new Map<string, 'lock' | 'strong' | 'value'>()
+  
+  for (const bet of allMergedBets) {
+    const key = `${bet.gameId}:${bet.team}:${bet.betType}`
+    const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
+    const betEdge = bet.edge
+    const confidence = bet.eloConfidence || 'medium'
+    const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
+    const totalSitAdj = bet.situationalAdjustment || 0
+    const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
+    const isLargeSpread = spreadSize > 8
+    const isHugeSpread = spreadSize > 12
+    const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
+    const isHugeEloGap = eloGap > 250
+    
+    const isLockCandidate = 
+      prob >= 63 &&
+      betEdge >= 6 &&
+      (confidence === 'high' || confidence === 'very_high') &&
+      !hasSharpAgainst &&
+      totalSitAdj >= -0.01 &&
+      !isLargeSpread &&
+      !isHugeEloGap &&
+      globalLockCount < MAX_LOCKS
+    
+    const isStrongCandidate =
+      prob >= 58 &&
+      betEdge >= 4 &&
+      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
+      !hasSharpAgainst &&
+      !isHugeSpread &&
+      !isHugeEloGap &&
+      globalStrongCount < MAX_STRONG
+    
+    if (isLockCandidate) {
+      globalTierMap.set(key, 'lock')
+      globalLockCount++
+    } else if (isStrongCandidate) {
+      globalTierMap.set(key, 'strong')
+      globalStrongCount++
+    } else {
+      globalTierMap.set(key, 'value')
+    }
+  }
+  
+  // Step 4: Propagate global tiers back to both lists
+  for (const bet of tieredBets) {
+    const key = `${bet.gameId}:${bet.team}:${bet.betType}`
+    bet.confidenceTier = globalTierMap.get(key) || 'value'
+  }
+  for (const bet of tieredEloBets) {
+    const key = `${bet.gameId}:${bet.team}:${bet.betType}`
+    bet.confidenceTier = globalTierMap.get(key) || 'value'
+  }
+  
+  // Re-sort both lists after tier update: locks first, then strong, then value
+  tieredBets.sort((a, b) => {
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    if (tierDiff !== 0) return tierDiff
+    if (b.score !== a.score) return b.score - a.score
+    return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
+  })
+  tieredEloBets.sort((a, b) => {
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    if (tierDiff !== 0) return tierDiff
+    if (b.score !== a.score) return b.score - a.score
+    return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
+  })
+  
+  console.log(`[computeBestBets] Global re-tier: ${globalLockCount} locks, ${globalStrongCount} strong (from ${allMergedBets.length} unique bets)`)
   
   return {
     bestBet,
