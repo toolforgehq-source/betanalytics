@@ -3135,18 +3135,27 @@ export async function computeBestBets(
   // Northwestern score 53) via its shared counter, preventing higher-quality elo-only 
   // bets (e.g., Memphis score 81, 68% prob, 15% edge) from qualifying.
   //
-  // Solution: Merge both paths, deduplicate (keep highest score version), sort by score,
-  // and re-tier from scratch. Then propagate the new tiers back to both lists.
-  // This guarantees the globally top-scored bets always get lock/strong labels.
+  // Solution: Merge both paths, deduplicate (prefer strict version for consistency
+  // with picks API display), sort by score, and re-tier from scratch. Then propagate
+  // the new tiers back to both lists. This guarantees tier assignment uses the same
+  // scores/data the user sees on the picks page.
   
-  // Step 1: Merge + deduplicate (keep highest score for each unique bet)
+  // Step 1: Merge + deduplicate
+  // IMPORTANT: For bets that appear in both paths, prefer the STRICT path version.
+  // The picks API also prefers strict over elo for display, so the tier assignment
+  // must use the same version the user will see. Otherwise a bet can get Lock based
+  // on its elo-path score (e.g., 89) but display with its strict-path score (e.g., 72),
+  // making it look like a weaker bet got Lock over a stronger one.
   const allBetsMap = new Map<string, RankedBet>()
-  for (const bet of [...tieredBets, ...tieredEloBets]) {
+  // Add elo bets first
+  for (const bet of tieredEloBets) {
     const key = `${bet.gameId}:${bet.team}:${bet.betType}`
-    const existing = allBetsMap.get(key)
-    if (!existing || bet.score > existing.score) {
-      allBetsMap.set(key, bet)
-    }
+    allBetsMap.set(key, bet)
+  }
+  // Then override with strict bets (strict takes priority for duplicates)
+  for (const bet of tieredBets) {
+    const key = `${bet.gameId}:${bet.team}:${bet.betType}`
+    allBetsMap.set(key, bet)
   }
   
   // Step 2: Sort by score descending
