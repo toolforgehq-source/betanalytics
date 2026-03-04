@@ -2934,7 +2934,7 @@ export async function computeBestBets(
     const totalSitAdj = bet.situationalAdjustment || 0
     const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
     const isLargeSpread = spreadSize > 8   // Block from Lock
-    const isHugeSpread = spreadSize > 10   // Block from Strong too
+    const isHugeSpread = spreadSize > 12   // Block from Strong too (was >10, bumped to allow +10.5 / +11.5 type games)
     const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
     const isHugeEloGap = eloGap > 250      // 250+ Elo gap = unreliable
     
@@ -3087,7 +3087,7 @@ export async function computeBestBets(
     const totalSitAdj = bet.situationalAdjustment || 0
     const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
     const isLargeSpread = spreadSize > 8   // Match strict pass
-    const isHugeSpread = spreadSize > 10   // Match strict pass
+    const isHugeSpread = spreadSize > 12   // Match strict pass (was >10, bumped to allow +10.5 / +11.5 type games)
     const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
     const isHugeEloGap = eloGap > 250      // Match strict pass
     
