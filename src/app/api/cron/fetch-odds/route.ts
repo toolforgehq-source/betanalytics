@@ -250,7 +250,7 @@ export async function GET(request: Request) {
       console.error("[fetch-odds] Team schedule fetch failed:", err)
       return null
     })
-    if (teamScheduleData) {
+    if (teamScheduleData && teamScheduleData.teams) {
       console.log(`[fetch-odds] Team schedule data available: ${Object.keys(teamScheduleData.teams).length} teams tracked`)
     } else {
       console.log("[fetch-odds] No team schedule data available - rest day adjustments will use defaults")
