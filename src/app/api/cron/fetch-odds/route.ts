@@ -4,10 +4,12 @@ import { fetchAllESPNOdds, cacheESPNOdds, fetchAllESPNData, type ESPNOdds, type 
 import { 
   computeBestBets, 
   cacheBestBet, 
+  getCachedBestBet,
   computeParlayOfTheDay, 
   cacheParlay,
   computeSportBestBets,
-  cacheSportBets
+  cacheSportBets,
+  type RankedBet
 } from "@/lib/bet-ranking"
 import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
 import { trackBestBet } from "@/lib/recommendation-tracking"
@@ -254,10 +256,50 @@ export async function GET(request: Request) {
       console.log("[fetch-odds] No team schedule data available - rest day adjustments will use defaults")
     }
     
-    // Compute and cache the best bet using only TODAY's games
+    // Compute the best bet using only TODAY's games
     // Now passing weather, line movement, and team schedule data for situational adjustments
     console.log("Computing best bet from today's games...")
     const bestBetResult = await computeBestBets(todaysGames, weatherMap, lineMovements, teamScheduleData)
+    
+    // ============================================
+    // MERGE with existing cached picks to preserve picks from games that already started.
+    // ESPN drops games from its feed once they start, so late-night cron runs would
+    // otherwise overwrite the cache with only the few remaining games, losing all the
+    // picks generated earlier in the day (e.g., Alabama A&M, LSU, etc.).
+    // Strategy: keep existing cached picks for games NOT in the new computation,
+    // and use new picks for games that are still in the feed (updated odds).
+    // ============================================
+    const existingCache = await getCachedBestBet()
+    if (existingCache) {
+      const newGameIds = new Set(todaysGames.map(g => g.id))
+      
+      // Helper to merge a pick list: keep old picks for games no longer in feed, use new picks for current games
+      const mergePicks = (newPicks: RankedBet[], oldPicks: RankedBet[]): RankedBet[] => {
+        // Keep old picks whose games are no longer in the ESPN feed
+        const preservedOld = oldPicks.filter(p => !newGameIds.has(p.gameId))
+        // Deduplicate: new picks take priority for games still in feed
+        const newKeys = new Set(newPicks.map(p => `${p.gameId}:${p.team}:${p.betType}`))
+        const uniqueOld = preservedOld.filter(p => !newKeys.has(`${p.gameId}:${p.team}:${p.betType}`))
+        return [...newPicks, ...uniqueOld]
+      }
+      
+      const mergedRanked = mergePicks(bestBetResult.allRankedBets, existingCache.allRankedBets || [])
+      const mergedElo = mergePicks(bestBetResult.allEloBets, existingCache.allEloBets || [])
+      
+      const preservedRanked = mergedRanked.length - bestBetResult.allRankedBets.length
+      const preservedElo = mergedElo.length - bestBetResult.allEloBets.length
+      console.log(`[fetch-odds] Merged with existing cache: preserved ${preservedRanked} strict + ${preservedElo} elo picks from games no longer in ESPN feed`)
+      
+      bestBetResult.allRankedBets = mergedRanked
+      bestBetResult.allEloBets = mergedElo
+      
+      // Update bestBet to be the highest-scored pick across all merged picks
+      const allMerged = [...mergedRanked, ...mergedElo].sort((a, b) => b.score - a.score)
+      if (allMerged.length > 0 && (!bestBetResult.bestBet || allMerged[0].score > bestBetResult.bestBet.score)) {
+        bestBetResult.bestBet = allMerged[0]
+      }
+    }
+    
     await cacheBestBet(bestBetResult)
     
     console.log(`Best bet computed: ${bestBetResult.bestBet?.team || 'none'} (${bestBetResult.gamesQualified} qualified bets)`)
