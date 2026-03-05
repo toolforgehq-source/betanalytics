@@ -6,10 +6,11 @@
  * - Historical track record (7d, 30d, 90d, all-time)
  * - Recent settled picks with results
  * 
- * IMPORTANT: The picks page now uses live computed picks from the same cached best bet
- * result that the AI chat uses. This ensures the Model Picks page shows the same
- * high-edge picks that the chat recommends, rather than relying solely on what the
- * cron job stored (which could be stale or incomplete).
+ * CRITICAL: This API is the SINGLE SOURCE OF TRUTH for the Model Picks page display.
+ * It ALWAYS enforces dedup + tier caps (max 1 Lock, max 3 Strong) regardless of whether
+ * data comes from the live cache or stored recommendations. This prevents overpopulation
+ * caused by stale caches, recommendation accumulation across cron runs, or dedup mismatches
+ * between strict/elo analysis paths.
  */
 
 import { NextResponse } from 'next/server'
@@ -18,6 +19,72 @@ import { getRecentRecommendations, calculateTrackingStats } from '@/lib/recommen
 import { getCachedBestBet, type RankedBet } from '@/lib/bet-ranking'
 
 export const dynamic = 'force-dynamic'
+
+// These caps MUST match the values in bet-ranking.ts computeBestBets()
+const MAX_LOCKS = 1
+const MAX_STRONG = 3
+
+/**
+ * Deduplicate and enforce tier caps on a list of picks.
+ * This is the final gate before displaying picks to the user.
+ * 
+ * Steps:
+ * 1. Deduplicate by gameId:team:betType (prefer strict/higher score version)
+ * 2. Filter to only picks with qualifying probability + edge
+ * 3. Sort by score descending
+ * 4. Re-tier: highest-scored qualifying bet = Lock, next N = Strong, rest = value
+ * 5. Return only Lock + Strong picks
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PickLike = Record<string, any>
+
+function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
+  // Step 1: Deduplicate by gameId:team:betType
+  // For duplicates (same game/team/betType from different analysis paths or cron runs),
+  // keep the version with the higher score. Exclude parlays (multi-game gameIds with _).
+  const dedupMap = new Map<string, PickLike>()
+  for (const pick of picks) {
+    if (!pick.gameId || !pick.team || !pick.betType) continue
+    // Skip parlays (gameId contains underscore for multi-game combos)
+    if (pick.gameId.includes('_')) continue
+    // Skip prop bets (tracked separately)
+    if (pick.betType === 'prop') continue
+    
+    const key = `${pick.gameId}:${pick.team}:${pick.betType}`
+    const existing = dedupMap.get(key)
+    if (!existing || (pick.score || 0) > (existing.score || 0)) {
+      dedupMap.set(key, pick)
+    }
+  }
+  
+  // Step 2: Sort by score descending
+  const sorted = Array.from(dedupMap.values()).sort((a, b) => (b.score || 0) - (a.score || 0))
+  
+  // Step 3: Re-tier with fresh counters enforcing caps
+  let lockCount = 0
+  let strongCount = 0
+  
+  for (const pick of sorted) {
+    const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
+    const edge = (pick.edge || 0) as number
+    
+    // Qualifying criteria: 58%+ probability, 4%+ edge (same as bet-ranking.ts)
+    const qualifies = prob >= 58 && edge >= 4
+    
+    if (qualifies && lockCount < MAX_LOCKS) {
+      pick.confidenceTier = 'lock'
+      lockCount++
+    } else if (qualifies && strongCount < MAX_STRONG) {
+      pick.confidenceTier = 'strong'
+      strongCount++
+    } else {
+      pick.confidenceTier = 'value'
+    }
+  }
+  
+  // Step 4: Return only Lock + Strong picks, sorted: locks first, then strong, by score
+  return sorted.filter(p => p.confidenceTier === 'lock' || p.confidenceTier === 'strong')
+}
 
 export async function GET() {
   try {
@@ -36,9 +103,6 @@ export async function GET() {
 
     // Separate picks into today's and historical
     // Use the "betting day" boundary: a day runs until 2 AM ET the next morning.
-    // e.g., at 11:30 PM ET on March 3, todayStr = "3/3/2026".
-    // At 1:30 AM ET on March 4, todayStr = "3/3/2026" (still showing March 3 picks).
-    // At 2:30 AM ET on March 4, todayStr = "3/4/2026" (new day starts).
     const now = new Date()
     const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' })
     const etNow = new Date(etStr)
@@ -77,13 +141,8 @@ export async function GET() {
     // LIVE PICKS from cached best bet result
     // ============================================
     // The cached best bet result contains ALL tiered picks from both strict (analyzeGame)
-    // and relaxed (analyzeGameForSportQuery) analysis paths. This is the SAME data source
-    // the AI chat uses, ensuring consistency between chat recommendations and Model Picks.
-    //
-    // We merge picks from both allRankedBets (strict) and allEloBets (relaxed),
-    // deduplicating by gameId + team to avoid showing the same pick twice.
-    // The relaxed path often finds high-edge picks that the strict path misses.
-    let livePicks: RankedBet[] = []
+    // and relaxed (analyzeGameForSportQuery) analysis paths.
+    let livePicks: PickLike[] = []
     if (cachedBestBet) {
       const strictPicks = cachedBestBet.allRankedBets || []
       const eloPicks = cachedBestBet.allEloBets || []
@@ -91,37 +150,40 @@ export async function GET() {
       // Start with strict picks, then add elo picks not already covered
       const seenKeys = new Set(strictPicks.map((b: RankedBet) => `${b.gameId}:${b.team}:${b.betType}`))
       const additionalEloPicks = eloPicks.filter((b: RankedBet) => !seenKeys.has(`${b.gameId}:${b.team}:${b.betType}`))
-      const allLivePicks = [...strictPicks, ...additionalEloPicks]
+      const allLivePicks = [...strictPicks, ...additionalEloPicks] as PickLike[]
       
-      // Filter to today's games (by commence time) using the betting day boundary.
-      // Games from the current betting day (until 2 AM ET) are included.
-      livePicks = allLivePicks.filter((bet: RankedBet) => {
-        const betDate = new Date(bet.commenceTime).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+      // Filter to today's games
+      const todayLivePicks = allLivePicks.filter((bet) => {
+        if (!bet.commenceTime) return false
+        const betDate = new Date(bet.commenceTime as string).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
         return betDate === todayStr
       })
       
-      // Only include locks and strong plays — value spots are excluded from the public picks page
-      livePicks = livePicks.filter((bet: RankedBet) => bet.confidenceTier === 'lock' || bet.confidenceTier === 'strong')
-      
-      // Sort: locks first, then strong, each sub-sorted by score desc
-      const tierOrder: Record<string, number> = { lock: 0, strong: 1 }
-      livePicks.sort((a: RankedBet, b: RankedBet) => {
-        const tierDiff = (tierOrder[a.confidenceTier || 'strong'] ?? 1) - (tierOrder[b.confidenceTier || 'strong'] ?? 1)
-        if (tierDiff !== 0) return tierDiff
-        if (b.score !== a.score) return b.score - a.score
-        return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
-      })
-      
-      console.log(`[API /picks] Live picks from cache: ${livePicks.length} total (${livePicks.filter(p => p.confidenceTier === 'lock').length} locks, ${livePicks.filter(p => p.confidenceTier === 'strong').length} strong)`)
+      livePicks = todayLivePicks
+      console.log(`[API /picks] Live picks from cache: ${livePicks.length} candidates`)
     } else {
-      console.log('[API /picks] No cached best bet available — falling back to stored recommendations only')
+      console.log('[API /picks] No cached best bet available — falling back to stored recommendations')
     }
+
+    // ============================================
+    // CRITICAL: Choose data source and ALWAYS enforce dedup + tier caps
+    // ============================================
+    // Whether data comes from live cache or stored recommendations, we MUST
+    // deduplicate and enforce tier caps (max 1 Lock, max 3 Strong).
+    // This prevents overpopulation from: stale caches, accumulated cron recommendations,
+    // or dedup mismatches between strict/elo paths.
+    const rawPicks: PickLike[] = livePicks.length > 0 ? livePicks : todaysRecommendations
+    const enforcedPicks = dedupeAndEnforceCaps(rawPicks)
+    
+    const lockCount = enforcedPicks.filter(p => p.confidenceTier === 'lock').length
+    const strongCount = enforcedPicks.filter(p => p.confidenceTier === 'strong').length
+    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong) from ${rawPicks.length} raw picks`)
 
     return NextResponse.json({
       success: true,
       todaysPicks,
       todaysRecommendations,
-      livePicks,  // NEW: Live computed picks from the same source as chat
+      livePicks: enforcedPicks,  // ALWAYS deduped + tier-capped
       recentSettled,
       recentRecommendations: allRecentRecos,
       settledRecommendations: settledRecos,
