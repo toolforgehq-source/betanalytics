@@ -202,18 +202,19 @@ export async function GET() {
     }
 
     // ============================================
-    // CRITICAL: Choose data source and ALWAYS enforce dedup + tier caps
+    // CRITICAL: Merge ALL data sources and enforce dedup + tier caps
     // ============================================
-    // Whether data comes from live cache or stored recommendations, we MUST
-    // deduplicate and enforce tier caps (max 1 Lock, max 3 Strong).
-    // This prevents overpopulation from: stale caches, accumulated cron recommendations,
-    // or dedup mismatches between strict/elo paths.
-    const rawPicks: PickLike[] = livePicks.length > 0 ? livePicks : todaysRecommendations
+    // Combine live cache picks AND stored recommendations, then deduplicate.
+    // This ensures we always have the best picks regardless of which source they came from.
+    // The dedup function handles both schemas (live cache has `team`/`edge`, stored recos have `selection`/`odds`).
+    // If one source is empty, the other still provides picks.
+    const rawPicks: PickLike[] = [...livePicks, ...todaysRecommendations]
+    console.log(`[API /picks] Merging ${livePicks.length} live picks + ${todaysRecommendations.length} stored recos = ${rawPicks.length} raw picks`)
     const enforcedPicks = dedupeAndEnforceCaps(rawPicks)
     
     const lockCount = enforcedPicks.filter(p => p.confidenceTier === 'lock').length
     const strongCount = enforcedPicks.filter(p => p.confidenceTier === 'strong').length
-    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong) from ${rawPicks.length} raw picks`)
+    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong)`)
 
     return NextResponse.json({
       success: true,
