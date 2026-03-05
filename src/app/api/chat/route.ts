@@ -10,6 +10,9 @@ import { fetchAllOdds, fetchSportOdds } from "@/lib/odds"
 // storePick/getAllPicks removed — chat no longer tracks picks (only the cron job does)
 import { analyzePlayerProp, analyzeAllPlayerProps, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
 import { checkRateLimit } from "@/lib/rate-limit"
+import { getRecentRecommendations } from "@/lib/recommendation-tracking"
+import { dedupeAndSort, type PickLike } from "@/lib/enforce-picks"
+import type { RankedBet } from "@/lib/bet-ranking"
 
 // ===============================================================
 // HELPERS
@@ -1054,20 +1057,51 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
     await cacheBestBet(bestBetResult)
   }
   
-  // If sport filter or exclusions requested, filter the results
+  // ============================================
+  // MERGE all data sources using the SAME dedup logic as the picks page.
+  // This guarantees the chat's "best bet" always matches the Lock of the Day.
+  // ============================================
+  // 1. Combine strict + elo analysis paths from cached best bet
+  // 2. Also fetch stored recommendations (same as picks API does)
+  // 3. Run through dedupeAndSort (shared with picks page) which keeps higher-scored
+  //    version of duplicates — unlike the old code which arbitrarily preferred strict path
+  const strictPicks = bestBetResult.allRankedBets || []
+  const eloPicks = bestBetResult.allEloBets || []
+  
+  // Fetch stored recommendations to merge (same source the picks page uses)
+  const rawRecentRecos = await getRecentRecommendations(200)
+  const recentRecos = Array.isArray(rawRecentRecos) ? rawRecentRecos : []
+  
+  // Filter to today's recommendations using the same betting-day logic as picks API
+  const now = new Date()
+  const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  const etNow = new Date(etStr)
+  const bettingDay = new Date(etNow)
+  if (etNow.getHours() < 2) {
+    bettingDay.setDate(bettingDay.getDate() - 1)
+  }
+  const todayStr = bettingDay.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+  
+  const todaysRecommendations = recentRecos.filter(r => {
+    const recoDate = new Date(r.commenceTime || r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    return recoDate === todayStr
+  })
+  
+  // Merge all sources: strict picks + elo picks + stored recommendations
+  // dedupeAndSort keeps the higher-scored version of each duplicate (same as picks page)
+  const allRawPicks: PickLike[] = [...strictPicks, ...eloPicks, ...todaysRecommendations]
+  // Cast back to RankedBet[] — the actual objects are RankedBets, PickLike is just the
+  // generic container used by the shared dedup utility that also handles stored recommendations.
+  const allBets = dedupeAndSort(allRawPicks) as unknown as RankedBet[]
+  
+  console.log(`[tool:get_best_bet] Merged ${strictPicks.length} strict + ${eloPicks.length} elo + ${todaysRecommendations.length} stored recos = ${allRawPicks.length} raw, ${allBets.length} after dedup`)
+  
+  if (allBets.length === 0) {
+    return formatBestBetForContext(bestBetResult)
+  }
+  
+  // If sport filter or exclusions requested, filter the merged results
   if (input.sport || (input.exclude_sports && input.exclude_sports.length > 0)) {
-    // Merge both paths and deduplicate before filtering, same as unfiltered path below.
-    // This ensures "best NBA bet" also uses the highest-scored pick across both analysis paths.
-    const strict = bestBetResult.allRankedBets || []
-    const elo = bestBetResult.allEloBets || []
-    const seen = new Set(strict.map(b => `${b.gameId}:${b.team}:${b.betType}`))
-    const additional = elo.filter(b => !seen.has(`${b.gameId}:${b.team}:${b.betType}`))
-    const allBets = [...strict, ...additional].sort((a, b) => b.score - a.score)
-    
-    if (allBets.length === 0) {
-      return formatBestBetForContext(bestBetResult)
-    }
-    
     let filteredBets = [...allBets]
     
     // Include filter
@@ -1077,7 +1111,7 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
       if (targetLeagues) {
         filteredBets = filteredBets.filter(b => targetLeagues.includes(b.sportName))
       } else {
-        filteredBets = filteredBets.filter(b => b.sportName.toLowerCase().includes(normalizedSport))
+        filteredBets = filteredBets.filter(b => b.sportName?.toLowerCase().includes(normalizedSport))
       }
     }
     
@@ -1089,13 +1123,13 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
         if (excludeLeagues) {
           filteredBets = filteredBets.filter(b => !excludeLeagues.includes(b.sportName))
         } else {
-          filteredBets = filteredBets.filter(b => !b.sportName.toLowerCase().includes(normalizedExclude))
+          filteredBets = filteredBets.filter(b => !b.sportName?.toLowerCase().includes(normalizedExclude))
         }
       }
     }
     
     if (filteredBets.length === 0) {
-      const availableSports = Array.from(new Set(allBets.map(b => b.sportName)))
+      const availableSports = Array.from(new Set(allBets.map(b => b.sportName).filter(Boolean)))
       return `No ${input.sport || 'matching'} bets pass our filters right now, but we have strong picks in: ${availableSports.join(', ')}. Here's the top overall bet:\n\n${formatFilteredBestBetResponse(allBets[0], 'Best available bet', allBets.slice(1, 5))}`
     }
     
@@ -1103,32 +1137,13 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
     const alternatives = filteredBets.slice(1, 10)
     const filterDesc = input.sport ? `Best ${input.sport.toUpperCase()} bet` : 'Filtered best bet'
     
-    // Chat does NOT track picks — only the automated cron job (fetch-odds) creates tracked picks
-    
     return formatFilteredBestBetResponse(topBet, filterDesc, alternatives)
   }
   
-  // No filters -- return overall best bet
-  // Chat does NOT track picks — only the automated cron job (fetch-odds) creates tracked picks
-  
-  // Merge picks from BOTH strict (allRankedBets) and relaxed (allEloBets) paths,
-  // deduplicate, and sort by score descending. This ensures the chat always recommends
-  // the absolute highest-scored pick regardless of which analysis path found it.
-  // Previously, the chat used allEloBets[0] which was sorted by tier first (locks before
-  // strong), so a Score 73 Lock would be recommended over a Score 87 Strong Play.
-  const strictPicks = bestBetResult.allRankedBets || []
-  const eloPicks = bestBetResult.allEloBets || []
-  const seenKeys = new Set(strictPicks.map(b => `${b.gameId}:${b.team}:${b.betType}`))
-  const additionalEloPicks = eloPicks.filter(b => !seenKeys.has(`${b.gameId}:${b.team}:${b.betType}`))
-  const mergedPicks = [...strictPicks, ...additionalEloPicks].sort((a, b) => b.score - a.score)
-  
-  if (mergedPicks.length > 0) {
-    const topBet = mergedPicks[0]
-    const alternatives = mergedPicks.slice(1, 10)
-    return formatFilteredBestBetResponse(topBet, 'Best bet today', alternatives)
-  }
-  
-  return formatBestBetForContext(bestBetResult)
+  // No filters -- return overall best bet (highest-scored after shared dedup)
+  const topBet = allBets[0]
+  const alternatives = allBets.slice(1, 10)
+  return formatFilteredBestBetResponse(topBet, 'Best bet today', alternatives)
 }
 
 interface GetPlayerPropsInput {

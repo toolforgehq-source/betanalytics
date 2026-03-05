@@ -1,0 +1,133 @@
+/**
+ * Shared dedup + tier enforcement logic for model picks.
+ *
+ * Used by BOTH the picks API (Model Picks page) and the chat route (best bet tool)
+ * to guarantee they always agree on which pick is the Lock of the Day.
+ *
+ * Single source of truth for:
+ * - Deduplication (gameId:team:betType, prefer higher score)
+ * - Qualifying criteria (58%+ probability, 4%+ edge)
+ * - Tier caps (max 1 Lock, max 3 Strong)
+ */
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type PickLike = Record<string, any>
+
+// These caps MUST match the values in bet-ranking.ts computeBestBets()
+export const MAX_LOCKS = 1
+export const MAX_STRONG = 3
+
+/**
+ * Compute edge (probability - implied probability) from American odds.
+ * Stored recommendations have `probability` and `odds` but NOT `edge`,
+ * so we must compute it here.
+ */
+export function computeEdge(pick: PickLike): number {
+  // If edge is already present (from live cache / RankedBet), use it
+  if (typeof pick.edge === 'number' && pick.edge !== 0) return pick.edge
+  
+  // Compute from probability and odds
+  const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
+  const odds = (pick.odds || pick.bestPrice || 0) as number
+  
+  if (prob <= 0 || odds === 0) return 0
+  
+  // Convert American odds to implied probability
+  let impliedProb: number
+  if (odds > 0) {
+    impliedProb = (100 / (odds + 100)) * 100
+  } else {
+    impliedProb = (Math.abs(odds) / (Math.abs(odds) + 100)) * 100
+  }
+  
+  return prob - impliedProb
+}
+
+/**
+ * Deduplicate and enforce tier caps on a list of picks.
+ * This is the final gate before displaying picks to the user.
+ *
+ * Steps:
+ * 1. Deduplicate by gameId:team:betType (prefer higher score version)
+ * 2. Sort by score descending
+ * 3. Re-tier: highest-scored qualifying bet = Lock, next N = Strong, rest = value
+ * 4. Return only Lock + Strong picks
+ */
+export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
+  // Step 1: Deduplicate by gameId:team:betType
+  // For duplicates (same game/team/betType from different analysis paths or cron runs),
+  // keep the version with the higher score. Exclude parlays (multi-game gameIds with _).
+  const dedupMap = new Map<string, PickLike>()
+  for (const pick of picks) {
+    // Stored recommendations use `selection` (e.g. "Northwestern Wildcats +11.5") instead of `team`.
+    // Extract team name from selection by stripping the line/ML suffix.
+    const team = pick.team || (pick.selection ? String(pick.selection).replace(/\s+[+-]?\d[\d.]*$/, '').replace(/\s+ML$/i, '').trim() : '')
+    if (!pick.gameId || !team || !pick.betType) continue
+    // Skip parlays (gameId contains underscore for multi-game combos)
+    if (String(pick.gameId).includes('_')) continue
+    // Skip prop bets (tracked separately)
+    if (pick.betType === 'prop') continue
+    
+    // Normalize: attach team to the pick so downstream code can use it
+    if (!pick.team) pick.team = team
+    
+    const key = `${pick.gameId}:${team}:${pick.betType}`
+    const existing = dedupMap.get(key)
+    if (!existing || (pick.score || 0) > (existing.score || 0)) {
+      dedupMap.set(key, pick)
+    }
+  }
+  
+  // Step 2: Sort by score descending
+  const sorted = Array.from(dedupMap.values()).sort((a, b) => (b.score || 0) - (a.score || 0))
+  
+  // Step 3: Re-tier with fresh counters enforcing caps
+  let lockCount = 0
+  let strongCount = 0
+  
+  for (const pick of sorted) {
+    const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
+    const edge = computeEdge(pick)
+    
+    // Qualifying criteria: 58%+ probability, 4%+ edge (same as bet-ranking.ts)
+    const qualifies = prob >= 58 && edge >= 4
+    
+    if (qualifies && lockCount < MAX_LOCKS) {
+      pick.confidenceTier = 'lock'
+      lockCount++
+    } else if (qualifies && strongCount < MAX_STRONG) {
+      pick.confidenceTier = 'strong'
+      strongCount++
+    } else {
+      pick.confidenceTier = 'value'
+    }
+  }
+  
+  // Step 4: Return only Lock + Strong picks, sorted: locks first, then strong, by score
+  return sorted.filter(p => p.confidenceTier === 'lock' || p.confidenceTier === 'strong')
+}
+
+/**
+ * Returns ALL deduped and sorted picks (not just Lock + Strong).
+ * Used by the chat to get the full ranked list for best bet selection,
+ * while still using the same dedup logic as the picks page.
+ */
+export function dedupeAndSort(picks: PickLike[]): PickLike[] {
+  const dedupMap = new Map<string, PickLike>()
+  for (const pick of picks) {
+    const team = pick.team || (pick.selection ? String(pick.selection).replace(/\s+[+-]?\d[\d.]*$/, '').replace(/\s+ML$/i, '').trim() : '')
+    if (!pick.gameId || !team || !pick.betType) continue
+    if (String(pick.gameId).includes('_')) continue
+    if (pick.betType === 'prop') continue
+    
+    if (!pick.team) pick.team = team
+    
+    const key = `${pick.gameId}:${team}:${pick.betType}`
+    const existing = dedupMap.get(key)
+    if (!existing || (pick.score || 0) > (existing.score || 0)) {
+      dedupMap.set(key, pick)
+    }
+  }
+  
+  return Array.from(dedupMap.values()).sort((a, b) => (b.score || 0) - (a.score || 0))
+}
