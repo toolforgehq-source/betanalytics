@@ -226,6 +226,16 @@ vi.mock('@/lib/odds', () => ({
   formatPlayerPropsForContext: vi.fn().mockReturnValue('No props data'),
 }))
 
+// Mock enforce-picks (shared dedup + tier logic used by chat route)
+vi.mock('@/lib/enforce-picks', () => ({
+  dedupeAndSort: vi.fn().mockImplementation((picks: unknown[]) => picks),
+  dedupeAndEnforceCaps: vi.fn().mockImplementation((picks: unknown[]) => picks),
+  normalizeToRankedBetShape: vi.fn().mockImplementation((pick: unknown) => pick),
+  computeEdge: vi.fn().mockReturnValue(5),
+  MAX_LOCKS: 1,
+  MAX_STRONG: 3,
+}))
+
 // Mock pick tracking
 vi.mock('@/lib/pick-tracking', () => ({
   storePick: vi.fn().mockResolvedValue(undefined),
