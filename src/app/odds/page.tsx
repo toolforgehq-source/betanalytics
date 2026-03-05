@@ -4,6 +4,10 @@ import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
 import OddsClient from './OddsClient'
+import { requireAccess } from '@/lib/require-access'
+
+// Force dynamic rendering to prevent caching issues with auth
+export const dynamic = "force-dynamic"
 
 export const metadata = {
   title: 'Odds Board | Compare Lines Across Sportsbooks - BetAnalytics.ai',
@@ -19,7 +23,9 @@ export const metadata = {
   },
 }
 
-export default function OddsPage() {
+export default async function OddsPage() {
+  await requireAccess()
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white flex flex-col">
       <header className="border-b border-slate-800/50 bg-slate-950/30 backdrop-blur-sm sticky top-0 z-50">
