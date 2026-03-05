@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { Trophy, Target, TrendingUp, Shield, Zap, Clock, ChevronRight, Lock, ArrowRight } from 'lucide-react'
 import Footer from '@/components/Footer'
+import MobileNav from '@/components/MobileNav'
 
 interface TieredPick {
   team: string
@@ -223,6 +224,7 @@ export default function PicksPage() {
               <Link href="/chat" className="text-sm text-slate-300 hover:text-white transition-colors">Chat</Link>
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">Methodology</Link>
             </div>
+            <MobileNav />
           </div>
         </div>
       </header>
