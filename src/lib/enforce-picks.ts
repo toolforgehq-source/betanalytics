@@ -112,6 +112,92 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
  * Used by the chat to get the full ranked list for best bet selection,
  * while still using the same dedup logic as the picks page.
  */
+/**
+ * Normalize a pick (which might be a stored recommendation) to have
+ * the fields that formatFilteredBestBetResponse expects (RankedBet shape).
+ * 
+ * Stored recommendations have: odds, probability, selection, gameName, source
+ * RankedBets have: bestPrice, eloProbability, homeTeam, awayTeam, expectedValue, roi, etc.
+ * 
+ * This bridges the gap so both can be formatted by the same function.
+ */
+export function normalizeToRankedBetShape(pick: PickLike): PickLike {
+  // If it already has bestPrice, it's likely a RankedBet — skip normalization
+  if (pick.bestPrice !== undefined && pick.expectedValue !== undefined) return pick
+
+  const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
+  const odds = (pick.bestPrice || pick.odds || 0) as number
+
+  // Map stored recommendation fields to RankedBet equivalents
+  if (pick.bestPrice === undefined && pick.odds !== undefined) {
+    pick.bestPrice = pick.odds
+  }
+  if (pick.eloProbability === undefined && pick.probability !== undefined) {
+    pick.eloProbability = pick.probability
+  }
+  if (pick.consensusProbability === undefined && pick.probability !== undefined) {
+    pick.consensusProbability = pick.probability
+  }
+
+  // Compute impliedProbability from odds if missing
+  if (pick.impliedProbability === undefined && odds !== 0) {
+    if (odds > 0) {
+      pick.impliedProbability = Number(((100 / (odds + 100)) * 100).toFixed(1))
+    } else {
+      pick.impliedProbability = Number(((Math.abs(odds) / (Math.abs(odds) + 100)) * 100).toFixed(1))
+    }
+  }
+
+  // Compute edge if missing
+  if (pick.edge === undefined || pick.edge === 0) {
+    pick.edge = Number(computeEdge(pick).toFixed(1))
+  }
+
+  // Compute expectedValue and roi if missing
+  if (pick.expectedValue === undefined) {
+    if (prob > 0 && odds !== 0) {
+      let payout: number
+      if (odds > 0) {
+        payout = odds / 100
+      } else {
+        payout = 100 / Math.abs(odds)
+      }
+      pick.expectedValue = Number(((prob / 100) * payout * 100 - ((100 - prob) / 100) * 100).toFixed(2))
+    } else {
+      pick.expectedValue = 0
+    }
+  }
+  if (pick.roi === undefined) {
+    pick.roi = pick.expectedValue || 0
+  }
+
+  // Extract homeTeam/awayTeam from gameName if missing (format: "Away Team @ Home Team")
+  if (!pick.homeTeam && !pick.awayTeam && pick.gameName) {
+    const parts = String(pick.gameName).split(' @ ')
+    if (parts.length === 2) {
+      pick.awayTeam = parts[0].trim()
+      pick.homeTeam = parts[1].trim()
+    }
+  }
+
+  // Default bestBook if missing
+  if (!pick.bestBook) {
+    pick.bestBook = 'Best Available'
+  }
+
+  // Default allBookPrices if missing
+  if (!pick.allBookPrices) {
+    pick.allBookPrices = odds !== 0 ? [{ book: pick.bestBook, price: odds, impliedProb: pick.impliedProbability || 0 }] : []
+  }
+
+  // Default calculatedAt if missing
+  if (!pick.calculatedAt) {
+    pick.calculatedAt = pick.createdAt || new Date().toISOString()
+  }
+
+  return pick
+}
+
 export function dedupeAndSort(picks: PickLike[]): PickLike[] {
   const dedupMap = new Map<string, PickLike>()
   for (const pick of picks) {

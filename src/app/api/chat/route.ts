@@ -11,7 +11,7 @@ import { fetchAllOdds, fetchSportOdds } from "@/lib/odds"
 import { analyzePlayerProp, analyzeAllPlayerProps, analyzeBestProps, formatPropAnalysisForContext, formatMultiPropAnalysisForContext } from "@/lib/player-prop-analysis"
 import { checkRateLimit } from "@/lib/rate-limit"
 import { getRecentRecommendations } from "@/lib/recommendation-tracking"
-import { dedupeAndSort, type PickLike } from "@/lib/enforce-picks"
+import { dedupeAndSort, normalizeToRankedBetShape, type PickLike } from "@/lib/enforce-picks"
 import type { RankedBet } from "@/lib/bet-ranking"
 
 // ===============================================================
@@ -1090,9 +1090,10 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   // Merge all sources: strict picks + elo picks + stored recommendations
   // dedupeAndSort keeps the higher-scored version of each duplicate (same as picks page)
   const allRawPicks: PickLike[] = [...strictPicks, ...eloPicks, ...todaysRecommendations]
-  // Cast back to RankedBet[] — the actual objects are RankedBets, PickLike is just the
-  // generic container used by the shared dedup utility that also handles stored recommendations.
-  const allBets = dedupeAndSort(allRawPicks) as unknown as RankedBet[]
+  // dedupeAndSort returns PickLike[] which may include stored recommendations with different
+  // field names (odds vs bestPrice, probability vs eloProbability, etc.).
+  // normalizeToRankedBetShape fills in the missing RankedBet fields so formatFilteredBestBetResponse works.
+  const allBets = dedupeAndSort(allRawPicks).map(normalizeToRankedBetShape) as unknown as RankedBet[]
   
   console.log(`[tool:get_best_bet] Merged ${strictPicks.length} strict + ${eloPicks.length} elo + ${todaysRecommendations.length} stored recos = ${allRawPicks.length} raw, ${allBets.length} after dedup`)
   
