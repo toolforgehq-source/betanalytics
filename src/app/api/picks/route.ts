@@ -70,13 +70,19 @@ function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   // keep the version with the higher score. Exclude parlays (multi-game gameIds with _).
   const dedupMap = new Map<string, PickLike>()
   for (const pick of picks) {
-    if (!pick.gameId || !pick.team || !pick.betType) continue
+    // Stored recommendations use `selection` (e.g. "Northwestern Wildcats +11.5") instead of `team`.
+    // Extract team name from selection by stripping the line/ML suffix.
+    const team = pick.team || (pick.selection ? String(pick.selection).replace(/\s+[+-]?\d[\d.]*$/, '').replace(/\s+ML$/i, '').trim() : '')
+    if (!pick.gameId || !team || !pick.betType) continue
     // Skip parlays (gameId contains underscore for multi-game combos)
     if (String(pick.gameId).includes('_')) continue
     // Skip prop bets (tracked separately)
     if (pick.betType === 'prop') continue
     
-    const key = `${pick.gameId}:${pick.team}:${pick.betType}`
+    // Normalize: attach team to the pick so downstream code can use it
+    if (!pick.team) pick.team = team
+    
+    const key = `${pick.gameId}:${team}:${pick.betType}`
     const existing = dedupMap.get(key)
     if (!existing || (pick.score || 0) > (existing.score || 0)) {
       dedupMap.set(key, pick)
