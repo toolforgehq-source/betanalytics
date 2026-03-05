@@ -11,6 +11,10 @@
  * data comes from the live cache or stored recommendations. This prevents overpopulation
  * caused by stale caches, recommendation accumulation across cron runs, or dedup mismatches
  * between strict/elo analysis paths.
+ * 
+ * The dedupeAndEnforceCaps() function handles both data source schemas:
+ * - Live cache: has `team`, `edge` fields directly
+ * - Stored recommendations: has `selection` (team extracted), `odds` (edge computed)
  */
 
 import { NextResponse } from 'next/server'
