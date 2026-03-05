@@ -38,6 +38,32 @@ const MAX_STRONG = 3
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PickLike = Record<string, any>
 
+/**
+ * Compute edge (probability - implied probability) from American odds.
+ * Stored recommendations have `probability` and `odds` but NOT `edge`,
+ * so we must compute it here.
+ */
+function computeEdge(pick: PickLike): number {
+  // If edge is already present (from live cache / RankedBet), use it
+  if (typeof pick.edge === 'number' && pick.edge !== 0) return pick.edge
+  
+  // Compute from probability and odds
+  const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
+  const odds = (pick.odds || pick.bestPrice || 0) as number
+  
+  if (prob <= 0 || odds === 0) return 0
+  
+  // Convert American odds to implied probability
+  let impliedProb: number
+  if (odds > 0) {
+    impliedProb = (100 / (odds + 100)) * 100
+  } else {
+    impliedProb = (Math.abs(odds) / (Math.abs(odds) + 100)) * 100
+  }
+  
+  return prob - impliedProb
+}
+
 function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   // Step 1: Deduplicate by gameId:team:betType
   // For duplicates (same game/team/betType from different analysis paths or cron runs),
@@ -46,7 +72,7 @@ function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   for (const pick of picks) {
     if (!pick.gameId || !pick.team || !pick.betType) continue
     // Skip parlays (gameId contains underscore for multi-game combos)
-    if (pick.gameId.includes('_')) continue
+    if (String(pick.gameId).includes('_')) continue
     // Skip prop bets (tracked separately)
     if (pick.betType === 'prop') continue
     
@@ -66,7 +92,7 @@ function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   
   for (const pick of sorted) {
     const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
-    const edge = (pick.edge || 0) as number
+    const edge = computeEdge(pick)
     
     // Qualifying criteria: 58%+ probability, 4%+ edge (same as bet-ranking.ts)
     const qualifies = prob >= 58 && edge >= 4
