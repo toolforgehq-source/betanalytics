@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { db } from "@/db"
 import { checkSubscription } from "@/lib/subscription"
 import { getCachedESPNOdds, getCachedESPNData, cacheESPNOdds, searchESPNGameByTeams, type ESPNOdds, type ESPNOddsData, type ESPNInjury } from "@/lib/espn"
-import { analyzeSpecificGame, formatGameAnalysisForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext, formatBestBetForContext, formatFilteredBestBetResponse, getCachedBestBet } from "@/lib/bet-ranking"
+import { analyzeSpecificGame, formatGameAnalysisForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext, formatFilteredBestBetResponse, getCachedBestBet } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
 import { fetchAllOdds, fetchSportOdds } from "@/lib/odds"
 // storePick/getAllPicks removed — chat no longer tracks picks (only the cron job does)
