@@ -73,7 +73,11 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     
     const key = `${pick.gameId}:${team}:${pick.betType}`
     const existing = dedupMap.get(key)
-    if (!existing || (pick.score || 0) > (existing.score || 0)) {
+    // Locked-in picks (game started, pick was active at tip-off) always win dedup.
+    // Otherwise, prefer the higher-scored version.
+    const pickLocked = pick.lockedIn || pick.gameStarted
+    const existingLocked = existing?.lockedIn || existing?.gameStarted
+    if (!existing || (pickLocked && !existingLocked) || (!existingLocked && (pick.score || 0) > (existing.score || 0))) {
       dedupMap.set(key, pick)
     }
   }

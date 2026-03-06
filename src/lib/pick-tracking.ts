@@ -36,6 +36,10 @@ export interface StoredPick {
   edge: number                  // Consensus - implied
   bestBook: string              // Which book had best price
   
+  // Lock-in tracking
+  lockedIn?: boolean            // True once game starts and pick was still active
+  supersededAt?: string         // When this pick was superseded by a newer version
+  
   // Grading (filled in after game)
   status: 'pending' | 'won' | 'lost' | 'push' | 'cancelled'
   gradedAt?: string
@@ -436,12 +440,126 @@ export async function getPendingPicksToGrade(): Promise<StoredPick[]> {
   const picks = await getAllPicks()
   const now = new Date()
   
-  // Return picks where game time + 4 hours has passed (game should be over)
+  // Return picks where game time + 4 hours has passed (game should be over).
+  // Note: the lockInAndCleanupPicks() function runs BEFORE grading in the cron,
+  // so by this point superseded picks are already cancelled and won't match here.
   return picks.filter(p => {
     if (p.status !== 'pending') return false
     const gameEnd = new Date(new Date(p.gameTime).getTime() + 4 * 60 * 60 * 1000)
     return now > gameEnd
   })
+}
+
+/**
+ * Lock in started games and cancel superseded picks.
+ * 
+ * This is the pick-tracking counterpart to lockInAndCleanupRecommendations.
+ * It ensures the pick-tracking system (used for grading/record) stays clean:
+ * 1. Games that started while pick was still active → lockedIn = true
+ * 2. Games that started after pick was dropped → cancelled
+ * 3. Games not started and pick no longer active → cancelled (superseded)
+ * 4. Dedup: multiple pending picks for same game+team+betType → keep newest
+ * 
+ * @param activeGameKeys Set of "gameId:team:betType" strings currently in Lock/Strong list
+ */
+export async function lockInAndCleanupPicks(
+  activeGameKeys: Set<string>
+): Promise<{ lockedIn: number; cancelled: number; deduped: number }> {
+  const result = { lockedIn: 0, cancelled: 0, deduped: 0 }
+  
+  const redis = await getRedisClient()
+  if (!redis) return result
+  
+  const picks = await getAllPicks()
+  if (picks.length === 0) return result
+  
+  const now = Date.now()
+  let modified = false
+  
+  // Group pending best_bet picks by gameId:team:betType to find duplicates
+  const groups = new Map<string, number[]>() // key → array of indices
+  for (let i = 0; i < picks.length; i++) {
+    const p = picks[i]
+    if (p.status !== 'pending' || p.pickType !== 'best_bet') continue
+    const key = `${p.gameId}:${p.team}:${p.betType}`
+    const group = groups.get(key) || []
+    group.push(i)
+    groups.set(key, group)
+  }
+  
+  for (const [groupKey, indices] of Array.from(groups.entries())) {
+    // Sort by createdAt descending — newest first
+    indices.sort((a, b) => new Date(picks[b].createdAt).getTime() - new Date(picks[a].createdAt).getTime())
+    
+    // Dedup: cancel older entries for the same game+team+betType
+    if (indices.length > 1) {
+      for (let i = 1; i < indices.length; i++) {
+        picks[indices[i]].status = 'cancelled'
+        picks[indices[i]].gradedAt = new Date().toISOString()
+        picks[indices[i]].actualResult = 'Duplicate entry — superseded by newer pick'
+        picks[indices[i]].supersededAt = picks[indices[0]].createdAt
+        result.deduped++
+        modified = true
+      }
+    }
+    
+    // Process the primary (newest) pick
+    const primary = picks[indices[0]]
+    if (primary.lockedIn) continue // Already locked in
+    
+    const gameStarted = new Date(primary.gameTime).getTime() <= now
+    const isActive = activeGameKeys.has(groupKey)
+    
+    if (gameStarted) {
+      if (isActive) {
+        // Game started and pick is still active → lock it in
+        primary.lockedIn = true
+        result.lockedIn++
+        modified = true
+        console.log(`[Picks] Locked in pick ${primary.id} for ${groupKey} — game started, pick was active`)
+      } else {
+        // Game started but pick was dropped → cancel it
+        primary.status = 'cancelled'
+        primary.gradedAt = new Date().toISOString()
+        primary.actualResult = 'Superseded before game start'
+        primary.supersededAt = new Date().toISOString()
+        result.cancelled++
+        modified = true
+        console.log(`[Picks] Cancelled pick ${primary.id} for ${groupKey} — game started but pick was superseded`)
+      }
+    } else if (!isActive) {
+      // Game hasn't started and pick is no longer active → cancel
+      primary.status = 'cancelled'
+      primary.gradedAt = new Date().toISOString()
+      primary.actualResult = 'Superseded by higher-ranked pick before game start'
+      primary.supersededAt = new Date().toISOString()
+      result.cancelled++
+      modified = true
+      console.log(`[Picks] Cancelled pick ${primary.id} for ${groupKey} — superseded before game start`)
+    }
+  }
+  
+  // Write updated picks back to Redis if anything changed
+  if (modified) {
+    try {
+      await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${redis.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(JSON.stringify(picks))
+      })
+      
+      // Recalculate track record after cleanup
+      await calculateAndStoreTrackRecord(picks)
+    } catch (error) {
+      console.error('[Picks] Error writing cleanup results:', error)
+    }
+  }
+  
+  console.log(`[Picks] Cleanup complete: ${result.lockedIn} locked in, ${result.cancelled} cancelled, ${result.deduped} deduped`)
+  return result
 }
 
 // ============================================
