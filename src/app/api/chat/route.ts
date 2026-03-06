@@ -1066,6 +1066,14 @@ async function handleAnalyzeGame(input: AnalyzeGameInput): Promise<string> {
   
   console.log(`[tool:analyze_game] Found game: ${espnGame.awayTeam} @ ${espnGame.homeTeam} (${espnGame.league})`)
   
+  // Check if the game has already started — warn the user but still show analysis
+  const gameAlreadyStarted = hasGameStarted(espnGame.commenceTime)
+  const gameStatusNote = gameAlreadyStarted
+    ? (espnGame.gameStatus === 'post'
+      ? `\n\n⚠️ GAME STATUS: This game has ALREADY ENDED (${espnGame.statusDetail || 'Final'}). The analysis below reflects pre-game odds and probabilities. You cannot place bets on this game.`
+      : `\n\n⚠️ GAME STATUS: This game is CURRENTLY IN PROGRESS (${espnGame.statusDetail || 'Live'}). Most sportsbooks have locked pre-game betting. Live betting may still be available, but the pre-game odds and edges below may no longer reflect the current game state.`)
+    : ''
+  
   // Convert to enriched game with injury data
   const enrichedGames = await convertESPNOddsToEnrichedGames({ games: [espnGame] })
   const enrichedGame = enrichedGames[0]
@@ -1078,12 +1086,12 @@ async function handleAnalyzeGame(input: AnalyzeGameInput): Promise<string> {
   const gameAnalysis = await analyzeSpecificGame(enrichedGame)
   const formattedAnalysis = formatGameAnalysisForContext(gameAnalysis)
   
-  console.log(`[tool:analyze_game] Analysis complete: ${gameAnalysis.bets.length} betting options found`)
+  console.log(`[tool:analyze_game] Analysis complete: ${gameAnalysis.bets.length} betting options found, gameStarted=${gameAlreadyStarted}`)
   
   // Chat does NOT track picks — only the automated cron job (fetch-odds) creates tracked picks
   // This keeps the public record clean and controlled
   
-  return formattedAnalysis
+  return formattedAnalysis + gameStatusNote
 }
 
 interface GetBestBetInput {

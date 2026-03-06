@@ -115,9 +115,22 @@ export async function GET() {
     console.log(`[API /picks] Merging ${livePicks.length} live picks + ${todaysRecommendations.length} stored recos = ${rawPicks.length} raw picks`)
     const enforcedPicks = dedupeAndEnforceCaps(rawPicks)
     
+    // Mark picks whose games have already started so the frontend can show appropriate status.
+    // We keep them visible (users may want to see what was recommended) but flag them.
+    const nowMs = Date.now()
+    for (const pick of enforcedPicks) {
+      if (pick.commenceTime) {
+        const gameStart = new Date(pick.commenceTime as string).getTime()
+        if (nowMs >= gameStart) {
+          pick.gameStarted = true
+        }
+      }
+    }
+    
     const lockCount = enforcedPicks.filter(p => p.confidenceTier === 'lock').length
     const strongCount = enforcedPicks.filter(p => p.confidenceTier === 'strong').length
-    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong)`)
+    const startedCount = enforcedPicks.filter(p => p.gameStarted).length
+    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong, ${startedCount} already started)`)
 
     return NextResponse.json({
       success: true,
