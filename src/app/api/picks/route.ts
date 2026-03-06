@@ -62,8 +62,10 @@ export async function GET() {
       .sort((a: StoredPick, b: StoredPick) => new Date(b.gradedAt || b.createdAt).getTime() - new Date(a.gradedAt || a.createdAt).getTime())
       .slice(0, 50)
 
-    // Get today's recommendations (pending or settled) from recommendation system
+    // Get today's recommendations (pending or locked-in) from recommendation system.
+    // Exclude voided recommendations — these were superseded before game start and shouldn't display.
     const todaysRecommendations = recentRecos.filter(r => {
+      if (r.status === 'void') return false // Superseded picks don't show on the page
       const recoDate = new Date(r.commenceTime || r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
       return recoDate === todayStr
     })

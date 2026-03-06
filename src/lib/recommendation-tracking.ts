@@ -40,6 +40,10 @@ export interface TrackedRecommendation {
   // Confidence tier from tiered system
   confidenceTier?: 'lock' | 'strong' | 'value'
   
+  // Lock-in tracking
+  lockedIn?: boolean            // True once game starts and pick was still active
+  supersededAt?: string         // When this pick was superseded by a newer version
+  
   // Outcome tracking
   status: 'pending' | 'won' | 'lost' | 'push' | 'void'
   settledAt?: string            // When outcome was determined
@@ -143,10 +147,14 @@ function generateRecommendationId(
   betType: string,
   sport: string,
   gameId: string,
-  selection: string,
+  _selection: string,
   date: string
 ): string {
-  const key = `${betType}|${sport}|${gameId}|${selection}|${date.slice(0, 10)}`
+  // NOTE: selection is intentionally EXCLUDED from the key.
+  // Previously, including selection meant line moves (e.g., +3.5 → +4.5) created
+  // duplicate entries for the same game. Now one game + betType + day = one record.
+  // The selection is still stored on the record and updated via upsert when odds change.
+  const key = `${betType}|${sport}|${gameId}|${date.slice(0, 10)}`
   // Simple hash function
   let hash = 0
   for (let i = 0; i < key.length; i++) {
@@ -177,7 +185,7 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
     now.toISOString()
   )
   
-  // Check if already exists (idempotent)
+  // Check if already exists — if so, UPSERT (update odds/line) unless locked in
   try {
     const existsResponse = await fetch(`${redis.url}/exists/${TRACKING_KEY_PREFIX}${id}`, {
       headers: { Authorization: `Bearer ${redis.token}` },
@@ -185,7 +193,28 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
     })
     const existsData = await existsResponse.json()
     if (existsData.result === 1) {
-      console.log(`[Tracking] Recommendation ${id} already exists, skipping`)
+      // Recommendation exists — check if we should update or skip
+      const existing = await getRecommendation(id)
+      if (existing) {
+        const gameStarted = existing.commenceTime && new Date(existing.commenceTime).getTime() <= now.getTime()
+        if (existing.lockedIn || gameStarted) {
+          // Game started or locked in — don't overwrite, this is the final record
+          console.log(`[Tracking] Recommendation ${id} is locked in (game started), preserving`)
+          return id
+        }
+        // Game hasn't started — update with latest odds/line/selection (upsert)
+        await updateRecommendation(id, {
+          selection: reco.selection,
+          line: reco.line,
+          odds: reco.odds,
+          probability: reco.probability,
+          score: reco.score,
+          confidenceTier: reco.confidenceTier
+        })
+        console.log(`[Tracking] Updated recommendation ${id} with latest odds: ${reco.selection}`)
+        return id
+      }
+      console.log(`[Tracking] Recommendation ${id} exists but unreadable, skipping`)
       return id
     }
   } catch (error) {
@@ -496,6 +525,101 @@ export async function clearAllRecommendations(): Promise<{ deleted: number }> {
 }
 
 // ============================================
+// LOCK-IN & CLEANUP
+// ============================================
+
+/**
+ * Lock in started games and void superseded picks.
+ * 
+ * This is the core of the pick integrity system:
+ * 1. If a game has started and the pick is still in the active Lock/Strong list → lock it in
+ * 2. If a game has started and the pick was DROPPED from the list before tip-off → void it
+ * 3. If a game hasn't started and the pick is no longer active → void it (superseded)
+ * 4. Dedup: if multiple pending recommendations exist for the same gameId+betType, keep newest, void rest
+ * 
+ * @param activeGameKeys Set of "gameId:betType" strings currently in the Lock/Strong list
+ * @returns Summary of actions taken
+ */
+export async function lockInAndCleanupRecommendations(
+  activeGameKeys: Set<string>
+): Promise<{ lockedIn: number; voided: number; deduped: number }> {
+  const result = { lockedIn: 0, voided: 0, deduped: 0 }
+  
+  const pendingRecos = await getPendingRecommendations()
+  if (pendingRecos.length === 0) return result
+  
+  const now = Date.now()
+  
+  // Group pending recommendations by gameId:betType to find duplicates
+  const groups = new Map<string, TrackedRecommendation[]>()
+  for (const reco of pendingRecos) {
+    const key = `${reco.gameId}:${reco.betType}`
+    const group = groups.get(key) || []
+    group.push(reco)
+    groups.set(key, group)
+  }
+  
+  for (const [groupKey, recos] of Array.from(groups.entries())) {
+    // Sort by createdAt descending — newest first
+    recos.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    
+    // Dedup: if multiple recommendations exist for the same game+betType, keep newest
+    if (recos.length > 1) {
+      for (let i = 1; i < recos.length; i++) {
+        await updateRecommendation(recos[i].id, {
+          status: 'void',
+          settledAt: new Date().toISOString(),
+          actualResult: 'Duplicate entry — superseded by newer recommendation',
+          supersededAt: recos[0].createdAt
+        })
+        result.deduped++
+        console.log(`[Tracking] Deduped old recommendation ${recos[i].id} for ${groupKey}`)
+      }
+    }
+    
+    // Process the primary (newest) recommendation
+    const primary = recos[0]
+    if (primary.lockedIn) continue // Already locked in from a previous run
+    
+    const gameStarted = primary.commenceTime && new Date(primary.commenceTime).getTime() <= now
+    const isActive = activeGameKeys.has(groupKey)
+    
+    if (gameStarted) {
+      if (isActive) {
+        // Game started and pick is still active → lock it in
+        await updateRecommendation(primary.id, { lockedIn: true })
+        result.lockedIn++
+        console.log(`[Tracking] Locked in recommendation ${primary.id} — game started, pick was active`)
+      } else {
+        // Game started but pick was already dropped → void it
+        await updateRecommendation(primary.id, {
+          status: 'void',
+          settledAt: new Date().toISOString(),
+          actualResult: 'Superseded before game start',
+          supersededAt: new Date().toISOString()
+        })
+        result.voided++
+        console.log(`[Tracking] Voided recommendation ${primary.id} — game started but pick was superseded`)
+      }
+    } else if (!isActive) {
+      // Game hasn't started and pick is no longer in active list → void it
+      await updateRecommendation(primary.id, {
+        status: 'void',
+        settledAt: new Date().toISOString(),
+        actualResult: 'Superseded by higher-ranked pick before game start',
+        supersededAt: new Date().toISOString()
+      })
+      result.voided++
+      console.log(`[Tracking] Voided recommendation ${primary.id} — superseded before game start`)
+    }
+    // If game hasn't started and pick IS active → do nothing, it's still live
+  }
+  
+  console.log(`[Tracking] Cleanup complete: ${result.lockedIn} locked in, ${result.voided} voided, ${result.deduped} deduped`)
+  return result
+}
+
+// ============================================
 // PROFIT CALCULATION
 // ============================================
 
@@ -559,7 +683,12 @@ export async function calculateTrackingStats(): Promise<TrackingStats> {
       continue
     }
     
-    if (reco.status === 'push' || reco.status === 'void') {
+    if (reco.status === 'void') {
+      // Voided picks (superseded before game start) don't count at all
+      continue
+    }
+    
+    if (reco.status === 'push') {
       stats.pushes++
       continue
     }

@@ -11,8 +11,8 @@ import {
   cacheSportBets,
   type RankedBet
 } from "@/lib/bet-ranking"
-import { storePick, getAllPicks, autoGradePicks } from "@/lib/pick-tracking"
-import { trackBestBet } from "@/lib/recommendation-tracking"
+import { storePick, getAllPicks, autoGradePicks, lockInAndCleanupPicks } from "@/lib/pick-tracking"
+import { trackBestBet, lockInAndCleanupRecommendations } from "@/lib/recommendation-tracking"
 import { getWeatherForGames } from "@/lib/weather"
 import { getLineMovement } from "@/lib/line-movement"
 import { getCachedTeamScheduleData } from "@/lib/team-schedule"
@@ -339,19 +339,44 @@ export async function GET(request: Request) {
     console.log(`[fetch-odds] Top strict bets: ${topStrict.map(b => `${b.team}(p=${b.eloProbability?.toFixed(1) ?? '?'},e=${b.edge.toFixed(1)},c=${b.eloConfidence},t=${b.confidenceTier})`).join(', ')}`)
     console.log(`[fetch-odds] Top elo bets: ${topElo.map(b => `${b.team}(p=${b.eloProbability?.toFixed(1) ?? '?'},e=${b.edge.toFixed(1)},c=${b.eloConfidence},t=${b.confidenceTier})`).join(', ')}`)
     
+    // ============================================
+    // LOCK-IN & CLEANUP: Before storing new picks, lock in started games
+    // and void any picks that have been superseded.
+    // This prevents duplicate counting and ensures the record only reflects
+    // picks that were active when the game started.
+    // ============================================
+    // Build active game keys from current Lock/Strong computation
+    // For pick-tracking: "gameId:team:betType" (matches storePick dedup key)
+    // For recommendation-tracking: "gameId:betType" (matches recommendation grouping)
+    const activePickKeys = new Set(lockStrongBets.map(b => `${b.gameId}:${b.team}:${b.betType}`))
+    const activeRecoKeys = new Set(lockStrongBets.map(b => `${b.gameId}:${b.betType}`))
+    
+    // Run cleanup on both tracking systems
+    const [pickCleanup, recoCleanup] = await Promise.all([
+      lockInAndCleanupPicks(activePickKeys).catch(err => {
+        console.error('[fetch-odds] Pick cleanup failed:', err)
+        return { lockedIn: 0, cancelled: 0, deduped: 0 }
+      }),
+      lockInAndCleanupRecommendations(activeRecoKeys).catch(err => {
+        console.error('[fetch-odds] Recommendation cleanup failed:', err)
+        return { lockedIn: 0, voided: 0, deduped: 0 }
+      })
+    ])
+    console.log(`[fetch-odds] Pick cleanup: ${pickCleanup.lockedIn} locked, ${pickCleanup.cancelled} cancelled, ${pickCleanup.deduped} deduped`)
+    console.log(`[fetch-odds] Reco cleanup: ${recoCleanup.lockedIn} locked, ${recoCleanup.voided} voided, ${recoCleanup.deduped} deduped`)
+    
     if (lockStrongBets.length > 0) {
       const existingPicks = await getAllPicks()
       
       for (const bet of lockStrongBets) {
         // Check if we already have this SPECIFIC pick (same game + team + bet type)
-        // Previously only checked gameId, which blocked multiple picks from the same game
-        // (e.g., storing LSU +9.5 spread AND Auburn ML from the same game)
+        // Also check for locked-in picks — never replace a locked pick
         const alreadyHavePick = existingPicks.some(p => 
           p.gameId === bet.gameId && 
           p.team === bet.team &&
           p.betType === bet.betType &&
           p.pickType === 'best_bet' &&
-          p.status === 'pending'
+          (p.status === 'pending' || p.lockedIn)
         )
         
         if (!alreadyHavePick) {
