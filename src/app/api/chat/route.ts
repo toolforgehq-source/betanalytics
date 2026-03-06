@@ -807,6 +807,50 @@ function filterOutStartedGames<T extends { commenceTime?: string }>(bets: T[]): 
 }
 
 /**
+ * Find the next upcoming game time from a list of enriched games (all games, including future days).
+ * Returns a formatted string like "today at 7:00 PM ET" or "tomorrow at 1:00 PM ET".
+ */
+function getNextGameTimeMessage(allGames: { commenceTime: string }[]): string {
+  const upcoming = allGames
+    .filter(g => !hasGameStarted(g.commenceTime))
+    .sort((a, b) => new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime())
+  
+  if (upcoming.length === 0) return ''
+  
+  const nextGame = upcoming[0]
+  const gameDate = new Date(nextGame.commenceTime)
+  const now = new Date()
+  
+  const gameDateET = gameDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+  const todayET = now.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+  
+  const tomorrow = new Date(now)
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  const tomorrowET = tomorrow.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+  
+  const timeStr = gameDate.toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  }) + ' ET'
+  
+  if (gameDateET === todayET) {
+    return `The next game tips off today at ${timeStr} — check back then for a fresh pick.`
+  } else if (gameDateET === tomorrowET) {
+    return `The next game is tomorrow at ${timeStr} — I'll have picks ready before tip-off.`
+  } else {
+    const dayStr = gameDate.toLocaleDateString('en-US', {
+      timeZone: 'America/New_York',
+      weekday: 'long',
+      month: 'short',
+      day: 'numeric'
+    })
+    return `The next game is ${dayStr} at ${timeStr} — I'll have picks ready before tip-off.`
+  }
+}
+
+/**
  * Format a game time for display
  */
 function formatGameTime(commenceTime: string): string {
@@ -1077,9 +1121,15 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
     const enrichedGames = todayGames.filter(g => !hasGameStarted(g.commenceTime))
     console.log(`[tool:get_best_bet] ${enrichedGames.length} of ${todayGames.length} today's games haven't started yet`)
     if (enrichedGames.length === 0) {
-      // If no games today, let user know
+      // All today's games have started, or no games today at all
+      if (todayGames.length > 0) {
+        // Games exist today but they've all started
+        const nextGameMsg = getNextGameTimeMessage(allGames)
+        return `All of today's games have already tipped off, so I can't recommend a new bet right now. ${nextGameMsg || 'Check back tomorrow for fresh picks.'} In the meantime, I can still analyze any in-progress game if you ask about a specific team, or I can look at player props.`
+      }
       if (allGames.length > 0) {
-        return `No games are scheduled for today. There are ${allGames.length} upcoming games with lines posted — ask me about a specific game or "what games are coming up" to see them.`
+        const nextGameMsg = getNextGameTimeMessage(allGames)
+        return `No games are scheduled for today. ${nextGameMsg || `There are ${allGames.length} upcoming games with lines posted.`} Ask me about a specific upcoming game or "what games are coming up" to see the full schedule.`
       }
       return 'No games have lines posted yet today. Lines typically appear in the morning/early afternoon ET. Check back soon — or ask me about player props, betting strategy, or how our Elo model works in the meantime.'
     }
@@ -1134,7 +1184,9 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   
   if (activeBets.length === 0) {
     // All qualifying bets are for games that already started
-    return 'All of today\'s top-rated games have already started or finished. Check back tomorrow for fresh picks, or ask me about player props or upcoming games.'
+    const allGamesForNextTip = await getEnrichedGames()
+    const nextGameMsg = getNextGameTimeMessage(allGamesForNextTip)
+    return `All of today's top-rated games have already started or finished. ${nextGameMsg || 'Check back tomorrow for fresh picks.'} In the meantime, I can still analyze any in-progress game if you ask about a specific team, or I can look at player props.`
   }
   
   // If sport filter or exclusions requested, filter the merged results
@@ -1167,9 +1219,6 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
     
     if (filteredBets.length === 0) {
       const availableSports = Array.from(new Set(activeBets.map(b => b.sportName).filter(Boolean)))
-      if (activeBets.length === 0) {
-        return 'All of today\'s top-rated games have already started or finished. Check back tomorrow for fresh picks, or ask me about upcoming games.'
-      }
       return `No ${input.sport || 'matching'} bets pass our filters right now, but we have strong picks in: ${availableSports.join(', ')}. Here's the top overall bet:\n\n${formatFilteredBestBetResponse(activeBets[0], 'Best available bet', activeBets.slice(1, 5))}`
     }
     
@@ -1290,10 +1339,12 @@ async function handleBuildParlay(input: BuildParlayInput): Promise<string> {
   
   if (enrichedGames.length === 0) {
     if (todayGames.length > 0) {
-      return 'All of today\'s games have already started or finished, so I can\'t build a parlay right now. Check back tomorrow for fresh picks, or ask me about upcoming games.'
+      const nextGameMsg = getNextGameTimeMessage(allGames)
+      return `All of today's games have already started or finished, so I can't build a parlay right now. ${nextGameMsg || 'Check back tomorrow for fresh picks.'} I can still analyze any in-progress game if you ask about a specific team.`
     }
     if (allGames.length > 0) {
-      return `No games are scheduled for today, so I can't build a parlay right now. There are ${allGames.length} upcoming games — ask me about a specific game or check back when today's lines are posted.`
+      const nextGameMsg = getNextGameTimeMessage(allGames)
+      return `No games are scheduled for today, so I can't build a parlay right now. ${nextGameMsg || `There are ${allGames.length} upcoming games.`} Ask me about a specific upcoming game or check back when today's lines are posted.`
     }
     return 'No games have lines posted yet today, so I can\'t build a parlay right now. Lines typically appear in the morning/early afternoon ET. Check back soon — or ask me about betting strategy while we wait.'
   }
