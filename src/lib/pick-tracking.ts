@@ -511,22 +511,16 @@ export async function lockInAndCleanupPicks(
     const isActive = activeGameKeys.has(groupKey)
     
     if (gameStarted) {
-      if (isActive) {
-        // Game started and pick is still active → lock it in
-        primary.lockedIn = true
-        result.lockedIn++
-        modified = true
-        console.log(`[Picks] Locked in pick ${primary.id} for ${groupKey} — game started, pick was active`)
-      } else {
-        // Game started but pick was dropped → cancel it
-        primary.status = 'cancelled'
-        primary.gradedAt = new Date().toISOString()
-        primary.actualResult = 'Superseded before game start'
-        primary.supersededAt = new Date().toISOString()
-        result.cancelled++
-        modified = true
-        console.log(`[Picks] Cancelled pick ${primary.id} for ${groupKey} — game started but pick was superseded`)
-      }
+      // Game has started and pick is still pending → lock it in.
+      // A pending pick at game start means it was never explicitly cancelled by a prior
+      // cron run, so it was the active pick at tip-off.
+      // NOTE: We do NOT check `isActive` here because ESPN drops games from its feed
+      // after they start, making them appear "not active" even though they were live
+      // at tip-off. The only reliable signal is that the pick is still pending.
+      primary.lockedIn = true
+      result.lockedIn++
+      modified = true
+      console.log(`[Picks] Locked in pick ${primary.id} for ${groupKey} — game started, pick was pending (active at tip-off)`)
     } else if (!isActive) {
       // Game hasn't started and pick is no longer active → cancel
       primary.status = 'cancelled'

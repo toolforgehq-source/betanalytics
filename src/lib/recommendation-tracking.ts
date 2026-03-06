@@ -585,22 +585,15 @@ export async function lockInAndCleanupRecommendations(
     const isActive = activeGameKeys.has(groupKey)
     
     if (gameStarted) {
-      if (isActive) {
-        // Game started and pick is still active → lock it in
-        await updateRecommendation(primary.id, { lockedIn: true })
-        result.lockedIn++
-        console.log(`[Tracking] Locked in recommendation ${primary.id} — game started, pick was active`)
-      } else {
-        // Game started but pick was already dropped → void it
-        await updateRecommendation(primary.id, {
-          status: 'void',
-          settledAt: new Date().toISOString(),
-          actualResult: 'Superseded before game start',
-          supersededAt: new Date().toISOString()
-        })
-        result.voided++
-        console.log(`[Tracking] Voided recommendation ${primary.id} — game started but pick was superseded`)
-      }
+      // Game has started and pick is still pending → lock it in.
+      // A pending pick at game start means it was never explicitly voided by a prior
+      // cron run, so it was the active recommendation at tip-off.
+      // NOTE: We do NOT check `isActive` here because ESPN drops games from its feed
+      // after they start, making them appear "not active" even though they were live
+      // at tip-off. The only reliable signal is that the pick is still pending.
+      await updateRecommendation(primary.id, { lockedIn: true })
+      result.lockedIn++
+      console.log(`[Tracking] Locked in recommendation ${primary.id} — game started, pick was pending (active at tip-off)`)
     } else if (!isActive) {
       // Game hasn't started and pick is no longer in active list → void it
       await updateRecommendation(primary.id, {
