@@ -345,25 +345,32 @@ export async function GET(request: Request) {
     // This prevents duplicate counting and ensures the record only reflects
     // picks that were active when the game started.
     // ============================================
-    // Build active game keys from current Lock/Strong computation
-    // For pick-tracking: "gameId:team:betType" (matches storePick dedup key)
-    // For recommendation-tracking: "gameId:betType" (matches recommendation grouping)
-    const activePickKeys = new Set(lockStrongBets.map(b => `${b.gameId}:${b.team}:${b.betType}`))
-    const activeRecoKeys = new Set(lockStrongBets.map(b => `${b.gameId}:${b.betType}`))
-    
-    // Run cleanup on both tracking systems
-    const [pickCleanup, recoCleanup] = await Promise.all([
-      lockInAndCleanupPicks(activePickKeys).catch(err => {
-        console.error('[fetch-odds] Pick cleanup failed:', err)
-        return { lockedIn: 0, cancelled: 0, deduped: 0 }
-      }),
-      lockInAndCleanupRecommendations(activeRecoKeys).catch(err => {
-        console.error('[fetch-odds] Recommendation cleanup failed:', err)
-        return { lockedIn: 0, voided: 0, deduped: 0 }
-      })
-    ])
-    console.log(`[fetch-odds] Pick cleanup: ${pickCleanup.lockedIn} locked, ${pickCleanup.cancelled} cancelled, ${pickCleanup.deduped} deduped`)
-    console.log(`[fetch-odds] Reco cleanup: ${recoCleanup.lockedIn} locked, ${recoCleanup.voided} voided, ${recoCleanup.deduped} deduped`)
+    // SAFETY GUARD: Only run cleanup if we actually have Lock/Strong picks.
+    // If the cron produced 0 picks (ESPN data glitch, timeout, off-season),
+    // an empty active set would incorrectly void ALL pending picks.
+    if (lockStrongBets.length > 0) {
+      // Build active game keys from current Lock/Strong computation
+      // For pick-tracking: "gameId:team:betType" (matches storePick dedup key)
+      // For recommendation-tracking: "gameId:betType" (matches recommendation grouping)
+      const activePickKeys = new Set(lockStrongBets.map(b => `${b.gameId}:${b.team}:${b.betType}`))
+      const activeRecoKeys = new Set(lockStrongBets.map(b => `${b.gameId}:${b.betType}`))
+      
+      // Run cleanup on both tracking systems
+      const [pickCleanup, recoCleanup] = await Promise.all([
+        lockInAndCleanupPicks(activePickKeys).catch(err => {
+          console.error('[fetch-odds] Pick cleanup failed:', err)
+          return { lockedIn: 0, cancelled: 0, deduped: 0 }
+        }),
+        lockInAndCleanupRecommendations(activeRecoKeys).catch(err => {
+          console.error('[fetch-odds] Recommendation cleanup failed:', err)
+          return { lockedIn: 0, voided: 0, deduped: 0 }
+        })
+      ])
+      console.log(`[fetch-odds] Pick cleanup: ${pickCleanup.lockedIn} locked, ${pickCleanup.cancelled} cancelled, ${pickCleanup.deduped} deduped`)
+      console.log(`[fetch-odds] Reco cleanup: ${recoCleanup.lockedIn} locked, ${recoCleanup.voided} voided, ${recoCleanup.deduped} deduped`)
+    } else {
+      console.log('[fetch-odds] No Lock/Strong picks found — skipping cleanup to avoid voiding all pending picks')
+    }
     
     if (lockStrongBets.length > 0) {
       const existingPicks = await getAllPicks()

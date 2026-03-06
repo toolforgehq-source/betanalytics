@@ -440,8 +440,9 @@ export async function getPendingPicksToGrade(): Promise<StoredPick[]> {
   const picks = await getAllPicks()
   const now = new Date()
   
-  // Return picks where game time + 4 hours has passed (game should be over)
-  // Only grade picks that are locked in (were active when game started)
+  // Return picks where game time + 4 hours has passed (game should be over).
+  // Note: the lockInAndCleanupPicks() function runs BEFORE grading in the cron,
+  // so by this point superseded picks are already cancelled and won't match here.
   return picks.filter(p => {
     if (p.status !== 'pending') return false
     const gameEnd = new Date(new Date(p.gameTime).getTime() + 4 * 60 * 60 * 1000)
