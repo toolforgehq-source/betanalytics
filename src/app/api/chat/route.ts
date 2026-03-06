@@ -779,6 +779,34 @@ function filterGamesToday(games: EnrichedGame[]): EnrichedGame[] {
 }
 
 /**
+ * Check if a game has already started based on its commence time.
+ * Returns true if the game's scheduled start time is in the past.
+ * Used to filter out in-progress or completed games from recommendations —
+ * once a game starts, we should not recommend betting on it.
+ */
+function hasGameStarted(commenceTime: string): boolean {
+  try {
+    const gameStart = new Date(commenceTime).getTime()
+    return Date.now() >= gameStart
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Filter out games that have already started from a list of ranked bets.
+ * This prevents recommending bets on games that are in-progress or completed.
+ */
+function filterOutStartedGames<T extends { commenceTime?: string }>(bets: T[]): T[] {
+  const filtered = bets.filter(b => {
+    if (!b.commenceTime) return true // Keep bets without commence time (shouldn't happen, but safe fallback)
+    return !hasGameStarted(b.commenceTime)
+  })
+  console.log(`[filterOutStartedGames] ${filtered.length} of ${bets.length} bets are for games that haven't started yet`)
+  return filtered
+}
+
+/**
  * Format a game time for display
  */
 function formatGameTime(commenceTime: string): string {
@@ -1042,9 +1070,12 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   }
   
   if (!bestBetResult) {
-    // Compute on-demand — only consider games happening TODAY
+    // Compute on-demand — only consider games happening TODAY that haven't started yet
     const allGames = await getEnrichedGames()
-    const enrichedGames = filterGamesToday(allGames)
+    const todayGames = filterGamesToday(allGames)
+    // Exclude games that have already started — can't bet on in-progress/completed games
+    const enrichedGames = todayGames.filter(g => !hasGameStarted(g.commenceTime))
+    console.log(`[tool:get_best_bet] ${enrichedGames.length} of ${todayGames.length} today's games haven't started yet`)
     if (enrichedGames.length === 0) {
       // If no games today, let user know
       if (allGames.length > 0) {
@@ -1097,13 +1128,18 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   
   console.log(`[tool:get_best_bet] Merged ${strictPicks.length} strict + ${eloPicks.length} elo + ${todaysRecommendations.length} stored recos = ${allRawPicks.length} raw, ${allBets.length} after dedup`)
   
-  if (allBets.length === 0) {
-    return formatBestBetForContext(bestBetResult)
+  // CRITICAL: Filter out games that have already started or are over.
+  // Users cannot place bets on in-progress/completed games, so we must never recommend them.
+  const activeBets = filterOutStartedGames(allBets)
+  
+  if (activeBets.length === 0) {
+    // All qualifying bets are for games that already started
+    return 'All of today\'s top-rated games have already started or finished. Check back tomorrow for fresh picks, or ask me about player props or upcoming games.'
   }
   
   // If sport filter or exclusions requested, filter the merged results
   if (input.sport || (input.exclude_sports && input.exclude_sports.length > 0)) {
-    let filteredBets = [...allBets]
+    let filteredBets = [...activeBets]
     
     // Include filter
     if (input.sport) {
@@ -1130,8 +1166,11 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
     }
     
     if (filteredBets.length === 0) {
-      const availableSports = Array.from(new Set(allBets.map(b => b.sportName).filter(Boolean)))
-      return `No ${input.sport || 'matching'} bets pass our filters right now, but we have strong picks in: ${availableSports.join(', ')}. Here's the top overall bet:\n\n${formatFilteredBestBetResponse(allBets[0], 'Best available bet', allBets.slice(1, 5))}`
+      const availableSports = Array.from(new Set(activeBets.map(b => b.sportName).filter(Boolean)))
+      if (activeBets.length === 0) {
+        return 'All of today\'s top-rated games have already started or finished. Check back tomorrow for fresh picks, or ask me about upcoming games.'
+      }
+      return `No ${input.sport || 'matching'} bets pass our filters right now, but we have strong picks in: ${availableSports.join(', ')}. Here's the top overall bet:\n\n${formatFilteredBestBetResponse(activeBets[0], 'Best available bet', activeBets.slice(1, 5))}`
     }
     
     const topBet = filteredBets[0]
@@ -1142,8 +1181,8 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   }
   
   // No filters -- return overall best bet (highest-scored after shared dedup)
-  const topBet = allBets[0]
-  const alternatives = allBets.slice(1, 10)
+  const topBet = activeBets[0]
+  const alternatives = activeBets.slice(1, 10)
   return formatFilteredBestBetResponse(topBet, 'Best bet today', alternatives)
 }
 
@@ -1244,19 +1283,25 @@ async function handleBuildParlay(input: BuildParlayInput): Promise<string> {
   console.log(`[tool:build_parlay] legs=${legCount}, sport="${input.sport || ''}"`) 
   
   const allGames = await getEnrichedGames()
-  const enrichedGames = filterGamesToday(allGames)
+  const todayGames = filterGamesToday(allGames)
+  // Exclude games that have already started — can't include in-progress games in parlays
+  const enrichedGames = todayGames.filter(g => !hasGameStarted(g.commenceTime))
+  console.log(`[tool:build_parlay] ${enrichedGames.length} of ${todayGames.length} today's games haven't started yet`)
   
   if (enrichedGames.length === 0) {
+    if (todayGames.length > 0) {
+      return 'All of today\'s games have already started or finished, so I can\'t build a parlay right now. Check back tomorrow for fresh picks, or ask me about upcoming games.'
+    }
     if (allGames.length > 0) {
       return `No games are scheduled for today, so I can't build a parlay right now. There are ${allGames.length} upcoming games — ask me about a specific game or check back when today's lines are posted.`
     }
     return 'No games have lines posted yet today, so I can\'t build a parlay right now. Lines typically appear in the morning/early afternoon ET. Check back soon — or ask me about betting strategy while we wait.'
   }
   
-  // Compute best bets from today's games only
+  // Compute best bets from today's games that haven't started
   const bestBetResult = await computeBestBets(enrichedGames)
   
-  let rankedBets = bestBetResult.allRankedBets || []
+  let rankedBets = filterOutStartedGames(bestBetResult.allRankedBets || [])
   
   // Filter by sport if requested
   if (input.sport && rankedBets.length > 0) {
