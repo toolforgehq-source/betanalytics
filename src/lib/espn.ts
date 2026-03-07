@@ -514,6 +514,29 @@ export async function searchESPNGameByTeams(teamTokens: string[], sportHint?: st
     )
   }
 
+  /**
+   * Score how well search tokens match an event name.
+   * Higher = better match. Exact token match ("duke" == "duke") scores higher
+   * than substring match ("duke" in "dukes"), preventing ambiguity like
+   * "duke" matching "Duquesne Dukes" over "Duke Blue Devils".
+   */
+  const scoreMatch = (eventName: string): number => {
+    const nameTokens = normalize(eventName)
+    let bestScore = 0
+    for (const qt of teamTokens) {
+      for (const nt of nameTokens) {
+        if (nt === qt) {
+          bestScore = Math.max(bestScore, 100) // exact token match
+        } else if (nt.length >= 4 && qt.length >= 4) {
+          if (nt.includes(qt) || qt.includes(nt)) {
+            bestScore = Math.max(bestScore, 20) // substring match (weaker)
+          }
+        }
+      }
+    }
+    return bestScore
+  }
+
   // Prioritize leagues based on sport hint to avoid searching all 15+ leagues
   let sportsToSearch = ESPN_ODDS_SPORTS
   if (sportHint) {
@@ -526,6 +549,9 @@ export async function searchESPNGameByTeams(teamTokens: string[], sportHint?: st
       console.log(`[ESPN] Prioritized leagues: ${prioritized.map(s => s.name).join(', ')}`)
     }
   }
+
+  // Collect ALL matching events across leagues, then pick the best one
+  const allMatches: { event: { name: string; shortName: string; id: string; status?: { type?: { completed?: boolean } } }; sport: string; league: string; leagueName: string; score: number }[] = []
 
   for (const { sport, league, name: leagueName } of sportsToSearch) {
     try {
@@ -546,9 +572,9 @@ export async function searchESPNGameByTeams(teamTokens: string[], sportHint?: st
             console.log(`[ESPN] Found ${eventName} but game is completed`)
             continue
           }
-          console.log(`[ESPN] On-demand match found: ${eventName} (${leagueName})`)
-          const odds = await fetchESPNGameOdds(sport, league, event.id, leagueName)
-          if (odds) return odds
+          const matchScore = Math.max(scoreMatch(eventName), scoreMatch(shortName))
+          console.log(`[ESPN] On-demand match candidate: ${eventName} (${leagueName}) score=${matchScore}`)
+          allMatches.push({ event, sport, league, leagueName, score: matchScore })
         }
       }
     } catch (err) {
@@ -556,7 +582,28 @@ export async function searchESPNGameByTeams(teamTokens: string[], sportHint?: st
     }
   }
 
-  console.log(`[ESPN] On-demand search: no matching game found`)
+  if (allMatches.length === 0) {
+    console.log(`[ESPN] On-demand search: no matching game found`)
+    return null
+  }
+
+  // Sort by match quality (highest score first)
+  allMatches.sort((a, b) => b.score - a.score)
+  const best = allMatches[0]
+  console.log(`[ESPN] On-demand best match: ${best.event.name} (${best.leagueName}) score=${best.score}${allMatches.length > 1 ? ` (${allMatches.length} total candidates)` : ''}`)
+
+  const odds = await fetchESPNGameOdds(best.sport, best.league, best.event.id, best.leagueName)
+  if (odds) return odds
+
+  // If best match had no odds, try remaining matches
+  for (let i = 1; i < allMatches.length; i++) {
+    const match = allMatches[i]
+    console.log(`[ESPN] Trying next candidate: ${match.event.name} (${match.leagueName}) score=${match.score}`)
+    const fallbackOdds = await fetchESPNGameOdds(match.sport, match.league, match.event.id, match.leagueName)
+    if (fallbackOdds) return fallbackOdds
+  }
+
+  console.log(`[ESPN] On-demand search: matches found but no odds available`)
   return null
 }
 
