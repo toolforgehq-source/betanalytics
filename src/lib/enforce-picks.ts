@@ -82,14 +82,47 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     }
   }
   
-  // Step 2: Sort by score descending
-  const sorted = Array.from(dedupMap.values()).sort((a, b) => (b.score || 0) - (a.score || 0))
+  // Step 2: Separate locked-in picks from available picks.
+  // Locked-in picks (game started, pick was active at tip-off) are ALWAYS included
+  // in the output — they cannot be evicted by tier caps. This prevents started games
+  // from disappearing from the Model Picks page when new higher-scored picks appear.
+  const allDeduped = Array.from(dedupMap.values())
+  const lockedPicks: PickLike[] = []
+  const availablePicks: PickLike[] = []
   
-  // Step 3: Re-tier with fresh counters enforcing caps
+  const nowMs = Date.now()
+  for (const pick of allDeduped) {
+    const isLocked = pick.lockedIn === true
+    const isStarted = pick.commenceTime && new Date(pick.commenceTime as string).getTime() <= nowMs
+    if (isLocked || isStarted) {
+      lockedPicks.push(pick)
+    } else {
+      availablePicks.push(pick)
+    }
+  }
+  
+  // Sort available (non-locked) picks by score descending
+  availablePicks.sort((a, b) => (b.score || 0) - (a.score || 0))
+  
+  // Step 3: Assign tiers to locked picks first (they keep a Lock or Strong tier).
+  // Count how many Lock/Strong slots locked picks consume.
   let lockCount = 0
   let strongCount = 0
   
-  for (const pick of sorted) {
+  // Locked picks get tiered first by score (best locked pick = lock if available)
+  lockedPicks.sort((a, b) => (b.score || 0) - (a.score || 0))
+  for (const pick of lockedPicks) {
+    if (lockCount < MAX_LOCKS) {
+      pick.confidenceTier = 'lock'
+      lockCount++
+    } else {
+      pick.confidenceTier = 'strong'
+      strongCount++
+    }
+  }
+  
+  // Step 4: Tier remaining available picks with leftover slots
+  for (const pick of availablePicks) {
     const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
     const edge = computeEdge(pick)
     
@@ -107,8 +140,17 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     }
   }
   
-  // Step 4: Return only Lock + Strong picks, sorted: locks first, then strong, by score
-  return sorted.filter(p => p.confidenceTier === 'lock' || p.confidenceTier === 'strong')
+  // Step 5: Return locked picks + Lock/Strong available picks
+  const result = [
+    ...lockedPicks,
+    ...availablePicks.filter(p => p.confidenceTier === 'lock' || p.confidenceTier === 'strong')
+  ]
+  // Sort: locks first, then strong, by score within each tier
+  return result.sort((a, b) => {
+    if (a.confidenceTier === 'lock' && b.confidenceTier !== 'lock') return -1
+    if (a.confidenceTier !== 'lock' && b.confidenceTier === 'lock') return 1
+    return (b.score || 0) - (a.score || 0)
+  })
 }
 
 /**
