@@ -106,14 +106,14 @@ export default function PerformancePageClient() {
         const lockPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock')
         const strongPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'strong')
 
-        // Only show lock + strong picks in recent list
-        const trackedRecos = recos.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
+        // Only show settled lock + strong picks in recent results (no pending or voided)
+        const settledTrackedRecos = settled.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
 
         setData({
           overall: buildStats(trackedPicks),
           lock: buildStats(lockPicks),
           strong: buildStats(strongPicks),
-          recentPicks: trackedRecos.slice(0, 30),
+          recentPicks: settledTrackedRecos.slice(0, 30),
           startDate: new Date().toISOString()
         })
       } catch {
@@ -241,10 +241,10 @@ export default function PerformancePageClient() {
               />
             </div>
 
-            {/* Recent Picks */}
+            {/* Recent Results — only settled W/L/Push, no pending or voided */}
             {data.recentPicks.length > 0 && (
               <div className="bg-slate-900/30 border border-slate-800/50 rounded-xl p-6">
-                <h3 className="text-lg font-bold mb-4">Recent Picks</h3>
+                <h3 className="text-lg font-bold mb-4">Recent Results</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
