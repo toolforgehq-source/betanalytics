@@ -524,6 +524,52 @@ function teamNameMatches(searchTerm: string, teamName: string): boolean {
 }
 
 /**
+ * Score how well a search term matches a team name.
+ * Higher score = better match. Returns 0 if no match.
+ * 
+ * Scoring tiers:
+ *   100 = exact full name match ("duke blue devils" == "duke blue devils")
+ *    80 = search is contained in team name as exact token ("duke" is a token of "Duke Blue Devils")
+ *    60 = team name contains search as substring ("duke" in "duke blue devils")
+ *    40 = token exact match ("duke" == "duke")
+ *    20 = token substring match ("duke" in "dukes") — weakest, causes ambiguity
+ *     0 = no match
+ * 
+ * This prevents "duke" from matching "Duquesne Dukes" (score 20) over "Duke Blue Devils" (score 80).
+ */
+function teamNameMatchScore(searchTerm: string, teamName: string): number {
+  const search = normalizeTeamName(searchTerm)
+  const team = normalizeTeamName(teamName)
+  
+  // Exact full name match
+  if (team === search) return 100
+  
+  const searchTokens = search.split(/\s+/).filter(t => t.length >= 3)
+  const teamTokens = team.split(/\s+/).filter(t => t.length >= 3)
+  
+  // Check if search term appears as an exact token in team name
+  // e.g., "duke" is an exact token of "duke blue devils"
+  if (searchTokens.length > 0 && searchTokens.every(st => teamTokens.some(tt => tt === st))) return 80
+  
+  // Direct containment (search in team or team in search)
+  if (team.includes(search) || search.includes(team)) return 60
+  
+  // Token-level matching with quality scoring
+  let bestTokenScore = 0
+  for (const st of searchTokens) {
+    for (const tt of teamTokens) {
+      if (tt === st) {
+        bestTokenScore = Math.max(bestTokenScore, 40)
+      } else if (tt.length >= 4 && st.length >= 4 && (tt.includes(st) || st.includes(tt))) {
+        bestTokenScore = Math.max(bestTokenScore, 20)
+      }
+    }
+  }
+  
+  return bestTokenScore
+}
+
+/**
  * Convert ESPN odds to enriched games WITH injury data
  */
 async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] }): Promise<EnrichedGame[]> {
@@ -1000,10 +1046,20 @@ async function handleAnalyzeGame(input: AnalyzeGameInput): Promise<string> {
     // If sport filter returned nothing, still search all games
   }
   
-  // Find the team's game
-  let matchingGames = candidates.filter(g => 
-    teamNameMatches(input.team, g.homeTeam) || teamNameMatches(input.team, g.awayTeam)
-  )
+  // Find the team's game — score all matches and pick the best one
+  // This prevents ambiguous matches like "duke" hitting "Duquesne Dukes" instead of "Duke Blue Devils"
+  let matchingGames = candidates
+    .filter(g => teamNameMatches(input.team, g.homeTeam) || teamNameMatches(input.team, g.awayTeam))
+    .sort((a, b) => {
+      const scoreA = Math.max(teamNameMatchScore(input.team, a.homeTeam), teamNameMatchScore(input.team, a.awayTeam))
+      const scoreB = Math.max(teamNameMatchScore(input.team, b.homeTeam), teamNameMatchScore(input.team, b.awayTeam))
+      return scoreB - scoreA // highest score first
+    })
+  
+  if (matchingGames.length > 1) {
+    const bestScore = Math.max(teamNameMatchScore(input.team, matchingGames[0].homeTeam), teamNameMatchScore(input.team, matchingGames[0].awayTeam))
+    console.log(`[tool:analyze_game] Multiple matches (${matchingGames.length}), best match: ${matchingGames[0].awayTeam} @ ${matchingGames[0].homeTeam} (score=${bestScore})`)
+  }
   
   // ON-DEMAND FALLBACK 1: Search ESPN scoreboards live
   if (matchingGames.length === 0) {
