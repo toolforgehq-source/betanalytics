@@ -83,9 +83,9 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   }
   
   // Step 2: Separate locked-in picks from available picks.
-  // Locked-in picks (game started, pick was active at tip-off) are ALWAYS included
-  // in the output — they cannot be evicted by tier caps. This prevents started games
-  // from disappearing from the Model Picks page when new higher-scored picks appear.
+  // Locked-in picks (game started, pick was active at tip-off) get priority for tier slots
+  // but still respect the max caps (1 Lock + 3 Strong). The top-scored locked picks fill
+  // slots first; any excess locked picks are demoted to 'value' and hidden.
   const allDeduped = Array.from(dedupMap.values())
   const lockedPicks: PickLike[] = []
   const availablePicks: PickLike[] = []
@@ -104,8 +104,9 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   // Sort available (non-locked) picks by score descending
   availablePicks.sort((a, b) => (b.score || 0) - (a.score || 0))
   
-  // Step 3: Assign tiers to locked picks first (they keep a Lock or Strong tier).
-  // Count how many Lock/Strong slots locked picks consume.
+  // Step 3: Assign tiers to locked picks first (they get priority for slots).
+  // IMPORTANT: Tier caps (1 Lock + 3 Strong = 4 max) still apply to locked picks.
+  // If more games are locked than slots available, the lowest-scored ones are demoted.
   let lockCount = 0
   let strongCount = 0
   
@@ -115,9 +116,12 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     if (lockCount < MAX_LOCKS) {
       pick.confidenceTier = 'lock'
       lockCount++
-    } else {
+    } else if (strongCount < MAX_STRONG) {
       pick.confidenceTier = 'strong'
       strongCount++
+    } else {
+      // Exceeds tier caps — demote to value (won't be displayed)
+      pick.confidenceTier = 'value'
     }
   }
   
@@ -140,9 +144,9 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     }
   }
   
-  // Step 5: Return locked picks + Lock/Strong available picks
+  // Step 5: Return Lock/Strong picks from both locked and available pools
   const result = [
-    ...lockedPicks,
+    ...lockedPicks.filter(p => p.confidenceTier === 'lock' || p.confidenceTier === 'strong'),
     ...availablePicks.filter(p => p.confidenceTier === 'lock' || p.confidenceTier === 'strong')
   ]
   // Sort: locks first, then strong, by score within each tier
