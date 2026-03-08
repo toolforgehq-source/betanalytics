@@ -122,7 +122,13 @@ export default function PerformancePageClient() {
           }
           const result: RecentPick[] = []
           for (const [, dayPicks] of byDay) {
-            dayPicks.sort((a, b) => (b.score || 0) - (a.score || 0))
+            // Prioritize locked-in picks (what users actually saw), then by score
+            dayPicks.sort((a, b) => {
+              const aLocked = (a as Record<string, unknown>).lockedIn ? 1 : 0
+              const bLocked = (b as Record<string, unknown>).lockedIn ? 1 : 0
+              if (bLocked !== aLocked) return bLocked - aLocked
+              return (b.score || 0) - (a.score || 0)
+            })
             let locks = 0, strongs = 0
             for (const pick of dayPicks) {
               if (pick.confidenceTier === 'lock' && locks < MAX_DAILY_LOCKS) { locks++; result.push(pick) }

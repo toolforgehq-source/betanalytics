@@ -186,8 +186,14 @@ export function enforceDailyCaps(recommendations: TrackedRecommendation[]): Trac
 
   const result: TrackedRecommendation[] = []
   for (const [, dayPicks] of byDay) {
-    // Sort by score descending so we keep the best picks
-    dayPicks.sort((a, b) => (b.score || 0) - (a.score || 0))
+    // Prioritize locked-in picks (what users actually saw at game time), then by score.
+    // This ensures the record matches what was live on the page when games started.
+    dayPicks.sort((a, b) => {
+      const aLocked = a.lockedIn ? 1 : 0
+      const bLocked = b.lockedIn ? 1 : 0
+      if (bLocked !== aLocked) return bLocked - aLocked
+      return (b.score || 0) - (a.score || 0)
+    })
     let lockCount = 0
     let strongCount = 0
     for (const pick of dayPicks) {
