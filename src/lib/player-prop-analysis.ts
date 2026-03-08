@@ -1633,14 +1633,39 @@ export function formatPropAnalysisForContext(analysis: PropAnalysisResult): stri
 export function formatMultiPropAnalysisForContext(analyses: PropAnalysisResult[]): string {
   const lines: string[] = []
 
+  // Collect sport breakdown for diversity reporting
+  const sportCounts = new Map<string, number>()
+  for (const a of analyses) {
+    const sport = a.player?.sport || 'Unknown'
+    sportCounts.set(sport, (sportCounts.get(sport) || 0) + 1)
+  }
+  const sportsPresent = Array.from(sportCounts.keys())
+
   lines.push('═══════════════════════════════════════════════════════════')
   lines.push('BEST PLAYER PROPS (Model-Ranked)')
+  if (sportsPresent.length > 1) {
+    lines.push(`Sports covered: ${sportsPresent.join(', ')}`)
+  }
   lines.push('═══════════════════════════════════════════════════════════')
   lines.push('')
+
+  // Determine prop-specific tier labels
+  const getPropTier = (rec: PropAnalysisResult['recommendation']): string => {
+    const prob = rec.modelProbability * 100
+    const edgePct = rec.edge * 100
+    if ((prob >= 55 && edgePct >= 2) ||
+        (prob >= 60 && (rec.confidence === 'medium' || rec.confidence === 'high'))) {
+      return 'RECOMMENDED PROP'
+    } else if ((prob >= 52 && edgePct > 0) || prob >= 55) {
+      return 'SOLID PROP'
+    }
+    return 'SPECULATIVE (low confidence)'
+  }
 
   for (let i = 0; i < analyses.length; i++) {
     const a = analyses[i]
     const rec = a.recommendation
+    const tier = getPropTier(rec)
 
     lines.push(`--- #${i + 1} ---`)
     if (a.player) {
@@ -1650,7 +1675,7 @@ export function formatMultiPropAnalysisForContext(analyses: PropAnalysisResult[]
     }
 
     if (rec.pick && a.query.line !== null) {
-      lines.push(`PICK: ${rec.pick} ${a.query.line} ${getStatDisplay(a.query.statType || '')}`)
+      lines.push(`PICK: ${rec.pick} ${a.query.line} ${getStatDisplay(a.query.statType || '')} | ${tier}`)
       lines.push(`Model: ${(rec.modelProbability * 100).toFixed(1)}% | Edge: ${rec.edge > 0 ? '+' : ''}${(rec.edge * 100).toFixed(1)}% | Confidence: ${rec.confidence}`)
     }
 
@@ -1672,6 +1697,35 @@ export function formatMultiPropAnalysisForContext(analyses: PropAnalysisResult[]
     }
 
     lines.push('')
+  }
+
+  // Build a cross-sport diversified parlay suggestion
+  if (analyses.length >= 2 && sportsPresent.length > 1) {
+    // Pick best prop from each sport first (round-robin diversity)
+    const sportBestProps = new Map<string, PropAnalysisResult>()
+    for (const a of analyses) {
+      const sport = a.player?.sport || 'Unknown'
+      if (!sportBestProps.has(sport) && a.recommendation.pick) {
+        sportBestProps.set(sport, a)
+      }
+    }
+
+    const diverseLegs = Array.from(sportBestProps.values()).slice(0, 3)
+    if (diverseLegs.length >= 2) {
+      lines.push('CROSS-SPORT PROP PARLAY SUGGESTION:')
+      lines.push(`(Diversified across ${diverseLegs.length} sports for reduced correlation)`)
+      for (let i = 0; i < diverseLegs.length; i++) {
+        const a = diverseLegs[i]
+        const rec = a.recommendation
+        const sport = a.player?.sport || ''
+        const prob = (rec.modelProbability * 100).toFixed(1)
+        lines.push(`  Leg ${i + 1}: ${a.player?.name || a.query.playerName} (${sport}) ${rec.pick} ${a.query.line} ${getStatDisplay(a.query.statType || '')} | ${prob}% prob`)
+      }
+      const combinedProb = diverseLegs.reduce((acc, a) => acc * a.recommendation.modelProbability, 1)
+      lines.push(`  Combined probability: ${(combinedProb * 100).toFixed(1)}%`)
+      lines.push(`  Note: Cross-sport legs are more independent than same-sport legs`)
+      lines.push('')
+    }
   }
 
   const parlayLegs = analyses

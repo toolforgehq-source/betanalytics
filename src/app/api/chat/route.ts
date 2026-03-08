@@ -102,6 +102,7 @@ ALWAYS give actionable information. Users pay for recommendations.
 
 QUALITY TIERS (use these labels):
 
+FOR TEAM BETS (Elo-based):
 TIER 1 - RECOMMENDED:
 - Meets all criteria (55%+ probability, 3%+ edge, positive EV, 1%+ ROI)
 - High confidence. Label: "RECOMMENDED BET"
@@ -117,6 +118,25 @@ TIER 3 - CAUTION:
 TIER 4 - HIGH RISK:
 - High negative EV (over -4%)
 - Only show if specifically asked. Label: "HIGH RISK: Significant negative EV"
+
+FOR PLAYER PROPS (stats-model-based):
+Player props have different probability/edge ranges than team bets. Use these prop-specific thresholds:
+TIER 1 - RECOMMENDED PROP:
+- Model probability 55%+ with 2%+ edge, OR
+- Model probability 60%+ with medium or high confidence, OR
+- Historical hit rate supports the pick AND edge > 1%
+- Label: "RECOMMENDED PROP"
+
+TIER 2 - SOLID PROP:
+- Model probability 52%+ with any positive edge, OR
+- Market consensus 55%+ across 2+ books with edge from vig removal
+- Label: "SOLID PROP"
+
+TIER 3 - SPECULATIVE:
+- Positive probability but minimal edge, or low confidence
+- Label: "SPECULATIVE (low confidence)"
+
+Do NOT apply team-bet thresholds (55%+ prob, 3%+ edge) to player props. A 2% edge on a player prop is strong — the market is sharper on props than team totals.
 
 ===============================================================
 CRITICAL RULES
@@ -258,6 +278,8 @@ Show the TOP props by model edge/probability REGARDLESS OF SPORT. Props are auto
 Only upcoming (not-yet-started) games are included — no in-progress or finished games.
 
 DIRECTIONAL CONSISTENCY: Only recommend "over" when the player's average supports going over the line. Only recommend "under" when the average is below the line.
+
+PROP PARLAY DIVERSITY: When building a player prop parlay, ACTIVELY diversify across sports. Do not build an all-NBA or all-one-sport parlay if props from other sports are available. Pick the best prop from each available sport first, then fill remaining legs with the highest-edge props. This reduces correlation risk and provides better independence between legs.
 
 When line movement data is available (sharp money signals), mention it as supporting evidence.
 When model confidence is based on a large sample (15+ games), highlight that reliability.
@@ -415,7 +437,7 @@ const TOOLS: Anthropic.Tool[] = [
         stat_type: { type: "string", description: "Stat category to analyze (e.g., 'points', 'rebounds', 'assists', 'passing_yards', 'rushing_yards', 'goals')" },
         line: { type: "number", description: "The over/under line to analyze (e.g., 25.5)" },
         sport: { type: "string", description: "Sport to filter by (e.g., 'NBA', 'NFL', 'NHL', 'NCAAB')" },
-        count: { type: "number", description: "Number of top props to return when getting best props (default 3, max 10)" }
+        count: { type: "number", description: "Number of top props to return when getting best props (default 5, max 10). Higher counts show more cross-sport diversity." }
       }
     }
   },
@@ -1358,7 +1380,8 @@ async function handleGetPlayerProps(input: GetPlayerPropsInput): Promise<string>
   }
   
   // Case 3: Best props overall or for a sport (e.g., "best props today", "NBA props")
-  const propCount = Math.min(input.count || 3, 10)
+  // Default to 5 (not 3) so cross-sport diversity has room to surface props from multiple sports
+  const propCount = Math.min(input.count || 5, 10)
   const bestProps = await analyzeBestProps({ sport: input.sport || undefined, count: propCount })
   
   if (bestProps.length > 0) {
