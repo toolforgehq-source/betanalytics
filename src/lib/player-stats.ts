@@ -193,9 +193,14 @@ const SPORT_STATS: Record<string, string[]> = {
 }
 
 // ESPN sport/league mappings for player stats
+// Fix #3: Added NCAAB and NCAAF — college sports were completely missing,
+// meaning college prop recommendations had zero statistical backing (just market data).
+// ESPN has box score endpoints for college basketball and football.
 const ESPN_PLAYER_SPORTS = [
   { sport: 'basketball', league: 'nba', name: 'NBA' },
+  { sport: 'basketball', league: 'mens-college-basketball', name: 'NCAAB' },
   { sport: 'football', league: 'nfl', name: 'NFL' },
+  { sport: 'football', league: 'college-football', name: 'NCAAF' },
   { sport: 'hockey', league: 'nhl', name: 'NHL' },
   { sport: 'baseball', league: 'mlb', name: 'MLB' },
 ]
@@ -1012,7 +1017,11 @@ export async function getPlayerPropProbability(
   }
   
   return {
-    probability: Math.max(0.10, Math.min(0.90, combinedProbability)),
+    // Fix #8: Relaxed probability caps from [0.10, 0.90] to [0.05, 0.95]
+    // Real-world player props can have 95%+ probabilities (e.g., Giannis over 12.5 points).
+    // The old 90% cap artificially reduced edge calculations for the strongest plays
+    // and diluted the best recommendations.
+    probability: Math.max(0.05, Math.min(0.95, combinedProbability)),
     statisticalProb,
     historicalHitRate,
     average: avg,

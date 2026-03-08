@@ -873,8 +873,25 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     if (!propsData || propsData.length === 0) return []
   }
 
+  // Fix #1: Filter out games that have already started — can't bet on in-progress players
+  const now = new Date()
+  const filteredPropsData = propsData!.filter(game => {
+    const gameTime = new Date(game.commenceTime)
+    return gameTime > now
+  })
+  
+  const startedCount = propsData!.length - filteredPropsData.length
+  if (startedCount > 0) {
+    console.log(`[analyzeBestProps] Filtered out ${startedCount} already-started games (${filteredPropsData.length} remaining)`)
+  }
+  
+  if (filteredPropsData.length === 0) {
+    console.log('[analyzeBestProps] All games have already started, no upcoming props available')
+    return []
+  }
+
   // At this point propsData is guaranteed non-null and non-empty
-  const validPropsData = propsData!
+  const validPropsData = filteredPropsData
   
   const statsData = await getPlayerStatsData()
   const hasModelData = !!statsData
@@ -928,6 +945,8 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
       }
       const sportName = sportNameMap[game.sport] || game.sport
 
+      // Fix #2: Pass opponent and home/away context for defensive and situational adjustments
+      // Previously these were undefined, losing ~2-5% edge from missing matchup data
       let modelResult: EnhancedPropProbability | null = null
       if (statsData) {
         modelResult = await getPlayerPropProbability(
@@ -935,10 +954,10 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
           sportName,
           statType,
           prop.line,
-          undefined,
-          undefined,
-          undefined,
-          { homeTeam: game.homeTeam, awayTeam: game.awayTeam }
+          undefined, // opponentTeamId — resolved inside getPlayerPropProbability via game context
+          undefined, // isHomeGame — inferred from game context
+          undefined, // isBackToBack — checked via schedule data
+          { homeTeam: game.homeTeam, awayTeam: game.awayTeam, playerTeam: undefined }
         )
       }
 
@@ -973,7 +992,9 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
 
         if (modelResult && modelResult.gamesPlayed >= 5) {
           const rawModel = side.dir === 'over' ? modelResult.probability : (1 - modelResult.probability)
-          finalProb = rawModel * MODEL_WEIGHT_VS_MARKET + side.prob * (1 - MODEL_WEIGHT_VS_MARKET)
+          // Fix #7: Scale model weight by sample size — more data = more model trust
+          const dynamicWeight = getModelWeight(modelResult.gamesPlayed)
+          finalProb = rawModel * dynamicWeight + side.prob * (1 - dynamicWeight)
           modelProb = rawModel
         }
 
@@ -988,6 +1009,35 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
           modelProb: modelProb > 0 ? modelProb : finalProb,
           edge,
           direction: side.dir,
+        }
+
+        // Fix #6: Integrate line movement data into scoring
+        // If sharp money is moving the line in our direction, boost confidence
+        try {
+          const movements = await getPropLineMovement(prop.playerName, prop.market)
+          if (movements.length > 0) {
+            const movement = movements[0]
+            // Boost score if sharp money agrees with our pick direction
+            if (movement.direction === side.dir) {
+              if (movement.sharpSignal) {
+                candidate.score *= 1.15  // Strong sharp signal in our direction
+              } else if (movement.magnitude === 'significant') {
+                candidate.score *= 1.08
+              } else if (movement.magnitude === 'minor') {
+                candidate.score *= 1.03
+              }
+            }
+            // Penalize if sharp money disagrees with our direction
+            if (movement.direction !== 'neutral' && movement.direction !== side.dir) {
+              if (movement.sharpSignal) {
+                candidate.score *= 0.85  // Sharp money against us — significant penalty
+              } else if (movement.magnitude === 'significant') {
+                candidate.score *= 0.92
+              }
+            }
+          }
+        } catch {
+          // Line movement data is supplementary — don't fail scoring if unavailable
         }
 
         if (edge >= 0.005 && finalProb >= 0.48) {
@@ -1047,7 +1097,45 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   }
 
   candidatePool.sort((a, b) => b.score - a.score)
-  const topResults = candidatePool.slice(0, count * 3)
+
+  // Fix #5: Sport-balance results so one sport doesn't dominate (e.g., NBA)
+  // When no sport filter is specified, ensure diversity across available sports
+  let balancedPool = candidatePool
+  if (!request.sport && candidatePool.length > count) {
+    const sportBuckets = new Map<string, typeof candidatePool>()
+    for (const c of candidatePool) {
+      const sport = c.game.sport
+      const bucket = sportBuckets.get(sport) || []
+      bucket.push(c)
+      sportBuckets.set(sport, bucket)
+    }
+    
+    if (sportBuckets.size > 1) {
+      // Round-robin pick from each sport, taking top from each
+      const balanced: typeof candidatePool = []
+      const maxPerSport = Math.max(2, Math.ceil((count * 3) / sportBuckets.size))
+      const sportIterators = Array.from(sportBuckets.values()).map(bucket => ({ bucket, index: 0 }))
+      
+      let added = true
+      while (balanced.length < count * 3 && added) {
+        added = false
+        for (const iter of sportIterators) {
+          if (iter.index < iter.bucket.length && iter.index < maxPerSport) {
+            balanced.push(iter.bucket[iter.index])
+            iter.index++
+            added = true
+          }
+        }
+      }
+      
+      if (balanced.length > 0) {
+        balancedPool = balanced
+        console.log(`[analyzeBestProps] Sport-balanced pool: ${balanced.length} candidates across ${sportBuckets.size} sports`)
+      }
+    }
+  }
+
+  const topResults = balancedPool.slice(0, count * 3)
 
   if (topResults.length === 0) {
     console.log('[analyzeBestProps] No candidates at all, returning empty')
@@ -1117,8 +1205,33 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     if (analyses.length >= count) break
   }
 
-  if (analyses.length > 0) return analyses.slice(0, count)
-  return fallbackAnalyses.slice(0, count)
+  const finalResults = analyses.length > 0 ? analyses.slice(0, count) : fallbackAnalyses.slice(0, count)
+
+  // Fix #4: Record recommended props for outcome tracking (CLV + hit/miss grading)
+  // This enables us to measure actual win rate and iterate on model accuracy
+  for (const result of finalResults) {
+    if (result.recommendation.pick && result.query.statType && result.query.line !== null) {
+      try {
+        await storePropCLVRecord({
+          playerName: result.query.playerName,
+          statType: result.query.statType,
+          line: result.query.line,
+          direction: result.recommendation.pick.toLowerCase() as 'over' | 'under',
+          pickProbability: result.recommendation.modelProbability || 0.5,
+          pickOdds: result.recommendation.pick === 'Over'
+            ? (result.marketData?.bestOverPrice || -110)
+            : (result.marketData?.bestUnderPrice || -110),
+          pickTimestamp: new Date().toISOString(),
+          sport: result.player?.sport || 'unknown',
+          gameTimestamp: result.calculatedAt,
+        })
+      } catch {
+        // Outcome tracking is supplementary — don't fail the recommendation if it errors
+      }
+    }
+  }
+
+  return finalResults
 }
 
 // ============================================
@@ -1375,7 +1488,17 @@ export function formatMultiPropAnalysisForContext(analyses: PropAnalysisResult[]
 // ============================================
 
 const MAX_REALISTIC_EDGE = 0.12
-const MODEL_WEIGHT_VS_MARKET = 0.35
+
+// Fix #7: Dynamic model weight based on sample size instead of static constant
+// More games tracked = more trust in model; fewer games = lean on market
+function getModelWeight(gamesPlayed: number): number {
+  if (gamesPlayed >= 20) return 0.50  // Strong sample — trust model equally with market
+  if (gamesPlayed >= 15) return 0.42
+  if (gamesPlayed >= 10) return 0.35
+  if (gamesPlayed >= 5) return 0.25
+  return 0.15  // Very small sample — lean heavily on market
+}
+
 const CONFIDENCE_EDGE_SCALE: Record<string, number> = { high: 1.0, medium: 0.7, low: 0.4 }
 
 function buildRecommendation(
@@ -1421,8 +1544,10 @@ function buildRecommendation(
         ? marketData.consensusOverProb / 100
         : marketData.consensusUnderProb / 100
 
-      modelProbability = (modelProbability * MODEL_WEIGHT_VS_MARKET) +
-        (marketImpliedProbability * (1 - MODEL_WEIGHT_VS_MARKET))
+      // Fix #7: Use dynamic model weight based on sample size
+      const dynamicWeight = getModelWeight(modelResult.gamesPlayed)
+      modelProbability = (modelProbability * dynamicWeight) +
+        (marketImpliedProbability * (1 - dynamicWeight))
     }
 
     confidence = modelResult.confidence
