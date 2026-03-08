@@ -194,12 +194,17 @@ export function enforceDailyCaps(recommendations: TrackedRecommendation[]): Trac
   for (const dayPicks of Array.from(byDay.values())) {
     // Priority order for cap selection:
     // 1. Locked-in picks first (what users actually saw at game time)
-    // 2. Then by score (higher score = model was more confident)
+    // 2. Then by LATEST createdAt (most recently created = most recent Lock of the Day)
+    //    This matches what users last saw on the page. The cron updates the Lock of
+    //    the Day periodically, so the latest pick is the "final" version for the day.
+    //    Previously we sorted by score, which could select a higher-scored pick that
+    //    lost over a later pick that won (e.g., Valparaiso score 88 LOST over
+    //    Fairfield score 87 WON on the same day).
     dayPicks.sort((a, b) => {
       const aLocked = a.lockedIn ? 1 : 0
       const bLocked = b.lockedIn ? 1 : 0
       if (bLocked !== aLocked) return bLocked - aLocked
-      return (b.score || 0) - (a.score || 0)
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     })
     let lockCount = 0
     let strongCount = 0
@@ -696,12 +701,12 @@ export async function lockInAndCleanupRecommendations(
   // ============================================
   const MAX_DAILY_LOCKS = 1
   const MAX_DAILY_STRONG = 3
-  const MAX_DAILY_TOTAL = MAX_DAILY_LOCKS + MAX_DAILY_STRONG
   
-  // Count recommendations already locked in from previous cron runs TODAY.
+  // Count recommendations already locked in from previous cron runs TODAY,
+  // broken down by tier (1 Lock + 3 Strong separately, not total 4).
   // CRITICAL: Must scope to today's betting day (ET timezone, resets at 2 AM).
   // Without date scoping, this would count ALL locked recommendations ever stored,
-  // causing totalSlotsUsed to grow forever and block all future lock-ins.
+  // causing slots to be permanently exhausted and block all future lock-ins.
   const todayET = getTodayET()
   const allRecos = await getRecentRecommendations(500)
   const alreadyLockedBestBets = allRecos.filter(r => {
@@ -711,35 +716,62 @@ export async function lockInAndCleanupRecommendations(
     const recoDate = new Date(r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
     return recoDate === todayET
   })
-  const totalSlotsUsed = alreadyLockedBestBets.length
-  const totalSlotsAvailable = MAX_DAILY_TOTAL - totalSlotsUsed
+  const lockedLocks = alreadyLockedBestBets.filter(r => r.confidenceTier === 'lock').length
+  const lockedStrongs = alreadyLockedBestBets.filter(r => r.confidenceTier === 'strong').length
+  const lockSlotsAvailable = Math.max(0, MAX_DAILY_LOCKS - lockedLocks)
+  const strongSlotsAvailable = Math.max(0, MAX_DAILY_STRONG - lockedStrongs)
+  
+  let locksFilled = 0
+  let strongsFilled = 0
   
   if (pendingLockIns.length > 0) {
     // Only apply cap to best_bet recommendations (not parlays, props, etc.)
     const bestBetLockIns = pendingLockIns.filter(r => r.source === 'best_bet')
     const otherLockIns = pendingLockIns.filter(r => r.source !== 'best_bet')
     
-    // Sort best_bet candidates by score descending (highest priority first)
-    bestBetLockIns.sort((a, b) => (b.score || 0) - (a.score || 0))
+    // Separate lock-tier and strong-tier candidates.
+    // Each tier has its own cap: 1 lock + 3 strong per day.
+    // Sort each by latest createdAt first (most recent = most recent Lock of the Day).
+    const lockCandidates = bestBetLockIns.filter(r => r.confidenceTier === 'lock')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    const strongCandidates = bestBetLockIns.filter(r => r.confidenceTier === 'strong')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
     
-    const slotsToFill = Math.max(0, totalSlotsAvailable)
-    
-    for (let i = 0; i < bestBetLockIns.length; i++) {
-      const reco = bestBetLockIns[i]
-      if (i < slotsToFill) {
-        // Lock in — within daily cap
+    // Process lock candidates
+    for (const reco of lockCandidates) {
+      if (locksFilled < lockSlotsAvailable) {
         await updateRecommendation(reco.id, { lockedIn: true })
         result.lockedIn++
-        console.log(`[Tracking] Locked in recommendation ${reco.id} (slot ${totalSlotsUsed + i + 1}/${MAX_DAILY_TOTAL}) — game started, within daily cap`)
+        locksFilled++
+        console.log(`[Tracking] Locked in LOCK ${reco.id} (${lockedLocks + locksFilled}/${MAX_DAILY_LOCKS}) — game started`)
       } else {
-        // Exceeds daily cap — void
+        // Exceeds lock cap — void
         await updateRecommendation(reco.id, {
           status: 'void',
           settledAt: new Date().toISOString(),
-          actualResult: 'Exceeded daily tier cap (max 1 Lock + 3 Strong = 4 picks/day)'
+          actualResult: 'Exceeded daily lock cap (max 1 Lock per day)'
         })
         result.voided++
-        console.log(`[Tracking] Voided recommendation ${reco.id} — exceeded daily tier cap (${totalSlotsUsed + i + 1} > ${MAX_DAILY_TOTAL})`)
+        console.log(`[Tracking] Voided LOCK ${reco.id} — exceeded daily lock cap (${lockedLocks + locksFilled + 1} > ${MAX_DAILY_LOCKS})`)
+      }
+    }
+    
+    // Process strong candidates
+    for (const reco of strongCandidates) {
+      if (strongsFilled < strongSlotsAvailable) {
+        await updateRecommendation(reco.id, { lockedIn: true })
+        result.lockedIn++
+        strongsFilled++
+        console.log(`[Tracking] Locked in STRONG ${reco.id} (${lockedStrongs + strongsFilled}/${MAX_DAILY_STRONG}) — game started`)
+      } else {
+        // Exceeds strong cap — void
+        await updateRecommendation(reco.id, {
+          status: 'void',
+          settledAt: new Date().toISOString(),
+          actualResult: 'Exceeded daily strong cap (max 3 Strong per day)'
+        })
+        result.voided++
+        console.log(`[Tracking] Voided STRONG ${reco.id} — exceeded daily strong cap (${lockedStrongs + strongsFilled + 1} > ${MAX_DAILY_STRONG})`)
       }
     }
     
@@ -751,7 +783,7 @@ export async function lockInAndCleanupRecommendations(
     }
   }
   
-  console.log(`[Tracking] Cleanup complete: ${result.lockedIn} locked in, ${result.voided} voided, ${result.deduped} deduped (${totalSlotsUsed} already locked, ${totalSlotsAvailable} slots available)`)
+  console.log(`[Tracking] Cleanup complete: ${result.lockedIn} locked in, ${result.voided} voided, ${result.deduped} deduped (locks: ${lockedLocks}+${locksFilled || 0}/${MAX_DAILY_LOCKS}, strongs: ${lockedStrongs}+${strongsFilled || 0}/${MAX_DAILY_STRONG})`)
   return result
 }
 

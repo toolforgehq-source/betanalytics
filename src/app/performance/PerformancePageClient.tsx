@@ -152,12 +152,13 @@ export default function PerformancePageClient() {
           }
           const result: RecentPick[] = []
           for (const dayPicks of Array.from(byDay.values())) {
-            // Prioritize locked-in picks (what users actually saw), then by score
+            // Prioritize locked-in picks (what users actually saw), then by latest createdAt
+            // Latest = most recent Lock of the Day, which is what users last saw on the page
             dayPicks.sort((a, b) => {
               const aLocked = a.lockedIn ? 1 : 0
               const bLocked = b.lockedIn ? 1 : 0
               if (bLocked !== aLocked) return bLocked - aLocked
-              return (b.score || 0) - (a.score || 0)
+              return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
             })
             let locks = 0, strongs = 0
             for (const pick of dayPicks) {
