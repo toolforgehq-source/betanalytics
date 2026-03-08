@@ -152,6 +152,59 @@ function getTodayET(): string {
   return etNow.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
 }
 
+/**
+ * Get the betting day string for a given date.
+ * Uses ET timezone with 2 AM reset (before 2 AM = previous calendar day).
+ */
+function getBettingDayET(date: Date): string {
+  const etStr = date.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  const etDate = new Date(etStr)
+  if (etDate.getHours() < 2) {
+    etDate.setDate(etDate.getDate() - 1)
+  }
+  return etDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+}
+
+/**
+ * Enforce daily caps on a list of recommendations.
+ * For each betting day, keeps max 1 Lock + 3 Strong picks (the highest scored ones).
+ * This fixes historical data where more than 4 picks per day were graded before the fix.
+ * 
+ * EXPORTED so the Performance page client can also use it.
+ */
+export function enforceDailyCaps(recommendations: TrackedRecommendation[]): TrackedRecommendation[] {
+  const MAX_DAILY_LOCKS = 1
+  const MAX_DAILY_STRONG = 3
+
+  // Group by betting day
+  const byDay = new Map<string, TrackedRecommendation[]>()
+  for (const r of recommendations) {
+    const day = getBettingDayET(new Date(r.createdAt))
+    if (!byDay.has(day)) byDay.set(day, [])
+    byDay.get(day)!.push(r)
+  }
+
+  const result: TrackedRecommendation[] = []
+  for (const [, dayPicks] of byDay) {
+    // Sort by score descending so we keep the best picks
+    dayPicks.sort((a, b) => (b.score || 0) - (a.score || 0))
+    let lockCount = 0
+    let strongCount = 0
+    for (const pick of dayPicks) {
+      if (pick.confidenceTier === 'lock' && lockCount < MAX_DAILY_LOCKS) {
+        lockCount++
+        result.push(pick)
+      } else if (pick.confidenceTier === 'strong' && strongCount < MAX_DAILY_STRONG) {
+        strongCount++
+        result.push(pick)
+      }
+      // Skip picks that exceed the daily cap
+    }
+  }
+
+  return result
+}
+
 // ============================================
 // RECOMMENDATION ID GENERATION
 // ============================================
@@ -722,10 +775,15 @@ export async function calculateTrackingStats(): Promise<TrackingStats> {
   // IMPORTANT: Only count best_bet picks with lock/strong tier in the official record.
   // Props, parlays, sport_bets, and value-tier picks should NOT inflate the public record.
   // The record should reflect exactly the 1 Lock + 3 Strong picks that were locked in.
-  const recommendations = allRecommendations.filter(r =>
+  const filteredBySource = allRecommendations.filter(r =>
     r.source === 'best_bet' &&
     (r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
   )
+  
+  // CRITICAL: Enforce daily caps retroactively on historical data.
+  // Before the fix was deployed, more than 4 picks per day leaked into the record.
+  // This ensures each day only counts max 1 Lock + 3 Strong (best by score).
+  const recommendations = enforceDailyCaps(filteredBySource)
   
   const stats: TrackingStats = {
     totalBets: recommendations.length,

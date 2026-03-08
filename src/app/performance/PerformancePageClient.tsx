@@ -102,12 +102,42 @@ export default function PerformancePageClient() {
         }
 
         // Only count Lock and Strong Play picks (value spots are not publicly tracked)
-        const trackedPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
-        const lockPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock')
-        const strongPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'strong')
+        const allTrackedPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
 
-        // Only show settled lock + strong picks in recent results (no pending or voided)
-        const settledTrackedRecos = settled.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
+        // CRITICAL: Enforce daily caps (max 1 Lock + 3 Strong per day) on historical data.
+        // Before the fix, more than 4 picks per day leaked into the record.
+        // Group by betting day (ET timezone, 2 AM reset) and keep only the best picks per day.
+        const enforceDailyCaps = (picks: RecentPick[]): RecentPick[] => {
+          const MAX_DAILY_LOCKS = 1
+          const MAX_DAILY_STRONG = 3
+          const byDay = new Map<string, RecentPick[]>()
+          for (const p of picks) {
+            // Get betting day in ET with 2 AM reset
+            const etStr = new Date(p.createdAt).toLocaleString('en-US', { timeZone: 'America/New_York' })
+            const etDate = new Date(etStr)
+            if (etDate.getHours() < 2) etDate.setDate(etDate.getDate() - 1)
+            const day = etDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+            if (!byDay.has(day)) byDay.set(day, [])
+            byDay.get(day)!.push(p)
+          }
+          const result: RecentPick[] = []
+          for (const [, dayPicks] of byDay) {
+            dayPicks.sort((a, b) => (b.score || 0) - (a.score || 0))
+            let locks = 0, strongs = 0
+            for (const pick of dayPicks) {
+              if (pick.confidenceTier === 'lock' && locks < MAX_DAILY_LOCKS) { locks++; result.push(pick) }
+              else if (pick.confidenceTier === 'strong' && strongs < MAX_DAILY_STRONG) { strongs++; result.push(pick) }
+            }
+          }
+          return result
+        }
+
+        const trackedPicks = enforceDailyCaps(allTrackedPicks)
+        const lockPicks = trackedPicks.filter((r: RecentPick) => r.confidenceTier === 'lock')
+        const strongPicks = trackedPicks.filter((r: RecentPick) => r.confidenceTier === 'strong')
+
+        // Only show daily-capped settled lock + strong picks in recent results
+        const settledTrackedRecos = trackedPicks
 
         setData({
           overall: buildStats(trackedPicks),
