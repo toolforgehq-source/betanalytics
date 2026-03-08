@@ -1061,7 +1061,7 @@ export async function fetchGamePlayerProps(eventId: string, sportKey: string): P
     } else if (sportKey.includes('football')) {
       markets = ['player_pass_tds', 'player_rush_yds', 'player_reception_yds']
     } else if (sportKey.includes('hockey')) {
-      markets = ['player_points', 'player_assists']
+      markets = ['player_points', 'player_assists', 'player_goals', 'player_shots_on_goal']
     } else {
       markets = ['player_points']
     }

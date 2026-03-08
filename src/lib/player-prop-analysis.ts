@@ -911,7 +911,18 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   
   const startedCount = propsData!.length - filteredPropsData.length
   if (startedCount > 0) {
-    console.log(`[analyzeBestProps] Filtered out ${startedCount} already-started games (${filteredPropsData.length} remaining)`)
+    // Log per-sport breakdown of what was filtered vs remaining
+    const startedBySport = new Map<string, number>()
+    const remainingBySport = new Map<string, number>()
+    for (const g of propsData!) {
+      const gt = new Date(g.commenceTime)
+      if (gt <= now) {
+        startedBySport.set(g.sport, (startedBySport.get(g.sport) || 0) + 1)
+      } else {
+        remainingBySport.set(g.sport, (remainingBySport.get(g.sport) || 0) + 1)
+      }
+    }
+    console.log(`[analyzeBestProps] Filtered out ${startedCount} already-started games (${filteredPropsData.length} remaining). Started: ${Array.from(startedBySport.entries()).map(([s, c]) => `${s}:${c}`).join(', ')}. Remaining: ${Array.from(remainingBySport.entries()).map(([s, c]) => `${s}:${c}`).join(', ')}`)
   }
   
   if (filteredPropsData.length === 0) {
@@ -933,7 +944,15 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   ])
   const hasModelData = !!statsData
   
-  console.log(`[analyzeBestProps] Props data: ${validPropsData.length} games, model data: ${hasModelData}, line movements: ${allLineMovements.size} entries`)
+  // Log per-sport breakdown of upcoming games and props for pipeline debugging
+  const upcomingSportBreakdown = new Map<string, { games: number; props: number }>()
+  for (const g of validPropsData) {
+    const existing = upcomingSportBreakdown.get(g.sport) || { games: 0, props: 0 }
+    existing.games++
+    existing.props += g.props.length
+    upcomingSportBreakdown.set(g.sport, existing)
+  }
+  console.log(`[analyzeBestProps] Props data: ${validPropsData.length} games, model data: ${hasModelData}, line movements: ${allLineMovements.size} entries. Per-sport upcoming: ${Array.from(upcomingSportBreakdown.entries()).map(([s, d]) => `${s}:${d.games}games/${d.props}props`).join(', ')}`)
 
   type ScoredProp = {
     prop: PlayerProp
@@ -1032,8 +1051,15 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
         }
 
         let edge = finalProb - side.implied
-        const confScale = modelResult ? (CONFIDENCE_EDGE_SCALE[modelResult.confidence] || 0.4) : 0.4
-        edge = Math.max(-MAX_REALISTIC_EDGE, Math.min(MAX_REALISTIC_EDGE, edge * confScale))
+        // Only apply confidence scaling when we have model data. For market-data-only props
+        // (NHL, NCAAB without ESPN stats), the edge is purely from vig removal and shouldn't
+        // be penalized by a confidence multiplier — there's no model to be unconfident about.
+        if (modelResult) {
+          const confScale = CONFIDENCE_EDGE_SCALE[modelResult.confidence] || 0.4
+          edge = Math.max(-MAX_REALISTIC_EDGE, Math.min(MAX_REALISTIC_EDGE, edge * confScale))
+        } else {
+          edge = Math.max(-MAX_REALISTIC_EDGE, Math.min(MAX_REALISTIC_EDGE, edge))
+        }
 
         const candidate: ScoredProp = {
           prop: { ...prop, overOdds: side.dir === 'over' ? side.bestPrice : prop.overOdds, underOdds: side.dir === 'under' ? side.bestPrice : prop.underOdds },
@@ -1083,7 +1109,10 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
           if (playerAvg > 0 && side.dir === 'over' && playerAvg > prop.line) score *= 1.2
           candidate.score = score
           results.push(candidate)
-        } else if (finalProb >= 0.48) {
+        } else if (finalProb >= 0.45) {
+          // Lowered threshold from 0.48 to 0.45 to capture more market-data-only props
+          // from sports without model data (NHL, NCAAB). These props have no model edge
+          // but are still valid betting opportunities based on market consensus.
           marketFallbacks.push(candidate)
         }
       }
