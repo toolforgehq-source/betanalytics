@@ -14,6 +14,10 @@ import { getRecentRecommendations } from "@/lib/recommendation-tracking"
 import { dedupeAndSort, normalizeToRankedBetShape, type PickLike } from "@/lib/enforce-picks"
 import type { RankedBet } from "@/lib/bet-ranking"
 
+// Allow up to 60 seconds for chat responses — player prop analysis involves
+// multiple Redis lookups, Odds API calls, and Anthropic API calls
+export const maxDuration = 60
+
 // ===============================================================
 // HELPERS
 // ===============================================================
