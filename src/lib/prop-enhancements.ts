@@ -991,6 +991,135 @@ export async function storePropLineSnapshots(
   }
 }
 
+/**
+ * Fetch all line movements in a single Redis call and return a Map keyed by "playerName_lower|market".
+ * Use this in batch scoring loops to avoid N+1 Redis calls.
+ */
+export async function getAllLineMovements(): Promise<Map<string, PropLineMovement[]>> {
+  const result = new Map<string, PropLineMovement[]>()
+  const redis = getRedisClient()
+  if (!redis) return result
+
+  try {
+    const response = await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['GET', PROP_SNAPSHOTS_KEY])
+    })
+
+    if (!response.ok) return result
+    const data = await response.json()
+    if (!data.result) return result
+
+    let allSnapshots: PropLineSnapshot[]
+    try { allSnapshots = JSON.parse(data.result) } catch { return result }
+
+    // Group snapshots by player+market
+    const byPlayerMarket = new Map<string, PropLineSnapshot[]>()
+    for (const snap of allSnapshots) {
+      const key = `${snap.playerName}_${snap.market}`
+      const existing = byPlayerMarket.get(key) || []
+      existing.push(snap)
+      byPlayerMarket.set(key, existing)
+    }
+
+    // Compute movements for each group
+    for (const [, snaps] of Array.from(byPlayerMarket.entries())) {
+      snaps.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      if (snaps.length < 2) continue
+
+      const opening = snaps[0]
+      const current = snaps[snaps.length - 1]
+
+      const lineChange = current.line - opening.line
+      const overOddsChange = current.overOdds - opening.overOdds
+      const underOddsChange = current.underOdds - opening.underOdds
+
+      let direction: PropLineMovement['direction'] = 'neutral'
+      if (lineChange > 0 || (lineChange === 0 && overOddsChange < -10)) {
+        direction = 'over'
+      } else if (lineChange < 0 || (lineChange === 0 && underOddsChange < -10)) {
+        direction = 'under'
+      }
+
+      let magnitude: PropLineMovement['magnitude'] = 'none'
+      const absLineChange = Math.abs(lineChange)
+      const absOddsChange = Math.max(Math.abs(overOddsChange), Math.abs(underOddsChange))
+      if (absLineChange >= 1.5 || absOddsChange >= 30) {
+        magnitude = 'steam'
+      } else if (absLineChange >= 1.0 || absOddsChange >= 20) {
+        magnitude = 'significant'
+      } else if (absLineChange >= 0.5 || absOddsChange >= 10) {
+        magnitude = 'minor'
+      }
+
+      const timeDiffMs = new Date(current.timestamp).getTime() - new Date(opening.timestamp).getTime()
+      const timeDiffHrs = timeDiffMs / (1000 * 60 * 60)
+      const sharpSignal = magnitude === 'steam' || (magnitude === 'significant' && timeDiffHrs < 4)
+
+      const movement: PropLineMovement = {
+        playerName: opening.playerName,
+        market: opening.market,
+        opening: { line: opening.line, overOdds: opening.overOdds, underOdds: opening.underOdds, timestamp: opening.timestamp },
+        current: { line: current.line, overOdds: current.overOdds, underOdds: current.underOdds, timestamp: current.timestamp },
+        lineChange,
+        overOddsChange,
+        underOddsChange,
+        direction,
+        magnitude,
+        sharpSignal,
+      }
+
+      // Index by normalized player name + market for fast lookup
+      const lookupKey = `${opening.playerName.toLowerCase()}|${opening.market}`
+      const existing = result.get(lookupKey) || []
+      existing.push(movement)
+      result.set(lookupKey, existing)
+    }
+
+    console.log(`[PropLineMovement] Loaded ${result.size} player-market movement entries in single fetch`)
+    return result
+  } catch (error) {
+    console.error('[PropLineMovement] Error loading all movements:', error)
+    return result
+  }
+}
+
+/**
+ * Look up line movements for a specific player+market from a pre-fetched movements map.
+ * Falls back to empty array if not found.
+ */
+export function lookupLineMovement(
+  allMovements: Map<string, PropLineMovement[]>,
+  playerName: string,
+  market?: string
+): PropLineMovement[] {
+  if (allMovements.size === 0) return []
+  
+  const normalizedName = playerName.toLowerCase()
+  
+  // Direct lookup by player+market
+  if (market) {
+    const direct = allMovements.get(`${normalizedName}|${market}`)
+    if (direct) return direct
+  }
+  
+  // Fuzzy search across all entries for this player
+  const results: PropLineMovement[] = []
+  for (const [key, movements] of Array.from(allMovements.entries())) {
+    const [keyName] = key.split('|')
+    if (keyName.includes(normalizedName) || normalizedName.includes(keyName)) {
+      if (!market || movements.some(m => m.market === market)) {
+        results.push(...(market ? movements.filter(m => m.market === market) : movements))
+      }
+    }
+  }
+  return results
+}
+
 export async function getPropLineMovement(
   playerName: string,
   market?: string

@@ -17,7 +17,7 @@ import { getPlayerPropProbability, getPlayerStatsData, calculateOverProbability 
 import type { EnhancedPropProbability, PlayerStats } from './player-stats'
 import { calculateMatchupAdjustment, getMatchupHitRate, formatMatchupAdjustmentForDisplay } from './player-matchup'
 import type { MatchupAdjustment } from './player-matchup'
-import { getPaceAdjustment, getUsageAdjustment, getCorrelatedProps, storePropCLVRecord, analyzePropParlay, getPropLineMovement, formatPropLineMovement } from './prop-enhancements'
+import { getPaceAdjustment, getUsageAdjustment, getCorrelatedProps, storePropCLVRecord, analyzePropParlay, getPropLineMovement, formatPropLineMovement, getAllLineMovements, lookupLineMovement } from './prop-enhancements'
 import type { PaceAdjustment, UsageAdjustment, PropCorrelation, PropLineMovement } from './prop-enhancements'
 import { getCachedPlayerProps, fetchSportPlayerProps, setCachedPlayerProps } from './odds'
 import type { GamePlayerProps, PlayerProp } from './odds'
@@ -895,7 +895,12 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   
   const statsData = await getPlayerStatsData()
   const hasModelData = !!statsData
-  console.log(`[analyzeBestProps] Props data: ${validPropsData.length} games, model data: ${hasModelData}`)
+  
+  // Fix #6 perf: Fetch ALL line movements in a single Redis call upfront
+  // instead of making a separate Redis HTTP request per prop candidate
+  const allLineMovements = await getAllLineMovements()
+  
+  console.log(`[analyzeBestProps] Props data: ${validPropsData.length} games, model data: ${hasModelData}, line movements: ${allLineMovements.size} entries`)
 
   type ScoredProp = {
     prop: PlayerProp
@@ -1013,8 +1018,9 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
 
         // Fix #6: Integrate line movement data into scoring
         // If sharp money is moving the line in our direction, boost confidence
+        // Uses pre-fetched allLineMovements map (single Redis call) instead of per-candidate lookups
         try {
-          const movements = await getPropLineMovement(prop.playerName, prop.market)
+          const movements = lookupLineMovement(allLineMovements, prop.playerName, prop.market)
           if (movements.length > 0) {
             const movement = movements[0]
             // Boost score if sharp money agrees with our pick direction
