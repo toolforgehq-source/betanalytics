@@ -559,6 +559,9 @@ export async function lockInAndCleanupRecommendations(
     groups.set(key, group)
   }
   
+  // Track recommendations that want to be locked in — we'll enforce caps after the loop
+  const pendingLockIns: TrackedRecommendation[] = []
+  
   for (const [groupKey, recos] of Array.from(groups.entries())) {
     // Sort by createdAt descending — newest first
     recos.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
@@ -585,15 +588,9 @@ export async function lockInAndCleanupRecommendations(
     const isActive = activeGameKeys.has(groupKey)
     
     if (gameStarted) {
-      // Game has started and pick is still pending → lock it in.
-      // A pending pick at game start means it was never explicitly voided by a prior
-      // cron run, so it was the active recommendation at tip-off.
-      // NOTE: We do NOT check `isActive` here because ESPN drops games from its feed
-      // after they start, making them appear "not active" even though they were live
-      // at tip-off. The only reliable signal is that the pick is still pending.
-      await updateRecommendation(primary.id, { lockedIn: true })
-      result.lockedIn++
-      console.log(`[Tracking] Locked in recommendation ${primary.id} — game started, pick was pending (active at tip-off)`)
+      // Game has started and pick is still pending → candidate for lock-in.
+      // We collect these and enforce the 1 Lock + 3 Strong cap below.
+      pendingLockIns.push(primary)
     } else if (!isActive) {
       // Game hasn't started and pick is no longer in active list → void it
       await updateRecommendation(primary.id, {
@@ -608,7 +605,63 @@ export async function lockInAndCleanupRecommendations(
     // If game hasn't started and pick IS active → do nothing, it's still live
   }
   
-  console.log(`[Tracking] Cleanup complete: ${result.lockedIn} locked in, ${result.voided} voided, ${result.deduped} deduped`)
+  // ============================================
+  // DAILY TIER CAP ENFORCEMENT ON LOCK-IN
+  // Only lock in max 1 Lock + 3 Strong = 4 best_bet recommendations per day.
+  // Count already-locked recommendations, then fill remaining slots
+  // with the highest-scored pending lock-in candidates.
+  // ============================================
+  const MAX_DAILY_LOCKS = 1
+  const MAX_DAILY_STRONG = 3
+  const MAX_DAILY_TOTAL = MAX_DAILY_LOCKS + MAX_DAILY_STRONG
+  
+  // Count recommendations already locked in from previous cron runs
+  const allRecos = await getRecentRecommendations(500)
+  const alreadyLockedBestBets = allRecos.filter(r =>
+    r.lockedIn && r.source === 'best_bet' &&
+    (r.status === 'pending' || r.status === 'won' || r.status === 'lost' || r.status === 'push')
+  )
+  const totalSlotsUsed = alreadyLockedBestBets.length
+  const totalSlotsAvailable = MAX_DAILY_TOTAL - totalSlotsUsed
+  
+  if (pendingLockIns.length > 0) {
+    // Only apply cap to best_bet recommendations (not parlays, props, etc.)
+    const bestBetLockIns = pendingLockIns.filter(r => r.source === 'best_bet')
+    const otherLockIns = pendingLockIns.filter(r => r.source !== 'best_bet')
+    
+    // Sort best_bet candidates by score descending (highest priority first)
+    bestBetLockIns.sort((a, b) => (b.score || 0) - (a.score || 0))
+    
+    const slotsToFill = Math.max(0, totalSlotsAvailable)
+    
+    for (let i = 0; i < bestBetLockIns.length; i++) {
+      const reco = bestBetLockIns[i]
+      if (i < slotsToFill) {
+        // Lock in — within daily cap
+        await updateRecommendation(reco.id, { lockedIn: true })
+        result.lockedIn++
+        console.log(`[Tracking] Locked in recommendation ${reco.id} (slot ${totalSlotsUsed + i + 1}/${MAX_DAILY_TOTAL}) — game started, within daily cap`)
+      } else {
+        // Exceeds daily cap — void
+        await updateRecommendation(reco.id, {
+          status: 'void',
+          settledAt: new Date().toISOString(),
+          actualResult: 'Exceeded daily tier cap (max 1 Lock + 3 Strong = 4 picks/day)'
+        })
+        result.voided++
+        console.log(`[Tracking] Voided recommendation ${reco.id} — exceeded daily tier cap (${totalSlotsUsed + i + 1} > ${MAX_DAILY_TOTAL})`)
+      }
+    }
+    
+    // Lock in non-best_bet recommendations (props, parlays) without cap
+    for (const reco of otherLockIns) {
+      await updateRecommendation(reco.id, { lockedIn: true })
+      result.lockedIn++
+      console.log(`[Tracking] Locked in ${reco.source} recommendation ${reco.id} — game started`)
+    }
+  }
+  
+  console.log(`[Tracking] Cleanup complete: ${result.lockedIn} locked in, ${result.voided} voided, ${result.deduped} deduped (${totalSlotsUsed} already locked, ${totalSlotsAvailable} slots available)`)
   return result
 }
 
@@ -640,7 +693,15 @@ export function calculateProfit(odds: number, won: boolean): number {
  * Calculate tracking statistics from all recommendations
  */
 export async function calculateTrackingStats(): Promise<TrackingStats> {
-  const recommendations = await getRecentRecommendations(1000)
+  const allRecommendations = await getRecentRecommendations(1000)
+  
+  // IMPORTANT: Only count best_bet picks with lock/strong tier in the official record.
+  // Props, parlays, sport_bets, and value-tier picks should NOT inflate the public record.
+  // The record should reflect exactly the 1 Lock + 3 Strong picks that were locked in.
+  const recommendations = allRecommendations.filter(r =>
+    r.source === 'best_bet' &&
+    (r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
+  )
   
   const stats: TrackingStats = {
     totalBets: recommendations.length,

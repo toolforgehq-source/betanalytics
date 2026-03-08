@@ -329,9 +329,33 @@ export async function GET(request: Request) {
     // Merge: start with strict picks, then add elo picks not already covered (by gameId + team)
     const seenKeys = new Set(strictLockStrong.map(b => `${b.gameId}:${b.team}`))
     const additionalEloPicks = eloLockStrong.filter(b => !seenKeys.has(`${b.gameId}:${b.team}`))
-    const lockStrongBets = [...strictLockStrong, ...additionalEloPicks]
+    const mergedLockStrong = [...strictLockStrong, ...additionalEloPicks]
     
-    console.log(`[fetch-odds] Found ${lockStrongBets.length} Lock/Strong picks (${strictLockStrong.length} from strict + ${additionalEloPicks.length} from relaxed elo) out of ${bestBetResult.allRankedBets.length} strict + ${bestBetResult.allEloBets.length} elo bets`)
+    console.log(`[fetch-odds] Found ${mergedLockStrong.length} Lock/Strong picks (${strictLockStrong.length} from strict + ${additionalEloPicks.length} from relaxed elo) out of ${bestBetResult.allRankedBets.length} strict + ${bestBetResult.allEloBets.length} elo bets`)
+    
+    // ============================================
+    // TIER CAP ENFORCEMENT: Only store max 1 Lock + 3 Strong = 4 picks per day.
+    // The mergedLockStrong list can have 6-8+ picks because strict and elo pools
+    // are independently tiered. Without this cap, excess picks get stored, locked
+    // in when games start, graded, and inflate the public record.
+    // ============================================
+    const MAX_STORED_LOCKS = 1
+    const MAX_STORED_STRONG = 3
+    mergedLockStrong.sort((a, b) => b.score - a.score)
+    let storedLockCount = 0
+    let storedStrongCount = 0
+    const lockStrongBets = mergedLockStrong.filter(bet => {
+      if (bet.confidenceTier === 'lock' && storedLockCount < MAX_STORED_LOCKS) {
+        storedLockCount++
+        return true
+      }
+      if (bet.confidenceTier === 'strong' && storedStrongCount < MAX_STORED_STRONG) {
+        storedStrongCount++
+        return true
+      }
+      return false
+    })
+    console.log(`[fetch-odds] After tier cap: ${lockStrongBets.length} picks to store (${storedLockCount} lock + ${storedStrongCount} strong), dropped ${mergedLockStrong.length - lockStrongBets.length} excess`)
     
     // Log top 5 bets by score from each source for debugging tier assignment
     const topStrict = bestBetResult.allRankedBets.slice(0, 5)

@@ -440,11 +440,16 @@ export async function getPendingPicksToGrade(): Promise<StoredPick[]> {
   const picks = await getAllPicks()
   const now = new Date()
   
-  // Return picks where game time + 4 hours has passed (game should be over).
-  // Note: the lockInAndCleanupPicks() function runs BEFORE grading in the cron,
-  // so by this point superseded picks are already cancelled and won't match here.
+  // IMPORTANT: Only grade picks that were LOCKED IN at game start.
+  // The lockInAndCleanupPicks() function runs BEFORE grading in the cron
+  // and sets lockedIn=true on picks that were active at tip-off (max 4/day).
+  // Non-locked pending picks should NOT be graded — they either:
+  //   1. Haven't had their game start yet (wait for lock-in)
+  //   2. Exceeded the daily tier cap and were cancelled
+  //   3. Were superseded by higher-ranked picks and cancelled
   return picks.filter(p => {
     if (p.status !== 'pending') return false
+    if (!p.lockedIn) return false // Only grade locked-in picks
     const gameEnd = new Date(new Date(p.gameTime).getTime() + 4 * 60 * 60 * 1000)
     return now > gameEnd
   })
@@ -487,6 +492,9 @@ export async function lockInAndCleanupPicks(
     groups.set(key, group)
   }
   
+  // Track picks that want to be locked in — we'll enforce caps after the loop
+  const pendingLockIns: number[] = [] // indices of primary picks that want to lock in
+  
   for (const [groupKey, indices] of Array.from(groups.entries())) {
     // Sort by createdAt descending — newest first
     indices.sort((a, b) => new Date(picks[b].createdAt).getTime() - new Date(picks[a].createdAt).getTime())
@@ -505,22 +513,15 @@ export async function lockInAndCleanupPicks(
     
     // Process the primary (newest) pick
     const primary = picks[indices[0]]
-    if (primary.lockedIn) continue // Already locked in
+    if (primary.lockedIn) continue // Already locked in from a previous run
     
     const gameStarted = new Date(primary.gameTime).getTime() <= now
     const isActive = activeGameKeys.has(groupKey)
     
     if (gameStarted) {
-      // Game has started and pick is still pending → lock it in.
-      // A pending pick at game start means it was never explicitly cancelled by a prior
-      // cron run, so it was the active pick at tip-off.
-      // NOTE: We do NOT check `isActive` here because ESPN drops games from its feed
-      // after they start, making them appear "not active" even though they were live
-      // at tip-off. The only reliable signal is that the pick is still pending.
-      primary.lockedIn = true
-      result.lockedIn++
-      modified = true
-      console.log(`[Picks] Locked in pick ${primary.id} for ${groupKey} — game started, pick was pending (active at tip-off)`)
+      // Game has started and pick is still pending → candidate for lock-in.
+      // We collect these and enforce the 1 Lock + 3 Strong cap below.
+      pendingLockIns.push(indices[0])
     } else if (!isActive) {
       // Game hasn't started and pick is no longer active → cancel
       primary.status = 'cancelled'
@@ -530,6 +531,47 @@ export async function lockInAndCleanupPicks(
       result.cancelled++
       modified = true
       console.log(`[Picks] Cancelled pick ${primary.id} for ${groupKey} — superseded before game start`)
+    }
+  }
+  
+  // ============================================
+  // DAILY TIER CAP ENFORCEMENT ON LOCK-IN
+  // Only lock in max 1 Lock + 3 Strong = 4 picks per day.
+  // Count already-locked picks from previous runs, then fill remaining slots
+  // with the highest-scored pending lock-in candidates.
+  // ============================================
+  const MAX_DAILY_LOCKS = 1
+  const MAX_DAILY_STRONG = 3
+  
+  // Count picks already locked in from previous cron runs today.
+  // Each locked-in pick takes one slot out of the daily 4-pick cap.
+  const alreadyLockedPicks = picks.filter(p => p.lockedIn && p.pickType === 'best_bet' && (p.status === 'pending' || p.status === 'won' || p.status === 'lost' || p.status === 'push'))
+  const totalSlotsUsed = alreadyLockedPicks.length
+  const totalSlotsAvailable = (MAX_DAILY_LOCKS + MAX_DAILY_STRONG) - totalSlotsUsed
+  
+  if (pendingLockIns.length > 0) {
+    // Sort candidates by score (use edge as proxy since StoredPick has edge)
+    pendingLockIns.sort((a, b) => (picks[b].edge || 0) - (picks[a].edge || 0))
+    
+    const slotsToFill = Math.max(0, totalSlotsAvailable)
+    
+    for (let i = 0; i < pendingLockIns.length; i++) {
+      const idx = pendingLockIns[i]
+      if (i < slotsToFill) {
+        // Lock in — within daily cap
+        picks[idx].lockedIn = true
+        result.lockedIn++
+        modified = true
+        console.log(`[Picks] Locked in pick ${picks[idx].id} (slot ${totalSlotsUsed + i + 1}/${MAX_DAILY_LOCKS + MAX_DAILY_STRONG}) — game started, within daily cap`)
+      } else {
+        // Exceeds daily cap — cancel
+        picks[idx].status = 'cancelled'
+        picks[idx].gradedAt = new Date().toISOString()
+        picks[idx].actualResult = 'Exceeded daily tier cap (max 1 Lock + 3 Strong = 4 picks/day)'
+        result.cancelled++
+        modified = true
+        console.log(`[Picks] Cancelled pick ${picks[idx].id} — exceeded daily tier cap (${totalSlotsUsed + i + 1} > ${MAX_DAILY_LOCKS + MAX_DAILY_STRONG})`)
+      }
     }
   }
   
