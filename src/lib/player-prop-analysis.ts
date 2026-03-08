@@ -1147,6 +1147,12 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     return []
   }
 
+  // PERF FIX: Build PropAnalysisResult objects INLINE instead of calling analyzePlayerProp().
+  // analyzePlayerProp() makes 7+ Redis/network calls per invocation (getPlayerStatsData,
+  // getCachedPlayerProps, getPlayerPropProbability, calculateMatchupAdjustment,
+  // getMatchupHitRate, getPaceAdjustment, getUsageAdjustment).
+  // With 9 top candidates × 7 calls = 63+ sequential Redis calls, causing timeout.
+  // Instead, we construct results from pre-fetched statsData and scoring loop data.
   const analyses: PropAnalysisResult[] = []
   const fallbackAnalyses: PropAnalysisResult[] = []
   const seenPlayers = new Set<string>()
@@ -1155,46 +1161,166 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     if (seenPlayers.has(r.prop.playerName)) continue
     seenPlayers.add(r.prop.playerName)
 
-    const analysis = await analyzePlayerProp({
-      playerName: r.prop.playerName,
-      statType: MARKET_TO_STAT_TYPE[r.prop.market] || null,
-      line: r.prop.line,
-      direction: r.direction,
-      sport: request.sport || null,
-      platform: null,
-    })
+    const now = new Date().toISOString()
+    const statType = MARKET_TO_STAT_TYPE[r.prop.market] || null
+    const resultSportNameMap: Record<string, string> = {
+      'basketball_nba': 'NBA', 'basketball_ncaab': 'NCAAB',
+      'americanfootball_nfl': 'NFL', 'americanfootball_ncaaf': 'NCAAF',
+      'icehockey_nhl': 'NHL', 'baseball_mlb': 'MLB',
+    }
+    const sportDisplay = resultSportNameMap[r.game.sport] || r.game.sport
 
-    if (!analysis.player) {
-      const sportNameMap: Record<string, string> = {
-        'basketball_nba': 'NBA', 'basketball_ncaab': 'NCAAB',
-        'americanfootball_nfl': 'NFL', 'americanfootball_ncaaf': 'NCAAF',
-        'icehockey_nhl': 'NHL', 'baseball_mlb': 'MLB',
+    // Look up player data from pre-fetched statsData
+    let playerInfo: PropAnalysisResult['player'] = null
+    let seasonStats: PropAnalysisResult['seasonStats'] = null
+    let modelProbResult: EnhancedPropProbability | null = null
+
+    if (statsData) {
+      const normalizedName = r.prop.playerName.toLowerCase()
+      const playerKey = Object.keys(statsData.players).find(key => {
+        const p = statsData.players[key]
+        return p.playerName.toLowerCase().includes(normalizedName) ||
+               normalizedName.includes(p.playerName.toLowerCase())
+      })
+
+      if (playerKey) {
+        const pd = statsData.players[playerKey]
+        playerInfo = {
+          name: pd.playerName,
+          sport: pd.sport,
+          position: pd.position,
+          gamesPlayed: pd.gamesPlayed,
+          reliabilityScore: pd.reliabilityScore || 50,
+        }
+
+        if (statType) {
+          const avg = (pd.averages as Record<string, number>)[statType]
+          const stdDev = (pd.stdDevs as Record<string, number>)[statType]
+          if (avg !== undefined) {
+            const recentLogs = pd.gameLogs.slice(0, 5)
+            const last5Values = recentLogs
+              .map(log => (log as unknown as Record<string, number>)[statType!])
+              .filter((v): v is number => v !== undefined && v !== null)
+            const last5Avg = last5Values.length > 0
+              ? last5Values.reduce((a, b) => a + b, 0) / last5Values.length
+              : avg
+            seasonStats = {
+              average: Math.round(avg * 10) / 10,
+              stdDev: Math.round((stdDev || avg * 0.3) * 10) / 10,
+              recentAverage: Math.round(avg * 10) / 10,
+              last5Average: Math.round(last5Avg * 10) / 10,
+            }
+          }
+        }
+
+        // Reuse inline probability calculation
+        if (statType) {
+          modelProbResult = computePropProbabilityInline(
+            statsData, r.prop.playerName, sportDisplay, statType, r.prop.line
+          )
+        }
       }
-      analysis.player = {
+    }
+
+    if (!playerInfo) {
+      playerInfo = {
         name: r.prop.playerName,
-        sport: sportNameMap[r.game.sport] || r.game.sport,
+        sport: sportDisplay,
         position: '',
         gamesPlayed: 0,
         reliabilityScore: 0,
       }
     }
 
-    if (!analysis.recommendation.pick && analysis.marketData) {
-      const overProb = analysis.marketData.consensusOverProb / 100
-      const underProb = analysis.marketData.consensusUnderProb / 100
+    // Build market data from the prop's bookmaker prices
+    const gameProps = r.game.props.filter(p =>
+      p.playerName === r.prop.playerName && p.market === r.prop.market && p.line === r.prop.line
+    )
+    const propsToUse = gameProps.length > 0 ? gameProps : [r.prop]
+
+    const overPrices = propsToUse.map(p => p.overOdds)
+    const underPrices = propsToUse.map(p => p.underOdds)
+    const overImpliedProbs = overPrices.map(p => americanToImpliedProbability(p))
+    const underImpliedProbs = underPrices.map(p => americanToImpliedProbability(p))
+    const avgOverImplied = overImpliedProbs.reduce((a, b) => a + b, 0) / overImpliedProbs.length
+    const avgUnderImplied = underImpliedProbs.reduce((a, b) => a + b, 0) / underImpliedProbs.length
+    const totalImplied = avgOverImplied + avgUnderImplied
+    const bestOverIdx = overPrices.indexOf(Math.max(...overPrices))
+    const bestUnderIdx = underPrices.indexOf(Math.max(...underPrices))
+
+    const mktData: PropAnalysisResult['marketData'] = {
+      line: r.prop.line,
+      bestOverPrice: Math.max(...overPrices),
+      bestUnderPrice: Math.max(...underPrices),
+      bestOverBook: propsToUse[bestOverIdx]?.bookmaker || 'Unknown',
+      bestUnderBook: propsToUse[bestUnderIdx]?.bookmaker || 'Unknown',
+      consensusOverProb: Math.round((avgOverImplied / totalImplied) * 1000) / 10,
+      consensusUnderProb: Math.round((avgUnderImplied / totalImplied) * 1000) / 10,
+      booksCount: propsToUse.length,
+      allBookPrices: propsToUse.map(p => ({
+        book: p.bookmaker,
+        overPrice: p.overOdds,
+        underPrice: p.underOdds,
+      })),
+    }
+
+    // Look up line movement from pre-fetched data (zero network calls)
+    let lineMovement: PropLineMovement[] = []
+    try {
+      lineMovement = lookupLineMovement(allLineMovements, r.prop.playerName, r.prop.market)
+    } catch {
+      // supplementary data
+    }
+
+    // Build recommendation using existing buildRecommendation function
+    const query: PlayerPropQuery = {
+      playerName: r.prop.playerName,
+      statType,
+      line: r.prop.line,
+      direction: r.direction,
+      sport: request.sport || null,
+      platform: null,
+    }
+
+    const recommendation = buildRecommendation(
+      query, modelProbResult, mktData, null, null,
+      null, null, seasonStats, [], []
+    )
+
+    // If buildRecommendation didn't produce a pick, fill from scoring loop data
+    if (!recommendation.pick && mktData) {
+      const overProb = mktData.consensusOverProb / 100
+      const underProb = mktData.consensusUnderProb / 100
       if (r.direction === 'over') {
-        analysis.recommendation.pick = 'Over'
-        analysis.recommendation.modelProbability = overProb
-        analysis.recommendation.marketImpliedProbability = overProb
+        recommendation.pick = 'Over'
+        recommendation.modelProbability = overProb
+        recommendation.marketImpliedProbability = overProb
       } else {
-        analysis.recommendation.pick = 'Under'
-        analysis.recommendation.modelProbability = underProb
-        analysis.recommendation.marketImpliedProbability = underProb
+        recommendation.pick = 'Under'
+        recommendation.modelProbability = underProb
+        recommendation.marketImpliedProbability = underProb
       }
-      analysis.recommendation.confidence = 'low'
-      if (!analysis.recommendation.reasons.length) {
-        analysis.recommendation.reasons.push(`Market consensus: ${(analysis.recommendation.modelProbability * 100).toFixed(1)}% probability`)
+      recommendation.confidence = 'low'
+      if (!recommendation.reasons.length) {
+        recommendation.reasons.push(`Market consensus: ${(recommendation.modelProbability * 100).toFixed(1)}% probability`)
       }
+    }
+
+    const analysis: PropAnalysisResult = {
+      query,
+      player: playerInfo,
+      seasonStats,
+      modelProbability: modelProbResult,
+      matchupAnalysis: null,  // Skipped in batch mode (requires Redis calls)
+      matchupHitRate: null,   // Skipped in batch mode (requires Redis calls)
+      paceAdjustment: null,   // Skipped in batch mode (requires Redis calls)
+      usageAdjustment: null,  // Skipped in batch mode (requires Redis calls)
+      marketData: mktData,
+      correlations: [],
+      lineMovement,
+      recommendation,
+      calculatedAt: now,
+      allPlayerProps: gameProps,
     }
 
     const hasDirectionalWarning = analysis.recommendation.warnings.some(w => w.includes('average') && (w.includes('above the line') || w.includes('below the line')))
@@ -1203,8 +1329,6 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     } else if (analysis.recommendation.pick) {
       fallbackAnalyses.push(analysis)
     } else if (analysis.marketData) {
-      // Even without a pick, if we have market data, include as a fallback
-      // This ensures we ALWAYS return something when props data exists
       fallbackAnalyses.push(analysis)
     }
     if (analyses.length >= count) break
@@ -1213,26 +1337,22 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
   const finalResults = analyses.length > 0 ? analyses.slice(0, count) : fallbackAnalyses.slice(0, count)
 
   // Fix #4: Record recommended props for outcome tracking (CLV + hit/miss grading)
-  // This enables us to measure actual win rate and iterate on model accuracy
+  // Fire-and-forget: don't await — CLV recording is supplementary and should not block response
   for (const result of finalResults) {
     if (result.recommendation.pick && result.query.statType && result.query.line !== null) {
-      try {
-        await storePropCLVRecord({
-          playerName: result.query.playerName,
-          statType: result.query.statType,
-          line: result.query.line,
-          direction: result.recommendation.pick.toLowerCase() as 'over' | 'under',
-          pickProbability: result.recommendation.modelProbability || 0.5,
-          pickOdds: result.recommendation.pick === 'Over'
-            ? (result.marketData?.bestOverPrice || -110)
-            : (result.marketData?.bestUnderPrice || -110),
-          pickTimestamp: new Date().toISOString(),
-          sport: result.player?.sport || 'unknown',
-          gameTimestamp: result.calculatedAt,
-        })
-      } catch {
-        // Outcome tracking is supplementary — don't fail the recommendation if it errors
-      }
+      storePropCLVRecord({
+        playerName: result.query.playerName,
+        statType: result.query.statType,
+        line: result.query.line,
+        direction: result.recommendation.pick.toLowerCase() as 'over' | 'under',
+        pickProbability: result.recommendation.modelProbability || 0.5,
+        pickOdds: result.recommendation.pick === 'Over'
+          ? (result.marketData?.bestOverPrice || -110)
+          : (result.marketData?.bestUnderPrice || -110),
+        pickTimestamp: new Date().toISOString(),
+        sport: result.player?.sport || 'unknown',
+        gameTimestamp: result.calculatedAt,
+      }).catch(() => { /* supplementary — don't fail the response */ })
     }
   }
 
