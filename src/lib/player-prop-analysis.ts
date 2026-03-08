@@ -872,6 +872,35 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     }
     if (!propsData || propsData.length === 0) return []
   }
+  
+  // When no sport filter is specified, check if the cache is missing any sports.
+  // The cron may have run when some sports hadn't posted props yet, leaving the cache
+  // with only NBA data. Supplement with on-demand fetches for missing sports.
+  if (!request.sport && propsData) {
+    const cachedSportKeys = new Set(propsData.map(g => g.sport))
+    const missingSportKeys = ALL_PROP_SPORT_KEYS.filter(k => !cachedSportKeys.has(k))
+    if (missingSportKeys.length > 0) {
+      console.log(`[analyzeBestProps] Cache missing sports: ${missingSportKeys.join(', ')} — fetching on-demand`)
+      try {
+        const supplementResults = await Promise.all(
+          missingSportKeys.map(key =>
+            fetchSportPlayerProps(key).catch((e) => {
+              console.error(`[analyzeBestProps] On-demand fetch ${key} error:`, e.message)
+              return [] as GamePlayerProps[]
+            })
+          )
+        )
+        const supplementProps = supplementResults.flat().filter(g => g.props && g.props.length > 0)
+        if (supplementProps.length > 0) {
+          propsData = [...propsData, ...supplementProps]
+          console.log(`[analyzeBestProps] Supplemented cache with ${supplementProps.length} games from ${missingSportKeys.length} sports`)
+        }
+      } catch (err) {
+        console.error('[analyzeBestProps] Supplement fetch failed:', err)
+        // Continue with cached data — supplementing is best-effort
+      }
+    }
+  }
 
   // Fix #1: Filter out games that have already started — can't bet on in-progress players
   const now = new Date()
@@ -1061,12 +1090,69 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     }
   }
 
-  console.log(`[analyzeBestProps] Edge-filtered results: ${results.length}, market fallbacks: ${marketFallbacks.length}`)
+  // Log sport breakdown for debugging multi-sport coverage
+  const resultSports = new Map<string, number>()
+  for (const r of results) {
+    resultSports.set(r.game.sport, (resultSports.get(r.game.sport) || 0) + 1)
+  }
+  const fallbackSports = new Map<string, number>()
+  for (const f of marketFallbacks) {
+    fallbackSports.set(f.game.sport, (fallbackSports.get(f.game.sport) || 0) + 1)
+  }
+  console.log(`[analyzeBestProps] Edge-filtered results: ${results.length} (${Array.from(resultSports.entries()).map(([s, c]) => `${s}:${c}`).join(', ')}), market fallbacks: ${marketFallbacks.length} (${Array.from(fallbackSports.entries()).map(([s, c]) => `${s}:${c}`).join(', ')})`)
 
-  let candidatePool = results
-  if (results.length === 0 && marketFallbacks.length > 0) {
-    console.log('[analyzeBestProps] No props passed edge filter, using market-data fallback')
-    candidatePool = marketFallbacks
+  // Fix #5 (improved): Sport-balance across BOTH edge-filtered results AND market fallbacks.
+  // Previously, sport-balancing only applied to the edge-filtered pool. This meant sports
+  // without model data (NHL, NCAAB) whose props only had market-data-quality edges would
+  // never appear — NBA dominated because it had model-backed edges.
+  // Now we merge both pools per-sport so every sport with available props gets represented.
+  let candidatePool: ScoredProp[]
+  
+  if (!request.sport) {
+    // Combine results + fallbacks, grouping by sport
+    const allCandidates = [...results, ...marketFallbacks]
+    const sportBuckets = new Map<string, ScoredProp[]>()
+    for (const c of allCandidates) {
+      const sport = c.game.sport
+      const bucket = sportBuckets.get(sport) || []
+      bucket.push(c)
+      sportBuckets.set(sport, bucket)
+    }
+    
+    // Sort within each sport bucket by score (edge-filtered results already have higher scores)
+    Array.from(sportBuckets.values()).forEach(bucket => {
+      bucket.sort((a: ScoredProp, b: ScoredProp) => b.score - a.score)
+    })
+    
+    if (sportBuckets.size > 1) {
+      // Round-robin across sports to ensure each sport is represented
+      const balanced: ScoredProp[] = []
+      const maxPerSport = Math.max(2, Math.ceil((count * 3) / sportBuckets.size))
+      const sportIterators = Array.from(sportBuckets.entries()).map(([sport, bucket]) => ({ sport, bucket, index: 0 }))
+      
+      let added = true
+      while (balanced.length < count * 3 && added) {
+        added = false
+        for (const iter of sportIterators) {
+          if (iter.index < iter.bucket.length && iter.index < maxPerSport) {
+            balanced.push(iter.bucket[iter.index])
+            iter.index++
+            added = true
+          }
+        }
+      }
+      
+      candidatePool = balanced.length > 0 ? balanced : allCandidates
+      console.log(`[analyzeBestProps] Sport-balanced pool: ${balanced.length} candidates across ${sportBuckets.size} sports (${Array.from(sportBuckets.keys()).join(', ')})`)
+    } else {
+      // Only one sport available — use all candidates sorted by score
+      candidatePool = allCandidates
+      candidatePool.sort((a, b) => b.score - a.score)
+    }
+  } else {
+    // Sport-specific query: use edge-filtered results, fall back to market data
+    candidatePool = results.length > 0 ? results : marketFallbacks
+    candidatePool.sort((a, b) => b.score - a.score)
   }
   
   // If STILL no candidates but we have props data, create candidates from raw market data
@@ -1101,46 +1187,7 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
     console.log(`[analyzeBestProps] Created ${candidatePool.length} raw market candidates`)
   }
 
-  candidatePool.sort((a, b) => b.score - a.score)
-
-  // Fix #5: Sport-balance results so one sport doesn't dominate (e.g., NBA)
-  // When no sport filter is specified, ensure diversity across available sports
-  let balancedPool = candidatePool
-  if (!request.sport && candidatePool.length > count) {
-    const sportBuckets = new Map<string, typeof candidatePool>()
-    for (const c of candidatePool) {
-      const sport = c.game.sport
-      const bucket = sportBuckets.get(sport) || []
-      bucket.push(c)
-      sportBuckets.set(sport, bucket)
-    }
-    
-    if (sportBuckets.size > 1) {
-      // Round-robin pick from each sport, taking top from each
-      const balanced: typeof candidatePool = []
-      const maxPerSport = Math.max(2, Math.ceil((count * 3) / sportBuckets.size))
-      const sportIterators = Array.from(sportBuckets.values()).map(bucket => ({ bucket, index: 0 }))
-      
-      let added = true
-      while (balanced.length < count * 3 && added) {
-        added = false
-        for (const iter of sportIterators) {
-          if (iter.index < iter.bucket.length && iter.index < maxPerSport) {
-            balanced.push(iter.bucket[iter.index])
-            iter.index++
-            added = true
-          }
-        }
-      }
-      
-      if (balanced.length > 0) {
-        balancedPool = balanced
-        console.log(`[analyzeBestProps] Sport-balanced pool: ${balanced.length} candidates across ${sportBuckets.size} sports`)
-      }
-    }
-  }
-
-  const topResults = balancedPool.slice(0, count * 3)
+  const topResults = candidatePool.slice(0, count * 3)
 
   if (topResults.length === 0) {
     console.log('[analyzeBestProps] No candidates at all, returning empty')
