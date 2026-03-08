@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server"
 import { requireDebugAuth } from "@/lib/debug-auth"
 import { getAllPicks } from "@/lib/pick-tracking"
+import { getRecentRecommendations } from "@/lib/recommendation-tracking"
 
 export const dynamic = "force-dynamic"
 
 /**
- * Remove a specific pick from the stored picks by team name substring.
+ * Remove a specific pick from BOTH stored picks AND recommendations by team name substring.
  * Also recalculates the track record after removal.
  * 
- * POST /api/debug/remove-pick?secret=CRON_SECRET
+ * POST /api/debug/remove-pick
+ * Headers: Authorization: Bearer <CRON_SECRET>
  * Body: { "teamMatch": "Texas Tech" }
  */
 export async function POST(request: Request) {
@@ -23,32 +25,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "teamMatch is required" }, { status: 400 })
     }
 
-    // Get all picks
-    const allPicks = await getAllPicks()
-    
-    // Find picks matching the team
-    const toRemove = allPicks.filter(p => 
-      (p.team || '').toLowerCase().includes(teamMatch.toLowerCase()) ||
-      (p.homeTeam || '').toLowerCase().includes(teamMatch.toLowerCase()) ||
-      (p.awayTeam || '').toLowerCase().includes(teamMatch.toLowerCase())
-    )
-    
-    if (toRemove.length === 0) {
-      return NextResponse.json({ 
-        success: false, 
-        message: `No picks found matching "${teamMatch}"`,
-        totalPicks: allPicks.length
-      })
-    }
-
-    // Filter out the matching picks
-    const remaining = allPicks.filter(p => 
-      !(p.team || '').toLowerCase().includes(teamMatch.toLowerCase()) &&
-      !(p.homeTeam || '').toLowerCase().includes(teamMatch.toLowerCase()) &&
-      !(p.awayTeam || '').toLowerCase().includes(teamMatch.toLowerCase())
-    )
-
-    // Store remaining picks back to Redis
     const url = process.env.KV_REST_API_URL
     const token = process.env.KV_REST_API_TOKEN
     
@@ -56,16 +32,85 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Redis not configured" }, { status: 500 })
     }
 
-    await fetch(`${url}/set/betanalytics:picks`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(remaining))
+    const matchLower = teamMatch.toLowerCase()
+
+    // ============================================
+    // 1. Remove from betanalytics:picks
+    // ============================================
+    const allPicks = await getAllPicks()
+    
+    const picksRemoved = allPicks.filter(p => 
+      (p.team || '').toLowerCase().includes(matchLower) ||
+      (p.homeTeam || '').toLowerCase().includes(matchLower) ||
+      (p.awayTeam || '').toLowerCase().includes(matchLower)
+    )
+
+    const picksRemaining = allPicks.filter(p => 
+      !(p.team || '').toLowerCase().includes(matchLower) &&
+      !(p.homeTeam || '').toLowerCase().includes(matchLower) &&
+      !(p.awayTeam || '').toLowerCase().includes(matchLower)
+    )
+
+    if (picksRemoved.length > 0) {
+      await fetch(`${url}/set/betanalytics:picks`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(JSON.stringify(picksRemaining))
+      })
+    }
+
+    // ============================================
+    // 2. Remove from recommendations (reco:v1:*)
+    // ============================================
+    const allRecos = await getRecentRecommendations(500)
+    
+    const recosToRemove = allRecos.filter(r => {
+      const selection = (r.selection || '').toLowerCase()
+      const gameName = (r.gameName || '').toLowerCase()
+      return selection.includes(matchLower) || gameName.includes(matchLower)
     })
 
-    // Recalculate track record
+    const recoDeleteResults: string[] = []
+    for (const reco of recosToRemove) {
+      // Remove the individual key
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(['DEL', `reco:v1:${reco.id}`])
+      })
+
+      // Remove from the sorted set index
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(['ZREM', 'reco:v1:index:createdAt', reco.id])
+      })
+
+      // Remove from pending set (if present)
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(['SREM', 'reco:v1:index:pending', reco.id])
+      })
+
+      recoDeleteResults.push(`${reco.id}: ${reco.selection} (${reco.status})`)
+    }
+
+    // ============================================
+    // 3. Recalculate track record from remaining picks
+    // ============================================
     const now = new Date()
     const periods = [
       { key: '7d', days: 7 },
@@ -77,7 +122,7 @@ export async function POST(request: Request) {
     const trackRecord: Record<string, unknown> = {}
     for (const period of periods) {
       const cutoff = period.days ? new Date(now.getTime() - period.days * 24 * 60 * 60 * 1000) : null
-      const relevant = remaining.filter(p => {
+      const relevant = picksRemaining.filter(p => {
         if (p.status === 'pending' || p.status === 'cancelled') return false
         if (cutoff && new Date(p.gradedAt || p.createdAt) < cutoff) return false
         return true
@@ -113,9 +158,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: `Removed ${toRemove.length} pick(s) matching "${teamMatch}"`,
-      removed: toRemove.map(p => ({ team: p.team, betType: p.betType, line: p.line, status: p.status })),
-      remainingCount: remaining.length,
+      message: `Removed ${picksRemoved.length} pick(s) and ${recosToRemove.length} recommendation(s) matching "${teamMatch}"`,
+      picksRemoved: picksRemoved.map(p => ({ team: p.team, betType: p.betType, status: p.status })),
+      recosRemoved: recoDeleteResults,
+      picksRemainingCount: picksRemaining.length,
       updatedRecord: trackRecord,
     })
   } catch (error) {
