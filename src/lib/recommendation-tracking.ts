@@ -185,7 +185,7 @@ export function enforceDailyCaps(recommendations: TrackedRecommendation[]): Trac
   }
 
   const result: TrackedRecommendation[] = []
-  for (const [, dayPicks] of byDay) {
+  for (const dayPicks of Array.from(byDay.values())) {
     // Prioritize locked-in picks (what users actually saw at game time), then by score.
     // This ensures the record matches what was live on the page when games started.
     dayPicks.sort((a, b) => {

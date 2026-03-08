@@ -121,11 +121,11 @@ export default function PerformancePageClient() {
             byDay.get(day)!.push(p)
           }
           const result: RecentPick[] = []
-          for (const [, dayPicks] of byDay) {
+          for (const dayPicks of Array.from(byDay.values())) {
             // Prioritize locked-in picks (what users actually saw), then by score
             dayPicks.sort((a, b) => {
-              const aLocked = (a as Record<string, unknown>).lockedIn ? 1 : 0
-              const bLocked = (b as Record<string, unknown>).lockedIn ? 1 : 0
+              const aLocked = (a as unknown as {lockedIn?: boolean}).lockedIn ? 1 : 0
+              const bLocked = (b as unknown as {lockedIn?: boolean}).lockedIn ? 1 : 0
               if (bLocked !== aLocked) return bLocked - aLocked
               return (b.score || 0) - (a.score || 0)
             })
