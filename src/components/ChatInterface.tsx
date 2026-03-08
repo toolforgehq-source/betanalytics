@@ -94,10 +94,16 @@ const ChatInterface = forwardRef<ChatInterfaceRef, ChatInterfaceProps>(function 
       if (!response.ok) {
         let errorDetails = ''
         try {
-          const errorData = await response.json()
-          errorDetails = errorData.details || errorData.error || ''
+          // Read body as text first (works for both JSON and non-JSON responses)
+          const bodyText = await response.text()
+          try {
+            const errorData = JSON.parse(bodyText)
+            errorDetails = errorData.details || errorData.error || ''
+          } catch {
+            errorDetails = bodyText
+          }
         } catch {
-          errorDetails = await response.text()
+          errorDetails = `HTTP ${response.status}`
         }
         console.error('Chat API error:', response.status, errorDetails)
         throw new Error(errorDetails || `API error: ${response.status}`)

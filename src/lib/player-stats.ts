@@ -170,14 +170,14 @@ const PLAYER_PROCESSED_GAMES_KEY = 'player_stats_processed_games_v1'
 
 // Number of recent games to use for rolling averages
 const ROLLING_WINDOW = 20
-const RECENT_FORM_WINDOW = 5
+export const RECENT_FORM_WINDOW = 5
 
 // Recency weight decay (more recent games weighted higher)
 // Weight for game i (0 = most recent): weight = RECENCY_DECAY ^ i
 const RECENCY_DECAY = 0.90
 const VARIANCE_INFLATION = 1.25
 
-const COUNT_STATS = new Set([
+export const COUNT_STATS = new Set([
   'threePointersMade', 'passingTouchdowns', 'rushingTouchdowns', 'receivingTouchdowns',
   'goals', 'homeRuns', 'steals', 'blocks',
 ])
