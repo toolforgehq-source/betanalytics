@@ -6,7 +6,7 @@
  *
  * Single source of truth for:
  * - Deduplication (gameId:team:betType, prefer higher score)
- * - Qualifying criteria (58%+ probability, 4%+ edge)
+ * - Score-based tier assignment (highest score = Lock, next best = Strong)
  * - Tier caps (max 1 Lock, max 3 Strong)
  */
 
@@ -50,7 +50,7 @@ export function computeEdge(pick: PickLike): number {
  * Steps:
  * 1. Deduplicate by gameId:team:betType (prefer higher score version)
  * 2. Sort by score descending
- * 3. Re-tier: highest-scored qualifying bet = Lock, next N = Strong, rest = value
+ * 3. Re-tier: highest-scored bet = Lock, next N = Strong, rest = value
  * 4. Return only Lock + Strong picks
  */
 export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
@@ -125,18 +125,17 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     }
   }
   
-  // Step 4: Tier remaining available picks with leftover slots
+  // Step 4: Tier remaining available picks with leftover slots.
+  // Available picks are already sorted by score descending (Step 2).
+  // Assign tiers purely by score rank — the highest-scored picks get the
+  // remaining lock/strong slots. No additional qualifying criteria here;
+  // picks have already been filtered upstream in computeBestBets before
+  // being cached, and the score itself encodes probability, edge, and ROI.
   for (const pick of availablePicks) {
-    const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
-    const edge = computeEdge(pick)
-    
-    // Qualifying criteria: 58%+ probability, 4%+ edge (same as bet-ranking.ts)
-    const qualifies = prob >= 58 && edge >= 4
-    
-    if (qualifies && lockCount < MAX_LOCKS) {
+    if (lockCount < MAX_LOCKS) {
       pick.confidenceTier = 'lock'
       lockCount++
-    } else if (qualifies && strongCount < MAX_STRONG) {
+    } else if (strongCount < MAX_STRONG) {
       pick.confidenceTier = 'strong'
       strongCount++
     } else {

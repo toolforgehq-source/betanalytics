@@ -3166,41 +3166,19 @@ export async function computeBestBets(
   let globalStrongCount = 0
   const globalTierMap = new Map<string, 'lock' | 'strong' | 'value'>()
   
+  // Assign tiers purely by score rank — the highest-scored picks get the
+  // lock/strong slots. allMergedBets is already sorted by score descending.
+  // No additional qualifying criteria here; picks have already been filtered
+  // by the hard filters (52%+ prob, -4.5%+ ROI, -250 odds), and the score
+  // encodes probability, edge, and ROI. This ensures the globally best-scored
+  // bet is ALWAYS the Lock, and the next best are Strong Plays.
   for (const bet of allMergedBets) {
     const key = `${bet.gameId}:${bet.team}:${bet.betType}`
-    const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
-    const betEdge = bet.edge
-    const confidence = bet.eloConfidence || 'medium'
-    const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
-    const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
-    const isHugeSpread = spreadSize > 12
-    const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
-    const isHugeEloGap = eloGap > 250
     
-    // Lock = highest-scored bet meeting Strong criteria (no extra gates)
-    // This ensures the globally best-scored qualifying bet is ALWAYS the Lock
-    const isLockCandidate = 
-      prob >= 58 &&
-      betEdge >= 4 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      globalLockCount < MAX_LOCKS
-    
-    const isStrongCandidate =
-      prob >= 58 &&
-      betEdge >= 4 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      globalStrongCount < MAX_STRONG
-    
-    if (isLockCandidate) {
+    if (globalLockCount < MAX_LOCKS) {
       globalTierMap.set(key, 'lock')
       globalLockCount++
-    } else if (isStrongCandidate) {
+    } else if (globalStrongCount < MAX_STRONG) {
       globalTierMap.set(key, 'strong')
       globalStrongCount++
     } else {
