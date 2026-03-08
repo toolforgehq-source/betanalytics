@@ -19,7 +19,7 @@
 
 import { NextResponse } from 'next/server'
 import { getTrackRecord, getAllPicks, type StoredPick } from '@/lib/pick-tracking'
-import { getRecentRecommendations, calculateTrackingStats } from '@/lib/recommendation-tracking'
+import { getRecentRecommendations, calculateTrackingStats, enforceDailyCaps } from '@/lib/recommendation-tracking'
 import { getCachedBestBet, type RankedBet } from '@/lib/bet-ranking'
 import { dedupeAndEnforceCaps, type PickLike } from '@/lib/enforce-picks'
 
@@ -62,8 +62,10 @@ export async function GET() {
       .sort((a: StoredPick, b: StoredPick) => new Date(b.gradedAt || b.createdAt).getTime() - new Date(a.gradedAt || a.createdAt).getTime())
       .slice(0, 50)
 
-    // Get today's recommendations (pending or settled) from recommendation system
+    // Get today's recommendations (pending or locked-in) from recommendation system.
+    // Exclude voided recommendations — these were superseded before game start and shouldn't display.
     const todaysRecommendations = recentRecos.filter(r => {
+      if (r.status === 'void') return false // Superseded picks don't show on the page
       const recoDate = new Date(r.commenceTime || r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
       return recoDate === todayStr
     })
@@ -73,8 +75,23 @@ export async function GET() {
       .filter(r => r.status !== 'pending')
       .slice(0, 100)
     
-    // Get ALL recent recommendations (including pending) for the full history view
-    const allRecentRecos = recentRecos.slice(0, 100)
+    // Get ALL recent recommendations (including pending) for the full history view.
+    // CRITICAL: Apply daily caps (1 Lock + 3 Strong per betting day) server-side
+    // so the Performance page receives already-capped data. The client also caps
+    // as a safety net, but the server should be the source of truth.
+    const bestBetRecos = recentRecos.filter(r =>
+      r.source === 'best_bet' &&
+      (r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
+    )
+    const cappedRecos = enforceDailyCaps(bestBetRecos)
+    // Include non-best_bet recos and non-lock/strong recos unchanged (they're filtered out on client)
+    const nonTrackedRecos = recentRecos.filter(r =>
+      r.source !== 'best_bet' ||
+      (r.confidenceTier !== 'lock' && r.confidenceTier !== 'strong')
+    )
+    const allRecentRecos = [...cappedRecos, ...nonTrackedRecos]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 100)
 
     // ============================================
     // LIVE PICKS from cached best bet result
@@ -115,9 +132,22 @@ export async function GET() {
     console.log(`[API /picks] Merging ${livePicks.length} live picks + ${todaysRecommendations.length} stored recos = ${rawPicks.length} raw picks`)
     const enforcedPicks = dedupeAndEnforceCaps(rawPicks)
     
+    // Mark picks whose games have already started so the frontend can show appropriate status.
+    // We keep them visible (users may want to see what was recommended) but flag them.
+    const nowMs = Date.now()
+    for (const pick of enforcedPicks) {
+      if (pick.commenceTime) {
+        const gameStart = new Date(pick.commenceTime as string).getTime()
+        if (nowMs >= gameStart) {
+          pick.gameStarted = true
+        }
+      }
+    }
+    
     const lockCount = enforcedPicks.filter(p => p.confidenceTier === 'lock').length
     const strongCount = enforcedPicks.filter(p => p.confidenceTier === 'strong').length
-    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong)`)
+    const startedCount = enforcedPicks.filter(p => p.gameStarted).length
+    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong, ${startedCount} already started)`)
 
     return NextResponse.json({
       success: true,

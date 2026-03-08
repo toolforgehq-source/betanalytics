@@ -57,6 +57,13 @@ export default function MobileNav() {
             Alerts
           </Link>
           <Link 
+            href="/chat"
+            className="block w-full px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm text-slate-300 hover:text-white"
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Chat
+          </Link>
+          <Link 
             href="/methodology"
             className="block w-full px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm text-slate-300 hover:text-white"
             onClick={() => setMobileMenuOpen(false)}

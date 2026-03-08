@@ -41,6 +41,9 @@ interface RecentPick {
   probability?: number
   score?: number
   sportName?: string
+  source?: string
+  lockedIn?: boolean
+  bettingDay?: string  // Computed betting day (ET, 2 AM reset) for display
 }
 
 function StatCard({ label, value, subtext, color }: { label: string; value: string; subtext?: string; color: string }) {
@@ -101,19 +104,83 @@ export default function PerformancePageClient() {
           return { wins, losses, pushes, total, winRate: total > 0 ? (wins / total) * 100 : 0 }
         }
 
-        // Only count Lock and Strong Play picks (value spots are not publicly tracked)
-        const trackedPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
-        const lockPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock')
-        const strongPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'strong')
+        // Only count best_bet picks with Lock/Strong tier in the official record.
+        // Props, parlays, sport_bets, and value-tier picks do NOT count.
+        // This matches the server-side calculateTrackingStats() logic exactly.
+        const allTrackedPicks = settled.filter((r: RecentPick) =>
+          (r.confidenceTier === 'lock' || r.confidenceTier === 'strong') &&
+          (!r.source || r.source === 'best_bet')  // source may be missing on older records
+        )
 
-        // Only show lock + strong picks in recent list
-        const trackedRecos = recos.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
+        // Compute betting day (ET timezone, 2 AM reset) for each pick.
+        // This is the SAME day definition used for capping — ensures the display date
+        // matches the cap grouping so users see max 4 picks per displayed date.
+        const getBettingDay = (createdAt: string): string => {
+          const d = new Date(createdAt)
+          // Convert to ET by formatting with timezone, then parse back
+          const parts = d.toLocaleString('en-US', {
+            timeZone: 'America/New_York',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', hour12: false
+          }).split(', ')
+          // parts[0] = "MM/DD/YYYY", parts[1] = "HH" (24h)
+          const hour = parseInt(parts[1], 10)
+          const [mm, dd, yyyy] = parts[0].split('/')
+          let dayNum = parseInt(dd, 10)
+          // Before 2 AM ET = still the previous calendar day for betting purposes
+          if (hour < 2) dayNum -= 1
+          // Reconstruct a date for display
+          const displayDate = new Date(parseInt(yyyy), parseInt(mm) - 1, dayNum)
+          return displayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        }
+
+        // Tag each pick with its betting day for display
+        for (const p of allTrackedPicks) {
+          p.bettingDay = getBettingDay(p.createdAt)
+        }
+
+        // CRITICAL: Enforce daily caps (max 1 Lock + 3 Strong per betting day).
+        // Group by betting day and keep only the best picks per day.
+        const enforceDailyCaps = (picks: RecentPick[]): RecentPick[] => {
+          const MAX_DAILY_LOCKS = 1
+          const MAX_DAILY_STRONG = 3
+          const byDay = new Map<string, RecentPick[]>()
+          for (const p of picks) {
+            const day = p.bettingDay || getBettingDay(p.createdAt)
+            if (!byDay.has(day)) byDay.set(day, [])
+            byDay.get(day)!.push(p)
+          }
+          const result: RecentPick[] = []
+          for (const dayPicks of Array.from(byDay.values())) {
+            // Prioritize locked-in picks (what users actually saw), then by latest createdAt
+            // Latest = most recent Lock of the Day, which is what users last saw on the page
+            dayPicks.sort((a, b) => {
+              const aLocked = a.lockedIn ? 1 : 0
+              const bLocked = b.lockedIn ? 1 : 0
+              if (bLocked !== aLocked) return bLocked - aLocked
+              return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            })
+            let locks = 0, strongs = 0
+            for (const pick of dayPicks) {
+              if (pick.confidenceTier === 'lock' && locks < MAX_DAILY_LOCKS) { locks++; result.push(pick) }
+              else if (pick.confidenceTier === 'strong' && strongs < MAX_DAILY_STRONG) { strongs++; result.push(pick) }
+            }
+          }
+          return result
+        }
+
+        const trackedPicks = enforceDailyCaps(allTrackedPicks)
+        const lockPicks = trackedPicks.filter((r: RecentPick) => r.confidenceTier === 'lock')
+        const strongPicks = trackedPicks.filter((r: RecentPick) => r.confidenceTier === 'strong')
+
+        // Only show daily-capped settled lock + strong picks in recent results
+        const settledTrackedRecos = trackedPicks
 
         setData({
           overall: buildStats(trackedPicks),
           lock: buildStats(lockPicks),
           strong: buildStats(strongPicks),
-          recentPicks: trackedRecos.slice(0, 30),
+          recentPicks: settledTrackedRecos.slice(0, 30),
           startDate: new Date().toISOString()
         })
       } catch {
@@ -241,10 +308,10 @@ export default function PerformancePageClient() {
               />
             </div>
 
-            {/* Recent Picks */}
+            {/* Recent Results — only settled W/L/Push, no pending or voided */}
             {data.recentPicks.length > 0 && (
               <div className="bg-slate-900/30 border border-slate-800/50 rounded-xl p-6">
-                <h3 className="text-lg font-bold mb-4">Recent Picks</h3>
+                <h3 className="text-lg font-bold mb-4">Recent Results</h3>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -287,7 +354,7 @@ export default function PerformancePageClient() {
                               </div>
                             </td>
                             <td className="py-2.5 text-slate-500">
-                              {new Date(pick.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              {pick.bettingDay || new Date(pick.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })}
                             </td>
                           </tr>
                         )

@@ -32,6 +32,7 @@ interface TieredPick {
   odds?: number
   probability?: number
   gameName?: string
+  gameStarted?: boolean
 }
 
 interface PicksData {
@@ -118,12 +119,20 @@ function PickCard({ pick }: { pick: TieredPick }) {
     value: 'border-slate-700/50 bg-slate-900/30',
   }
   const tier = pick.confidenceTier || 'value'
+  const isStarted = pick.gameStarted === true
 
   return (
-    <div className={`rounded-xl border p-5 ${tierColors[tier]} transition-all hover:scale-[1.01]`}>
+    <div className={`rounded-xl border p-5 ${tierColors[tier]} transition-all hover:scale-[1.01] ${isStarted ? 'opacity-60' : ''}`}>
       <div className="flex items-start justify-between mb-3">
         <div>
-          <TierBadge tier={tier} />
+          <div className="flex items-center gap-2 flex-wrap">
+            <TierBadge tier={tier} />
+            {isStarted && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-500/15 border border-red-500/30 rounded-full text-xs font-semibold text-red-400">
+                GAME STARTED
+              </span>
+            )}
+          </div>
           <div className="mt-2 text-lg font-bold text-white">
             {displaySelection}
           </div>

@@ -40,6 +40,10 @@ export interface TrackedRecommendation {
   // Confidence tier from tiered system
   confidenceTier?: 'lock' | 'strong' | 'value'
   
+  // Lock-in tracking
+  lockedIn?: boolean            // True once game starts and pick was still active
+  supersededAt?: string         // When this pick was superseded by a newer version
+  
   // Outcome tracking
   status: 'pending' | 'won' | 'lost' | 'push' | 'void'
   settledAt?: string            // When outcome was determined
@@ -131,6 +135,94 @@ async function getRedisClient() {
   return { url, token }
 }
 
+/**
+ * Get today's "betting day" date string in ET timezone.
+ * A betting day runs until 2 AM ET the next morning, so at 1 AM ET on March 4
+ * we still return the March 3 date string. This keeps the daily cap aligned
+ * with when picks are displayed on the Model Picks page.
+ */
+function getTodayET(): string {
+  const now = new Date()
+  const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  const etNow = new Date(etStr)
+  // Before 2 AM ET = still the previous calendar day for betting purposes
+  if (etNow.getHours() < 2) {
+    etNow.setDate(etNow.getDate() - 1)
+  }
+  return etNow.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+}
+
+/**
+ * Get the betting day string for a given date.
+ * Uses ET timezone with 2 AM reset (before 2 AM = previous calendar day).
+ */
+function getBettingDayET(date: Date): string {
+  const etStr = date.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  const etDate = new Date(etStr)
+  if (etDate.getHours() < 2) {
+    etDate.setDate(etDate.getDate() - 1)
+  }
+  return etDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+}
+
+/**
+ * Enforce daily caps on a list of recommendations.
+ * For each betting day, keeps max 1 Lock + 3 Strong picks (the highest scored ones).
+ * This fixes historical data where more than 4 picks per day were graded before the fix.
+ * 
+ * EXPORTED so the Performance page client can also use it.
+ */
+export function enforceDailyCaps(recommendations: TrackedRecommendation[]): TrackedRecommendation[] {
+  const MAX_DAILY_LOCKS = 1
+  const MAX_DAILY_STRONG = 3
+
+  // CRITICAL: Filter out void picks FIRST. Voided picks were superseded before
+  // game start — they never played and must NOT consume daily cap slots.
+  // Previously, a voided pick with a high score could steal the lock slot from
+  // a real settled pick, destroying the record.
+  const nonVoid = recommendations.filter(r => r.status !== 'void')
+
+  // Group by betting day
+  const byDay = new Map<string, TrackedRecommendation[]>()
+  for (const r of nonVoid) {
+    const day = getBettingDayET(new Date(r.createdAt))
+    if (!byDay.has(day)) byDay.set(day, [])
+    byDay.get(day)!.push(r)
+  }
+
+  const result: TrackedRecommendation[] = []
+  for (const dayPicks of Array.from(byDay.values())) {
+    // Priority order for cap selection:
+    // 1. Locked-in picks first (what users actually saw at game time)
+    // 2. Then by LATEST createdAt (most recently created = most recent Lock of the Day)
+    //    This matches what users last saw on the page. The cron updates the Lock of
+    //    the Day periodically, so the latest pick is the "final" version for the day.
+    //    Previously we sorted by score, which could select a higher-scored pick that
+    //    lost over a later pick that won (e.g., Valparaiso score 88 LOST over
+    //    Fairfield score 87 WON on the same day).
+    dayPicks.sort((a, b) => {
+      const aLocked = a.lockedIn ? 1 : 0
+      const bLocked = b.lockedIn ? 1 : 0
+      if (bLocked !== aLocked) return bLocked - aLocked
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+    let lockCount = 0
+    let strongCount = 0
+    for (const pick of dayPicks) {
+      if (pick.confidenceTier === 'lock' && lockCount < MAX_DAILY_LOCKS) {
+        lockCount++
+        result.push(pick)
+      } else if (pick.confidenceTier === 'strong' && strongCount < MAX_DAILY_STRONG) {
+        strongCount++
+        result.push(pick)
+      }
+      // Skip picks that exceed the daily cap
+    }
+  }
+
+  return result
+}
+
 // ============================================
 // RECOMMENDATION ID GENERATION
 // ============================================
@@ -143,10 +235,14 @@ function generateRecommendationId(
   betType: string,
   sport: string,
   gameId: string,
-  selection: string,
+  _selection: string,
   date: string
 ): string {
-  const key = `${betType}|${sport}|${gameId}|${selection}|${date.slice(0, 10)}`
+  // NOTE: selection is intentionally EXCLUDED from the key.
+  // Previously, including selection meant line moves (e.g., +3.5 → +4.5) created
+  // duplicate entries for the same game. Now one game + betType + day = one record.
+  // The selection is still stored on the record and updated via upsert when odds change.
+  const key = `${betType}|${sport}|${gameId}|${date.slice(0, 10)}`
   // Simple hash function
   let hash = 0
   for (let i = 0; i < key.length; i++) {
@@ -177,7 +273,7 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
     now.toISOString()
   )
   
-  // Check if already exists (idempotent)
+  // Check if already exists — if so, UPSERT (update odds/line) unless locked in
   try {
     const existsResponse = await fetch(`${redis.url}/exists/${TRACKING_KEY_PREFIX}${id}`, {
       headers: { Authorization: `Bearer ${redis.token}` },
@@ -185,7 +281,28 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
     })
     const existsData = await existsResponse.json()
     if (existsData.result === 1) {
-      console.log(`[Tracking] Recommendation ${id} already exists, skipping`)
+      // Recommendation exists — check if we should update or skip
+      const existing = await getRecommendation(id)
+      if (existing) {
+        const gameStarted = existing.commenceTime && new Date(existing.commenceTime).getTime() <= now.getTime()
+        if (existing.lockedIn || gameStarted) {
+          // Game started or locked in — don't overwrite, this is the final record
+          console.log(`[Tracking] Recommendation ${id} is locked in (game started), preserving`)
+          return id
+        }
+        // Game hasn't started — update with latest odds/line/selection (upsert)
+        await updateRecommendation(id, {
+          selection: reco.selection,
+          line: reco.line,
+          odds: reco.odds,
+          probability: reco.probability,
+          score: reco.score,
+          confidenceTier: reco.confidenceTier
+        })
+        console.log(`[Tracking] Updated recommendation ${id} with latest odds: ${reco.selection}`)
+        return id
+      }
+      console.log(`[Tracking] Recommendation ${id} exists but unreadable, skipping`)
       return id
     }
   } catch (error) {
@@ -496,6 +613,181 @@ export async function clearAllRecommendations(): Promise<{ deleted: number }> {
 }
 
 // ============================================
+// LOCK-IN & CLEANUP
+// ============================================
+
+/**
+ * Lock in started games and void superseded picks.
+ * 
+ * This is the core of the pick integrity system:
+ * 1. If a game has started and the pick is still in the active Lock/Strong list → lock it in
+ * 2. If a game has started and the pick was DROPPED from the list before tip-off → void it
+ * 3. If a game hasn't started and the pick is no longer active → void it (superseded)
+ * 4. Dedup: if multiple pending recommendations exist for the same gameId+betType, keep newest, void rest
+ * 
+ * @param activeGameKeys Set of "gameId:betType" strings currently in the Lock/Strong list
+ * @returns Summary of actions taken
+ */
+export async function lockInAndCleanupRecommendations(
+  activeGameKeys: Set<string>
+): Promise<{ lockedIn: number; voided: number; deduped: number }> {
+  const result = { lockedIn: 0, voided: 0, deduped: 0 }
+  
+  const pendingRecos = await getPendingRecommendations()
+  if (pendingRecos.length === 0) return result
+  
+  const now = Date.now()
+  
+  // Group pending recommendations by gameId:betType to find duplicates
+  const groups = new Map<string, TrackedRecommendation[]>()
+  for (const reco of pendingRecos) {
+    const key = `${reco.gameId}:${reco.betType}`
+    const group = groups.get(key) || []
+    group.push(reco)
+    groups.set(key, group)
+  }
+  
+  // Track recommendations that want to be locked in — we'll enforce caps after the loop
+  const pendingLockIns: TrackedRecommendation[] = []
+  
+  for (const [groupKey, recos] of Array.from(groups.entries())) {
+    // Sort by createdAt descending — newest first
+    recos.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    
+    // Dedup: if multiple recommendations exist for the same game+betType, keep newest
+    if (recos.length > 1) {
+      for (let i = 1; i < recos.length; i++) {
+        await updateRecommendation(recos[i].id, {
+          status: 'void',
+          settledAt: new Date().toISOString(),
+          actualResult: 'Duplicate entry — superseded by newer recommendation',
+          supersededAt: recos[0].createdAt
+        })
+        result.deduped++
+        console.log(`[Tracking] Deduped old recommendation ${recos[i].id} for ${groupKey}`)
+      }
+    }
+    
+    // Process the primary (newest) recommendation
+    const primary = recos[0]
+    if (primary.lockedIn) continue // Already locked in from a previous run
+    
+    const gameStarted = primary.commenceTime && new Date(primary.commenceTime).getTime() <= now
+    const isActive = activeGameKeys.has(groupKey)
+    
+    if (gameStarted) {
+      // Game has started and pick is still pending → candidate for lock-in.
+      // We collect these and enforce the 1 Lock + 3 Strong cap below.
+      pendingLockIns.push(primary)
+    } else if (!isActive) {
+      // Game hasn't started and pick is no longer in active list → void it
+      await updateRecommendation(primary.id, {
+        status: 'void',
+        settledAt: new Date().toISOString(),
+        actualResult: 'Superseded by higher-ranked pick before game start',
+        supersededAt: new Date().toISOString()
+      })
+      result.voided++
+      console.log(`[Tracking] Voided recommendation ${primary.id} — superseded before game start`)
+    }
+    // If game hasn't started and pick IS active → do nothing, it's still live
+  }
+  
+  // ============================================
+  // DAILY TIER CAP ENFORCEMENT ON LOCK-IN
+  // Only lock in max 1 Lock + 3 Strong = 4 best_bet recommendations per day.
+  // Count already-locked recommendations, then fill remaining slots
+  // with the highest-scored pending lock-in candidates.
+  // ============================================
+  const MAX_DAILY_LOCKS = 1
+  const MAX_DAILY_STRONG = 3
+  
+  // Count recommendations already locked in from previous cron runs TODAY,
+  // broken down by tier (1 Lock + 3 Strong separately, not total 4).
+  // CRITICAL: Must scope to today's betting day (ET timezone, resets at 2 AM).
+  // Without date scoping, this would count ALL locked recommendations ever stored,
+  // causing slots to be permanently exhausted and block all future lock-ins.
+  const todayET = getTodayET()
+  const allRecos = await getRecentRecommendations(500)
+  const alreadyLockedBestBets = allRecos.filter(r => {
+    if (!r.lockedIn || r.source !== 'best_bet') return false
+    if (r.status !== 'pending' && r.status !== 'won' && r.status !== 'lost' && r.status !== 'push') return false
+    // Check if recommendation was created today (same betting day in ET)
+    const recoDate = new Date(r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    return recoDate === todayET
+  })
+  const lockedLocks = alreadyLockedBestBets.filter(r => r.confidenceTier === 'lock').length
+  const lockedStrongs = alreadyLockedBestBets.filter(r => r.confidenceTier === 'strong').length
+  const lockSlotsAvailable = Math.max(0, MAX_DAILY_LOCKS - lockedLocks)
+  const strongSlotsAvailable = Math.max(0, MAX_DAILY_STRONG - lockedStrongs)
+  
+  let locksFilled = 0
+  let strongsFilled = 0
+  
+  if (pendingLockIns.length > 0) {
+    // Only apply cap to best_bet recommendations (not parlays, props, etc.)
+    const bestBetLockIns = pendingLockIns.filter(r => r.source === 'best_bet')
+    const otherLockIns = pendingLockIns.filter(r => r.source !== 'best_bet')
+    
+    // Separate lock-tier and strong-tier candidates.
+    // Each tier has its own cap: 1 lock + 3 strong per day.
+    // Sort each by latest createdAt first (most recent = most recent Lock of the Day).
+    const lockCandidates = bestBetLockIns.filter(r => r.confidenceTier === 'lock')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    const strongCandidates = bestBetLockIns.filter(r => r.confidenceTier === 'strong')
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    
+    // Process lock candidates
+    for (const reco of lockCandidates) {
+      if (locksFilled < lockSlotsAvailable) {
+        await updateRecommendation(reco.id, { lockedIn: true })
+        result.lockedIn++
+        locksFilled++
+        console.log(`[Tracking] Locked in LOCK ${reco.id} (${lockedLocks + locksFilled}/${MAX_DAILY_LOCKS}) — game started`)
+      } else {
+        // Exceeds lock cap — void
+        await updateRecommendation(reco.id, {
+          status: 'void',
+          settledAt: new Date().toISOString(),
+          actualResult: 'Exceeded daily lock cap (max 1 Lock per day)'
+        })
+        result.voided++
+        console.log(`[Tracking] Voided LOCK ${reco.id} — exceeded daily lock cap (${lockedLocks + locksFilled + 1} > ${MAX_DAILY_LOCKS})`)
+      }
+    }
+    
+    // Process strong candidates
+    for (const reco of strongCandidates) {
+      if (strongsFilled < strongSlotsAvailable) {
+        await updateRecommendation(reco.id, { lockedIn: true })
+        result.lockedIn++
+        strongsFilled++
+        console.log(`[Tracking] Locked in STRONG ${reco.id} (${lockedStrongs + strongsFilled}/${MAX_DAILY_STRONG}) — game started`)
+      } else {
+        // Exceeds strong cap — void
+        await updateRecommendation(reco.id, {
+          status: 'void',
+          settledAt: new Date().toISOString(),
+          actualResult: 'Exceeded daily strong cap (max 3 Strong per day)'
+        })
+        result.voided++
+        console.log(`[Tracking] Voided STRONG ${reco.id} — exceeded daily strong cap (${lockedStrongs + strongsFilled + 1} > ${MAX_DAILY_STRONG})`)
+      }
+    }
+    
+    // Lock in non-best_bet recommendations (props, parlays) without cap
+    for (const reco of otherLockIns) {
+      await updateRecommendation(reco.id, { lockedIn: true })
+      result.lockedIn++
+      console.log(`[Tracking] Locked in ${reco.source} recommendation ${reco.id} — game started`)
+    }
+  }
+  
+  console.log(`[Tracking] Cleanup complete: ${result.lockedIn} locked in, ${result.voided} voided, ${result.deduped} deduped (locks: ${lockedLocks}+${locksFilled || 0}/${MAX_DAILY_LOCKS}, strongs: ${lockedStrongs}+${strongsFilled || 0}/${MAX_DAILY_STRONG})`)
+  return result
+}
+
+// ============================================
 // PROFIT CALCULATION
 // ============================================
 
@@ -523,7 +815,20 @@ export function calculateProfit(odds: number, won: boolean): number {
  * Calculate tracking statistics from all recommendations
  */
 export async function calculateTrackingStats(): Promise<TrackingStats> {
-  const recommendations = await getRecentRecommendations(1000)
+  const allRecommendations = await getRecentRecommendations(1000)
+  
+  // IMPORTANT: Only count best_bet picks with lock/strong tier in the official record.
+  // Props, parlays, sport_bets, and value-tier picks should NOT inflate the public record.
+  // The record should reflect exactly the 1 Lock + 3 Strong picks that were locked in.
+  const filteredBySource = allRecommendations.filter(r =>
+    r.source === 'best_bet' &&
+    (r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
+  )
+  
+  // CRITICAL: Enforce daily caps retroactively on historical data.
+  // Before the fix was deployed, more than 4 picks per day leaked into the record.
+  // This ensures each day only counts max 1 Lock + 3 Strong (best by score).
+  const recommendations = enforceDailyCaps(filteredBySource)
   
   const stats: TrackingStats = {
     totalBets: recommendations.length,
@@ -559,7 +864,12 @@ export async function calculateTrackingStats(): Promise<TrackingStats> {
       continue
     }
     
-    if (reco.status === 'push' || reco.status === 'void') {
+    if (reco.status === 'void') {
+      // Voided picks (superseded before game start) don't count at all
+      continue
+    }
+    
+    if (reco.status === 'push') {
       stats.pushes++
       continue
     }

@@ -73,19 +73,60 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     
     const key = `${pick.gameId}:${team}:${pick.betType}`
     const existing = dedupMap.get(key)
-    if (!existing || (pick.score || 0) > (existing.score || 0)) {
+    // Locked-in picks (game started, pick was active at tip-off) always win dedup.
+    // Otherwise, prefer the higher-scored version.
+    const pickLocked = pick.lockedIn || pick.gameStarted
+    const existingLocked = existing?.lockedIn || existing?.gameStarted
+    if (!existing || (pickLocked && !existingLocked) || (!existingLocked && (pick.score || 0) > (existing.score || 0))) {
       dedupMap.set(key, pick)
     }
   }
   
-  // Step 2: Sort by score descending
-  const sorted = Array.from(dedupMap.values()).sort((a, b) => (b.score || 0) - (a.score || 0))
+  // Step 2: Separate locked-in picks from available picks.
+  // Locked-in picks (game started, pick was active at tip-off) get priority for tier slots
+  // but still respect the max caps (1 Lock + 3 Strong). The top-scored locked picks fill
+  // slots first; any excess locked picks are demoted to 'value' and hidden.
+  const allDeduped = Array.from(dedupMap.values())
+  const lockedPicks: PickLike[] = []
+  const availablePicks: PickLike[] = []
   
-  // Step 3: Re-tier with fresh counters enforcing caps
+  const nowMs = Date.now()
+  for (const pick of allDeduped) {
+    const isLocked = pick.lockedIn === true
+    const isStarted = pick.commenceTime && new Date(pick.commenceTime as string).getTime() <= nowMs
+    if (isLocked || isStarted) {
+      lockedPicks.push(pick)
+    } else {
+      availablePicks.push(pick)
+    }
+  }
+  
+  // Sort available (non-locked) picks by score descending
+  availablePicks.sort((a, b) => (b.score || 0) - (a.score || 0))
+  
+  // Step 3: Assign tiers to locked picks first (they get priority for slots).
+  // IMPORTANT: Tier caps (1 Lock + 3 Strong = 4 max) still apply to locked picks.
+  // If more games are locked than slots available, the lowest-scored ones are demoted.
   let lockCount = 0
   let strongCount = 0
   
-  for (const pick of sorted) {
+  // Locked picks get tiered first by score (best locked pick = lock if available)
+  lockedPicks.sort((a, b) => (b.score || 0) - (a.score || 0))
+  for (const pick of lockedPicks) {
+    if (lockCount < MAX_LOCKS) {
+      pick.confidenceTier = 'lock'
+      lockCount++
+    } else if (strongCount < MAX_STRONG) {
+      pick.confidenceTier = 'strong'
+      strongCount++
+    } else {
+      // Exceeds tier caps — demote to value (won't be displayed)
+      pick.confidenceTier = 'value'
+    }
+  }
+  
+  // Step 4: Tier remaining available picks with leftover slots
+  for (const pick of availablePicks) {
     const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
     const edge = computeEdge(pick)
     
@@ -103,8 +144,17 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     }
   }
   
-  // Step 4: Return only Lock + Strong picks, sorted: locks first, then strong, by score
-  return sorted.filter(p => p.confidenceTier === 'lock' || p.confidenceTier === 'strong')
+  // Step 5: Return Lock/Strong picks from both locked and available pools
+  const result = [
+    ...lockedPicks.filter(p => p.confidenceTier === 'lock' || p.confidenceTier === 'strong'),
+    ...availablePicks.filter(p => p.confidenceTier === 'lock' || p.confidenceTier === 'strong')
+  ]
+  // Sort: locks first, then strong, by score within each tier
+  return result.sort((a, b) => {
+    if (a.confidenceTier === 'lock' && b.confidenceTier !== 'lock') return -1
+    if (a.confidenceTier !== 'lock' && b.confidenceTier === 'lock') return 1
+    return (b.score || 0) - (a.score || 0)
+  })
 }
 
 /**

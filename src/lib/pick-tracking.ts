@@ -36,6 +36,10 @@ export interface StoredPick {
   edge: number                  // Consensus - implied
   bestBook: string              // Which book had best price
   
+  // Lock-in tracking
+  lockedIn?: boolean            // True once game starts and pick was still active
+  supersededAt?: string         // When this pick was superseded by a newer version
+  
   // Grading (filled in after game)
   status: 'pending' | 'won' | 'lost' | 'push' | 'cancelled'
   gradedAt?: string
@@ -72,6 +76,23 @@ export interface PickTrackingData {
 // Redis cache keys
 const PICKS_CACHE_KEY = 'betanalytics:picks'
 const TRACK_RECORD_KEY = 'betanalytics:track-record'
+
+/**
+ * Get today's "betting day" date string in ET timezone.
+ * A betting day runs until 2 AM ET the next morning, so at 1 AM ET on March 4
+ * we still return the March 3 date string. This keeps the daily cap aligned
+ * with when picks are displayed on the Model Picks page.
+ */
+function getTodayET(): string {
+  const now = new Date()
+  const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  const etNow = new Date(etStr)
+  // Before 2 AM ET = still the previous calendar day for betting purposes
+  if (etNow.getHours() < 2) {
+    etNow.setDate(etNow.getDate() - 1)
+  }
+  return etNow.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+}
 
 /**
  * Get Redis client for caching
@@ -436,12 +457,172 @@ export async function getPendingPicksToGrade(): Promise<StoredPick[]> {
   const picks = await getAllPicks()
   const now = new Date()
   
-  // Return picks where game time + 4 hours has passed (game should be over)
+  // IMPORTANT: Only grade picks that were LOCKED IN at game start.
+  // The lockInAndCleanupPicks() function runs BEFORE grading in the cron
+  // and sets lockedIn=true on picks that were active at tip-off (max 4/day).
+  // Non-locked pending picks should NOT be graded — they either:
+  //   1. Haven't had their game start yet (wait for lock-in)
+  //   2. Exceeded the daily tier cap and were cancelled
+  //   3. Were superseded by higher-ranked picks and cancelled
   return picks.filter(p => {
     if (p.status !== 'pending') return false
+    if (!p.lockedIn) return false // Only grade locked-in picks
     const gameEnd = new Date(new Date(p.gameTime).getTime() + 4 * 60 * 60 * 1000)
     return now > gameEnd
   })
+}
+
+/**
+ * Lock in started games and cancel superseded picks.
+ * 
+ * This is the pick-tracking counterpart to lockInAndCleanupRecommendations.
+ * It ensures the pick-tracking system (used for grading/record) stays clean:
+ * 1. Games that started while pick was still active → lockedIn = true
+ * 2. Games that started after pick was dropped → cancelled
+ * 3. Games not started and pick no longer active → cancelled (superseded)
+ * 4. Dedup: multiple pending picks for same game+team+betType → keep newest
+ * 
+ * @param activeGameKeys Set of "gameId:team:betType" strings currently in Lock/Strong list
+ */
+export async function lockInAndCleanupPicks(
+  activeGameKeys: Set<string>
+): Promise<{ lockedIn: number; cancelled: number; deduped: number }> {
+  const result = { lockedIn: 0, cancelled: 0, deduped: 0 }
+  
+  const redis = await getRedisClient()
+  if (!redis) return result
+  
+  const picks = await getAllPicks()
+  if (picks.length === 0) return result
+  
+  const now = Date.now()
+  let modified = false
+  
+  // Group pending best_bet picks by gameId:team:betType to find duplicates
+  const groups = new Map<string, number[]>() // key → array of indices
+  for (let i = 0; i < picks.length; i++) {
+    const p = picks[i]
+    if (p.status !== 'pending' || p.pickType !== 'best_bet') continue
+    const key = `${p.gameId}:${p.team}:${p.betType}`
+    const group = groups.get(key) || []
+    group.push(i)
+    groups.set(key, group)
+  }
+  
+  // Track picks that want to be locked in — we'll enforce caps after the loop
+  const pendingLockIns: number[] = [] // indices of primary picks that want to lock in
+  
+  for (const [groupKey, indices] of Array.from(groups.entries())) {
+    // Sort by createdAt descending — newest first
+    indices.sort((a, b) => new Date(picks[b].createdAt).getTime() - new Date(picks[a].createdAt).getTime())
+    
+    // Dedup: cancel older entries for the same game+team+betType
+    if (indices.length > 1) {
+      for (let i = 1; i < indices.length; i++) {
+        picks[indices[i]].status = 'cancelled'
+        picks[indices[i]].gradedAt = new Date().toISOString()
+        picks[indices[i]].actualResult = 'Duplicate entry — superseded by newer pick'
+        picks[indices[i]].supersededAt = picks[indices[0]].createdAt
+        result.deduped++
+        modified = true
+      }
+    }
+    
+    // Process the primary (newest) pick
+    const primary = picks[indices[0]]
+    if (primary.lockedIn) continue // Already locked in from a previous run
+    
+    const gameStarted = new Date(primary.gameTime).getTime() <= now
+    const isActive = activeGameKeys.has(groupKey)
+    
+    if (gameStarted) {
+      // Game has started and pick is still pending → candidate for lock-in.
+      // We collect these and enforce the 1 Lock + 3 Strong cap below.
+      pendingLockIns.push(indices[0])
+    } else if (!isActive) {
+      // Game hasn't started and pick is no longer active → cancel
+      primary.status = 'cancelled'
+      primary.gradedAt = new Date().toISOString()
+      primary.actualResult = 'Superseded by higher-ranked pick before game start'
+      primary.supersededAt = new Date().toISOString()
+      result.cancelled++
+      modified = true
+      console.log(`[Picks] Cancelled pick ${primary.id} for ${groupKey} — superseded before game start`)
+    }
+  }
+  
+  // ============================================
+  // DAILY TIER CAP ENFORCEMENT ON LOCK-IN
+  // Only lock in max 1 Lock + 3 Strong = 4 picks per day.
+  // Count already-locked picks from previous runs, then fill remaining slots
+  // with the highest-scored pending lock-in candidates.
+  // ============================================
+  const MAX_DAILY_LOCKS = 1
+  const MAX_DAILY_STRONG = 3
+  
+  // Count picks already locked in from previous cron runs TODAY.
+  // CRITICAL: Must scope to today's betting day (ET timezone, resets at 2 AM).
+  // Without date scoping, this would count ALL locked picks ever stored,
+  // causing totalSlotsUsed to grow forever and block all future lock-ins.
+  const todayET = getTodayET()
+  const alreadyLockedPicks = picks.filter(p => {
+    if (!p.lockedIn || p.pickType !== 'best_bet') return false
+    if (p.status !== 'pending' && p.status !== 'won' && p.status !== 'lost' && p.status !== 'push') return false
+    // Check if pick was created today (same betting day in ET)
+    const pickDate = new Date(p.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    return pickDate === todayET
+  })
+  const totalSlotsUsed = alreadyLockedPicks.length
+  const totalSlotsAvailable = (MAX_DAILY_LOCKS + MAX_DAILY_STRONG) - totalSlotsUsed
+  
+  if (pendingLockIns.length > 0) {
+    // Sort candidates by consensusProbability (highest model confidence first)
+    // This matches the scoring logic used in bet-ranking for tier assignment
+    pendingLockIns.sort((a, b) => (picks[b].consensusProbability || 0) - (picks[a].consensusProbability || 0))
+    
+    const slotsToFill = Math.max(0, totalSlotsAvailable)
+    
+    for (let i = 0; i < pendingLockIns.length; i++) {
+      const idx = pendingLockIns[i]
+      if (i < slotsToFill) {
+        // Lock in — within daily cap
+        picks[idx].lockedIn = true
+        result.lockedIn++
+        modified = true
+        console.log(`[Picks] Locked in pick ${picks[idx].id} (slot ${totalSlotsUsed + i + 1}/${MAX_DAILY_LOCKS + MAX_DAILY_STRONG}) — game started, within daily cap`)
+      } else {
+        // Exceeds daily cap — cancel
+        picks[idx].status = 'cancelled'
+        picks[idx].gradedAt = new Date().toISOString()
+        picks[idx].actualResult = 'Exceeded daily tier cap (max 1 Lock + 3 Strong = 4 picks/day)'
+        result.cancelled++
+        modified = true
+        console.log(`[Picks] Cancelled pick ${picks[idx].id} — exceeded daily tier cap (${totalSlotsUsed + i + 1} > ${MAX_DAILY_LOCKS + MAX_DAILY_STRONG})`)
+      }
+    }
+  }
+  
+  // Write updated picks back to Redis if anything changed
+  if (modified) {
+    try {
+      await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${redis.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(JSON.stringify(picks))
+      })
+      
+      // Recalculate track record after cleanup
+      await calculateAndStoreTrackRecord(picks)
+    } catch (error) {
+      console.error('[Picks] Error writing cleanup results:', error)
+    }
+  }
+  
+  console.log(`[Picks] Cleanup complete: ${result.lockedIn} locked in, ${result.cancelled} cancelled, ${result.deduped} deduped`)
+  return result
 }
 
 // ============================================
