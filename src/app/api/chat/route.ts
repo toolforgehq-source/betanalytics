@@ -1367,7 +1367,7 @@ async function handleGetPlayerProps(input: GetPlayerPropsInput): Promise<string>
   
   // Fallback: Try individual sports if general search returned empty
   console.log(`[tool:get_player_props] analyzeBestProps returned empty -- trying individual sport fetches`)
-  const sportKeys = input.sport ? [input.sport] : ['NBA', 'NFL', 'NHL', 'MLB', 'NCAAB']
+  const sportKeys = input.sport ? [input.sport] : ['NBA', 'NFL', 'NHL', 'MLB', 'NCAAB', 'NCAAF']
   for (const sportKey of sportKeys) {
     const retryProps = await analyzeBestProps({ sport: sportKey, count: propCount })
     if (retryProps.length > 0) {
@@ -1385,6 +1385,9 @@ async function handleGetPlayerProps(input: GetPlayerPropsInput): Promise<string>
         fetchSportPlayerProps('basketball_nba').catch(() => []),
         fetchSportPlayerProps('americanfootball_nfl').catch(() => []),
         fetchSportPlayerProps('icehockey_nhl').catch(() => []),
+        fetchSportPlayerProps('baseball_mlb').catch(() => []),
+        fetchSportPlayerProps('basketball_ncaab').catch(() => []),
+        fetchSportPlayerProps('americanfootball_ncaaf').catch(() => []),
       ])
       rawProps = freshResults.flat().filter(g => g.props.length > 0)
     }

@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     
     console.log("[fetch-props] Starting player props fetch (Odds API - PAID)...")
     
-    const [nbaProps, nflProps, nhlProps, ncaafProps, ncaabProps] = await Promise.all([
+    const [nbaProps, nflProps, nhlProps, ncaafProps, ncaabProps, mlbProps] = await Promise.all([
       fetchSportPlayerProps('basketball_nba').catch((e) => {
         console.error("[fetch-props] NBA props error:", e.message)
         return [] as GamePlayerProps[]
@@ -54,10 +54,14 @@ export async function GET(request: Request) {
       fetchSportPlayerProps('basketball_ncaab').catch((e) => {
         console.error("[fetch-props] NCAAB props error:", e.message)
         return [] as GamePlayerProps[]
+      }),
+      fetchSportPlayerProps('baseball_mlb').catch((e) => {
+        console.error("[fetch-props] MLB props error:", e.message)
+        return [] as GamePlayerProps[]
       })
     ])
     
-    const allProps = [...nbaProps, ...nflProps, ...nhlProps, ...ncaafProps, ...ncaabProps]
+    const allProps = [...nbaProps, ...nflProps, ...nhlProps, ...ncaafProps, ...ncaabProps, ...mlbProps]
     
     await setCachedPlayerProps(allProps)
     console.log(`[fetch-props] Cached ${allProps.length} games with player props`)
@@ -101,7 +105,8 @@ export async function GET(request: Request) {
         nfl: nflProps.length,
         nhl: nhlProps.length,
         ncaaf: ncaafProps.length,
-        ncaab: ncaabProps.length
+        ncaab: ncaabProps.length,
+        mlb: mlbProps.length
       },
       bestProp: bestPropResult.bestProp ? {
         player: bestPropResult.bestProp.playerName,

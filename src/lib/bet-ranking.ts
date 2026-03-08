@@ -5270,10 +5270,11 @@ export function computeBestProp(propsData: GamePlayerProps[]): BestPropResult {
       propsAnalyzed++
     }
     
-    // Analyze each group with 2+ books (consensus)
+    // Analyze each group — include single-book props so sports with fewer
+    // bookmakers (NHL, NCAAB, NCAAF, MLB) aren't excluded entirely.
+    // The scoring formula already weights multi-book consensus higher.
     const propGroupEntries = Array.from(propGroups.entries())
     for (const [key, props] of propGroupEntries) {
-      if (props.length < 2) continue // Need at least 2 books for consensus
       
       const [playerName, market, lineStr] = key.split('|')
       const line = parseFloat(lineStr)
@@ -5380,20 +5381,31 @@ export function computeBestProp(propsData: GamePlayerProps[]): BestPropResult {
 const MIN_GAMES_FOR_MODEL = 8
 
 // Map Odds API market names to our stat names
+// Must stay in sync with MARKET_TO_STAT_TYPE in player-prop-analysis.ts
+// and SPORT_STATS in player-stats.ts
 const MARKET_TO_STAT: Record<string, string> = {
-  // NBA stats
+  // NBA / NCAAB stats
   'player_points': 'points',
   'player_rebounds': 'rebounds',
   'player_assists': 'assists',
   'player_threes': 'threePointersMade',
-  // NFL stats
+  'player_steals': 'steals',
+  'player_blocks': 'blocks',
+  // NFL / NCAAF stats
   'player_pass_yds': 'passingYards',
   'player_rush_yds': 'rushingYards',
   'player_reception_yds': 'receivingYards',
-  // NHL stats (hockey uses same market names but different context)
+  'player_receptions': 'receptions',
+  'player_pass_tds': 'passingTouchdowns',
+  // NHL stats
   'player_goals': 'goals',
-  'player_shots_on_goal': 'shotsOnGoal',
+  'player_shots_on_goal': 'shots',
   'player_power_play_points': 'powerPlayPoints',
+  // MLB stats
+  'player_hits': 'hits',
+  'player_home_runs': 'homeRuns',
+  'player_rbis': 'rbis',
+  'player_strikeouts': 'strikeouts',
 }
 
 // Map sport names from Odds API to our sport names
