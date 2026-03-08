@@ -1370,16 +1370,24 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
       if (r.direction === 'over') {
         recommendation.pick = 'Over'
         recommendation.modelProbability = overProb
-        recommendation.marketImpliedProbability = overProb
+        recommendation.marketImpliedProbability = americanToImpliedProbability(mktData.bestOverPrice)
       } else {
         recommendation.pick = 'Under'
         recommendation.modelProbability = underProb
-        recommendation.marketImpliedProbability = underProb
+        recommendation.marketImpliedProbability = americanToImpliedProbability(mktData.bestUnderPrice)
       }
+      recommendation.edge = Math.max(0, recommendation.modelProbability - recommendation.marketImpliedProbability)
       recommendation.confidence = 'low'
       if (!recommendation.reasons.length) {
-        recommendation.reasons.push(`Market consensus: ${(recommendation.modelProbability * 100).toFixed(1)}% probability`)
+        recommendation.reasons.push(`Market consensus: ${(recommendation.modelProbability * 100).toFixed(1)}% probability (${mktData.booksCount} books)`)
       }
+    }
+
+    // For market-data-only props (no model, no season stats), preserve the scoring loop's
+    // edge if buildRecommendation couldn't calculate a better one. The scoring loop edge
+    // is the vig-removal edge: finalProb - bestPriceImplied.
+    if (!modelProbResult && !seasonStats && recommendation.edge <= 0 && r.edge > 0) {
+      recommendation.edge = r.edge
     }
 
     const analysis: PropAnalysisResult = {
@@ -1401,6 +1409,12 @@ export async function analyzeBestProps(request: BestPropsRequest = {}): Promise<
 
     const hasDirectionalWarning = analysis.recommendation.warnings.some(w => w.includes('average') && (w.includes('above the line') || w.includes('below the line')))
     if (analysis.recommendation.edge > 0 && !hasDirectionalWarning) {
+      analyses.push(analysis)
+    } else if (request.sport && analysis.recommendation.pick) {
+      // Sport-specific query: user explicitly wants this sport's props.
+      // Include even with small/zero edge — these are the best available for the requested sport.
+      // Market-data-only props (NHL, NCAAB) may have small vig-removal edges but are still
+      // valid recommendations when the user specifically asks for that sport.
       analyses.push(analysis)
     } else if (analysis.recommendation.pick) {
       fallbackAnalyses.push(analysis)
@@ -1948,30 +1962,41 @@ function buildRecommendation(
   }
 
   if (!modelResult && !seasonStats && marketData && query.line !== null) {
+    // Market-data-only props (NHL, NCAAB without ESPN stats).
+    // The vig-removed probability IS higher than the best-price implied probability,
+    // creating a real edge from vig removal. Calculate and use it.
+    const overNoVig = marketData.consensusOverProb / 100
+    const underNoVig = marketData.consensusUnderProb / 100
+    const bestOverImplied = americanToImpliedProbability(marketData.bestOverPrice)
+    const bestUnderImplied = americanToImpliedProbability(marketData.bestUnderPrice)
+
     if (query.direction === 'over') {
       pick = 'Over'
-      modelProbability = marketData.consensusOverProb / 100
-      marketImpliedProbability = modelProbability
+      modelProbability = overNoVig
+      marketImpliedProbability = bestOverImplied
     } else if (query.direction === 'under') {
       pick = 'Under'
-      modelProbability = marketData.consensusUnderProb / 100
-      marketImpliedProbability = modelProbability
+      modelProbability = underNoVig
+      marketImpliedProbability = bestUnderImplied
     } else {
-      const overProb = marketData.consensusOverProb / 100
-      const underProb = marketData.consensusUnderProb / 100
-      if (overProb >= underProb) {
+      if (overNoVig >= underNoVig) {
         pick = 'Over'
-        modelProbability = overProb
+        modelProbability = overNoVig
+        marketImpliedProbability = bestOverImplied
       } else {
         pick = 'Under'
-        modelProbability = underProb
+        modelProbability = underNoVig
+        marketImpliedProbability = bestUnderImplied
       }
-      marketImpliedProbability = modelProbability
     }
+    edge = Math.max(0, modelProbability - marketImpliedProbability)
     confidence = 'low'
-    reasons.push(`Market consensus: ${(modelProbability * 100).toFixed(1)}% probability`)
-    warnings.push('Using market data only — player stats model not available')
+    reasons.push(`Market consensus: ${(modelProbability * 100).toFixed(1)}% probability (${marketData.booksCount} books)`)
+    if (edge > 0.005) {
+      reasons.push(`${(edge * 100).toFixed(1)}% edge from vig removal across ${marketData.booksCount} sportsbooks`)
+    }
   } else if (!modelResult && !seasonStats) {
+    // No data at all — genuinely unknown
     warnings.push('No player stats data available — recommendation based on market data only')
   }
 
