@@ -176,9 +176,15 @@ export function enforceDailyCaps(recommendations: TrackedRecommendation[]): Trac
   const MAX_DAILY_LOCKS = 1
   const MAX_DAILY_STRONG = 3
 
+  // CRITICAL: Filter out void picks FIRST. Voided picks were superseded before
+  // game start — they never played and must NOT consume daily cap slots.
+  // Previously, a voided pick with a high score could steal the lock slot from
+  // a real settled pick, destroying the record.
+  const nonVoid = recommendations.filter(r => r.status !== 'void')
+
   // Group by betting day
   const byDay = new Map<string, TrackedRecommendation[]>()
-  for (const r of recommendations) {
+  for (const r of nonVoid) {
     const day = getBettingDayET(new Date(r.createdAt))
     if (!byDay.has(day)) byDay.set(day, [])
     byDay.get(day)!.push(r)
@@ -186,8 +192,9 @@ export function enforceDailyCaps(recommendations: TrackedRecommendation[]): Trac
 
   const result: TrackedRecommendation[] = []
   for (const dayPicks of Array.from(byDay.values())) {
-    // Prioritize locked-in picks (what users actually saw at game time), then by score.
-    // This ensures the record matches what was live on the page when games started.
+    // Priority order for cap selection:
+    // 1. Locked-in picks first (what users actually saw at game time)
+    // 2. Then by score (higher score = model was more confident)
     dayPicks.sort((a, b) => {
       const aLocked = a.lockedIn ? 1 : 0
       const bLocked = b.lockedIn ? 1 : 0
