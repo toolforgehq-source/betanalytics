@@ -19,7 +19,7 @@
 
 import { NextResponse } from 'next/server'
 import { getTrackRecord, getAllPicks, type StoredPick } from '@/lib/pick-tracking'
-import { getRecentRecommendations, calculateTrackingStats } from '@/lib/recommendation-tracking'
+import { getRecentRecommendations, calculateTrackingStats, enforceDailyCaps } from '@/lib/recommendation-tracking'
 import { getCachedBestBet, type RankedBet } from '@/lib/bet-ranking'
 import { dedupeAndEnforceCaps, type PickLike } from '@/lib/enforce-picks'
 
@@ -75,8 +75,23 @@ export async function GET() {
       .filter(r => r.status !== 'pending')
       .slice(0, 100)
     
-    // Get ALL recent recommendations (including pending) for the full history view
-    const allRecentRecos = recentRecos.slice(0, 100)
+    // Get ALL recent recommendations (including pending) for the full history view.
+    // CRITICAL: Apply daily caps (1 Lock + 3 Strong per betting day) server-side
+    // so the Performance page receives already-capped data. The client also caps
+    // as a safety net, but the server should be the source of truth.
+    const bestBetRecos = recentRecos.filter(r =>
+      r.source === 'best_bet' &&
+      (r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
+    )
+    const cappedRecos = enforceDailyCaps(bestBetRecos)
+    // Include non-best_bet recos and non-lock/strong recos unchanged (they're filtered out on client)
+    const nonTrackedRecos = recentRecos.filter(r =>
+      r.source !== 'best_bet' ||
+      (r.confidenceTier !== 'lock' && r.confidenceTier !== 'strong')
+    )
+    const allRecentRecos = [...cappedRecos, ...nonTrackedRecos]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 100)
 
     // ============================================
     // LIVE PICKS from cached best bet result

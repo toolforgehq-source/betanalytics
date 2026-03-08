@@ -41,6 +41,9 @@ interface RecentPick {
   probability?: number
   score?: number
   sportName?: string
+  source?: string
+  lockedIn?: boolean
+  bettingDay?: string  // Computed betting day (ET, 2 AM reset) for display
 }
 
 function StatCard({ label, value, subtext, color }: { label: string; value: string; subtext?: string; color: string }) {
@@ -101,22 +104,49 @@ export default function PerformancePageClient() {
           return { wins, losses, pushes, total, winRate: total > 0 ? (wins / total) * 100 : 0 }
         }
 
-        // Only count Lock and Strong Play picks (value spots are not publicly tracked)
-        const allTrackedPicks = settled.filter((r: RecentPick) => r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
+        // Only count best_bet picks with Lock/Strong tier in the official record.
+        // Props, parlays, sport_bets, and value-tier picks do NOT count.
+        // This matches the server-side calculateTrackingStats() logic exactly.
+        const allTrackedPicks = settled.filter((r: RecentPick) =>
+          (r.confidenceTier === 'lock' || r.confidenceTier === 'strong') &&
+          (!r.source || r.source === 'best_bet')  // source may be missing on older records
+        )
 
-        // CRITICAL: Enforce daily caps (max 1 Lock + 3 Strong per day) on historical data.
-        // Before the fix, more than 4 picks per day leaked into the record.
-        // Group by betting day (ET timezone, 2 AM reset) and keep only the best picks per day.
+        // Compute betting day (ET timezone, 2 AM reset) for each pick.
+        // This is the SAME day definition used for capping — ensures the display date
+        // matches the cap grouping so users see max 4 picks per displayed date.
+        const getBettingDay = (createdAt: string): string => {
+          const d = new Date(createdAt)
+          // Convert to ET by formatting with timezone, then parse back
+          const parts = d.toLocaleString('en-US', {
+            timeZone: 'America/New_York',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', hour12: false
+          }).split(', ')
+          // parts[0] = "MM/DD/YYYY", parts[1] = "HH" (24h)
+          const hour = parseInt(parts[1], 10)
+          const [mm, dd, yyyy] = parts[0].split('/')
+          let dayNum = parseInt(dd, 10)
+          // Before 2 AM ET = still the previous calendar day for betting purposes
+          if (hour < 2) dayNum -= 1
+          // Reconstruct a date for display
+          const displayDate = new Date(parseInt(yyyy), parseInt(mm) - 1, dayNum)
+          return displayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+        }
+
+        // Tag each pick with its betting day for display
+        for (const p of allTrackedPicks) {
+          p.bettingDay = getBettingDay(p.createdAt)
+        }
+
+        // CRITICAL: Enforce daily caps (max 1 Lock + 3 Strong per betting day).
+        // Group by betting day and keep only the best picks per day.
         const enforceDailyCaps = (picks: RecentPick[]): RecentPick[] => {
           const MAX_DAILY_LOCKS = 1
           const MAX_DAILY_STRONG = 3
           const byDay = new Map<string, RecentPick[]>()
           for (const p of picks) {
-            // Get betting day in ET with 2 AM reset
-            const etStr = new Date(p.createdAt).toLocaleString('en-US', { timeZone: 'America/New_York' })
-            const etDate = new Date(etStr)
-            if (etDate.getHours() < 2) etDate.setDate(etDate.getDate() - 1)
-            const day = etDate.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+            const day = p.bettingDay || getBettingDay(p.createdAt)
             if (!byDay.has(day)) byDay.set(day, [])
             byDay.get(day)!.push(p)
           }
@@ -124,8 +154,8 @@ export default function PerformancePageClient() {
           for (const dayPicks of Array.from(byDay.values())) {
             // Prioritize locked-in picks (what users actually saw), then by score
             dayPicks.sort((a, b) => {
-              const aLocked = (a as unknown as {lockedIn?: boolean}).lockedIn ? 1 : 0
-              const bLocked = (b as unknown as {lockedIn?: boolean}).lockedIn ? 1 : 0
+              const aLocked = a.lockedIn ? 1 : 0
+              const bLocked = b.lockedIn ? 1 : 0
               if (bLocked !== aLocked) return bLocked - aLocked
               return (b.score || 0) - (a.score || 0)
             })
@@ -323,7 +353,7 @@ export default function PerformancePageClient() {
                               </div>
                             </td>
                             <td className="py-2.5 text-slate-500">
-                              {new Date(pick.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                              {pick.bettingDay || new Date(pick.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' })}
                             </td>
                           </tr>
                         )
