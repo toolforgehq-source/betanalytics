@@ -135,6 +135,23 @@ async function getRedisClient() {
   return { url, token }
 }
 
+/**
+ * Get today's "betting day" date string in ET timezone.
+ * A betting day runs until 2 AM ET the next morning, so at 1 AM ET on March 4
+ * we still return the March 3 date string. This keeps the daily cap aligned
+ * with when picks are displayed on the Model Picks page.
+ */
+function getTodayET(): string {
+  const now = new Date()
+  const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  const etNow = new Date(etStr)
+  // Before 2 AM ET = still the previous calendar day for betting purposes
+  if (etNow.getHours() < 2) {
+    etNow.setDate(etNow.getDate() - 1)
+  }
+  return etNow.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+}
+
 // ============================================
 // RECOMMENDATION ID GENERATION
 // ============================================
@@ -615,12 +632,19 @@ export async function lockInAndCleanupRecommendations(
   const MAX_DAILY_STRONG = 3
   const MAX_DAILY_TOTAL = MAX_DAILY_LOCKS + MAX_DAILY_STRONG
   
-  // Count recommendations already locked in from previous cron runs
+  // Count recommendations already locked in from previous cron runs TODAY.
+  // CRITICAL: Must scope to today's betting day (ET timezone, resets at 2 AM).
+  // Without date scoping, this would count ALL locked recommendations ever stored,
+  // causing totalSlotsUsed to grow forever and block all future lock-ins.
+  const todayET = getTodayET()
   const allRecos = await getRecentRecommendations(500)
-  const alreadyLockedBestBets = allRecos.filter(r =>
-    r.lockedIn && r.source === 'best_bet' &&
-    (r.status === 'pending' || r.status === 'won' || r.status === 'lost' || r.status === 'push')
-  )
+  const alreadyLockedBestBets = allRecos.filter(r => {
+    if (!r.lockedIn || r.source !== 'best_bet') return false
+    if (r.status !== 'pending' && r.status !== 'won' && r.status !== 'lost' && r.status !== 'push') return false
+    // Check if recommendation was created today (same betting day in ET)
+    const recoDate = new Date(r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    return recoDate === todayET
+  })
   const totalSlotsUsed = alreadyLockedBestBets.length
   const totalSlotsAvailable = MAX_DAILY_TOTAL - totalSlotsUsed
   

@@ -78,6 +78,23 @@ const PICKS_CACHE_KEY = 'betanalytics:picks'
 const TRACK_RECORD_KEY = 'betanalytics:track-record'
 
 /**
+ * Get today's "betting day" date string in ET timezone.
+ * A betting day runs until 2 AM ET the next morning, so at 1 AM ET on March 4
+ * we still return the March 3 date string. This keeps the daily cap aligned
+ * with when picks are displayed on the Model Picks page.
+ */
+function getTodayET(): string {
+  const now = new Date()
+  const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York' })
+  const etNow = new Date(etStr)
+  // Before 2 AM ET = still the previous calendar day for betting purposes
+  if (etNow.getHours() < 2) {
+    etNow.setDate(etNow.getDate() - 1)
+  }
+  return etNow.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+}
+
+/**
  * Get Redis client for caching
  */
 async function getRedisClient() {
@@ -543,15 +560,25 @@ export async function lockInAndCleanupPicks(
   const MAX_DAILY_LOCKS = 1
   const MAX_DAILY_STRONG = 3
   
-  // Count picks already locked in from previous cron runs today.
-  // Each locked-in pick takes one slot out of the daily 4-pick cap.
-  const alreadyLockedPicks = picks.filter(p => p.lockedIn && p.pickType === 'best_bet' && (p.status === 'pending' || p.status === 'won' || p.status === 'lost' || p.status === 'push'))
+  // Count picks already locked in from previous cron runs TODAY.
+  // CRITICAL: Must scope to today's betting day (ET timezone, resets at 2 AM).
+  // Without date scoping, this would count ALL locked picks ever stored,
+  // causing totalSlotsUsed to grow forever and block all future lock-ins.
+  const todayET = getTodayET()
+  const alreadyLockedPicks = picks.filter(p => {
+    if (!p.lockedIn || p.pickType !== 'best_bet') return false
+    if (p.status !== 'pending' && p.status !== 'won' && p.status !== 'lost' && p.status !== 'push') return false
+    // Check if pick was created today (same betting day in ET)
+    const pickDate = new Date(p.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+    return pickDate === todayET
+  })
   const totalSlotsUsed = alreadyLockedPicks.length
   const totalSlotsAvailable = (MAX_DAILY_LOCKS + MAX_DAILY_STRONG) - totalSlotsUsed
   
   if (pendingLockIns.length > 0) {
-    // Sort candidates by score (use edge as proxy since StoredPick has edge)
-    pendingLockIns.sort((a, b) => (picks[b].edge || 0) - (picks[a].edge || 0))
+    // Sort candidates by consensusProbability (highest model confidence first)
+    // This matches the scoring logic used in bet-ranking for tier assignment
+    pendingLockIns.sort((a, b) => (picks[b].consensusProbability || 0) - (picks[a].consensusProbability || 0))
     
     const slotsToFill = Math.max(0, totalSlotsAvailable)
     
