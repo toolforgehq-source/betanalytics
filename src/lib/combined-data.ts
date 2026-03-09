@@ -180,6 +180,7 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds, espnGameData?: ESPNGameData):
     homeTeam: espnOdds.homeTeam,
     awayTeam: espnOdds.awayTeam,
     commenceTime: espnOdds.commenceTime,
+    isNeutralSite: espnGameData?.neutralSite === true,
     spreads,
     totals,
     moneylines
@@ -378,6 +379,7 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
     if (espnGame) {
       return {
         ...oddsGame,
+        isNeutralSite: espnGame.neutralSite === true,
         espnData: {
           homeRecord: espnGame.homeTeam.record,
           awayRecord: espnGame.awayTeam.record,

@@ -127,6 +127,7 @@ export interface Game {
   homeTeam: string
   awayTeam: string
   commenceTime: string
+  isNeutralSite?: boolean
   spreads: BookmakerOdds[]
   totals: BookmakerOdds[]
   moneylines: BookmakerOdds[]

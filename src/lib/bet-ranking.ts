@@ -1104,7 +1104,8 @@ export async function analyzeGame(
   
   // Get Elo prediction for this game (if available)
   const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
-  console.log(`[analyzeGame] Game: ${game.awayTeam} @ ${game.homeTeam}, sport="${game.sport}", eloLeague="${eloLeague || 'NONE'}"`)
+  const isNeutralSite = game.isNeutralSite === true
+  console.log(`[analyzeGame] Game: ${game.awayTeam} @ ${game.homeTeam}, sport="${game.sport}", eloLeague="${eloLeague || 'NONE'}"${isNeutralSite ? ', NEUTRAL SITE' : ''}`)
   
   let eloResult: { 
     probability: number
@@ -1133,7 +1134,10 @@ export async function analyzeGame(
           game.awayTeam,
           injuries,
           homeTopScorers,
-          awayTopScorers
+          awayTopScorers,
+          undefined,  // homePitcher
+          undefined,  // awayPitcher
+          isNeutralSite
         )
         
         if (injuryResult) {
@@ -1161,7 +1165,7 @@ export async function analyzeGame(
         }
       } else {
         // No injuries, use standard Elo
-        eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam)
+        eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam, isNeutralSite)
       }
     } catch (error) {
       console.error('[analyzeGame] Error fetching Elo:', error)
@@ -1469,7 +1473,8 @@ export async function analyzeGame(
         spreadFromHomePerspective,
         eloLeague,
         isHomeTeam,
-        teamSpecificSigma  // FIX 2: Pass team-specific sigma for variance adjustment
+        teamSpecificSigma,  // FIX 2: Pass team-specific sigma for variance adjustment
+        isNeutralSite
       )
       
       // ============================================
@@ -1797,7 +1802,7 @@ export async function analyzeGame(
         )
         
         // Calculate Elo-based over probability and apply situational adjustment
-        const overResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, true)
+        const overResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, true, isNeutralSite)
         const baseEloOverProb = overResult.probability
         
         // FIX 1: Blend totals probability with market consensus (like moneylines do)
@@ -1924,7 +1929,7 @@ export async function analyzeGame(
         )
         
         // Calculate Elo-based under probability and apply situational adjustment
-        const underResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, false)
+        const underResult = calculateTotalProbability(homeElo, awayElo, line, eloLeague, false, isNeutralSite)
         const baseEloUnderProb = underResult.probability
         
         // FIX 1: Blend totals probability with market consensus (like moneylines do)
@@ -2082,7 +2087,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
   
   // Get Elo prediction for this game (if available)
   const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
-  console.log(`[analyzeGameForSportQuery] Game: ${game.awayTeam} @ ${game.homeTeam}, sport=${game.sport}, sportName=${game.sportName}, eloLeague=${eloLeague || 'NONE'}`)
+  const isNeutralSite = game.isNeutralSite === true
+  console.log(`[analyzeGameForSportQuery] Game: ${game.awayTeam} @ ${game.homeTeam}, sport=${game.sport}, sportName=${game.sportName}, eloLeague=${eloLeague || 'NONE'}${isNeutralSite ? ', NEUTRAL SITE' : ''}`)
   
   let eloResult: { 
     probability: number
@@ -2107,7 +2113,10 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           game.awayTeam,
           injuries,
           homeTopScorers,
-          awayTopScorers
+          awayTopScorers,
+          undefined,  // homePitcher
+          undefined,  // awayPitcher
+          isNeutralSite
         )
         
         if (injuryResult) {
@@ -2121,7 +2130,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           }
         }
       } else {
-        eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam)
+        eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam, isNeutralSite)
       }
     } catch (error) {
       console.error('[analyzeGameForSportQuery] Error fetching Elo:', error)
@@ -2348,7 +2357,9 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           awayElo,
           spreadFromHomePerspective,
           eloLeague,
-          isHomeTeam
+          isHomeTeam,
+          undefined,  // teamSpecificSigma
+          isNeutralSite
         )
         
         // FILTER 2: Check margin edge — only when we have Elo
@@ -2465,7 +2476,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           
           if (eloResult && homeEloForTotals !== undefined && awayEloForTotals !== undefined) {
             // Full Elo analysis
-            const overResult = calculateTotalProbability(homeEloForTotals, awayEloForTotals, line, eloLeague, true)
+            const overResult = calculateTotalProbability(homeEloForTotals, awayEloForTotals, line, eloLeague, true, isNeutralSite)
             const baseEloOverProb = overResult.probability
             overProb = eloResult.confidence 
               ? blendWithMarket(baseEloOverProb, marketOverProb, eloResult.confidence)
@@ -2534,7 +2545,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           
           if (eloResult && homeEloForTotals !== undefined && awayEloForTotals !== undefined) {
             // Full Elo analysis
-            const underResult = calculateTotalProbability(homeEloForTotals, awayEloForTotals, line, eloLeague, false)
+            const underResult = calculateTotalProbability(homeEloForTotals, awayEloForTotals, line, eloLeague, false, isNeutralSite)
             const baseEloUnderProb = underResult.probability
             underProb = eloResult.confidence 
               ? blendWithMarket(baseEloUnderProb, marketUnderProb, eloResult.confidence)
@@ -3572,10 +3583,11 @@ export async function analyzeSpecificGame(
   
   // Always fetch Elo data independently so we can include it even if bet analysis fails
   const eloLeague = SPORT_TO_ELO_LEAGUE[game.sport]
+  const isNeutralSite = game.isNeutralSite === true
   let eloData: GameAnalysisResult['eloData'] = undefined
   if (eloLeague) {
     try {
-      const eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam)
+      const eloResult = await getEloWinProbabilityByName(eloLeague, game.homeTeam, game.awayTeam, isNeutralSite)
       if (eloResult) {
         eloData = {
           homeRating: eloResult.homeRating,
