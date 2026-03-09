@@ -290,15 +290,22 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
           console.log(`[Tracking] Recommendation ${id} is locked in (game started), preserving`)
           return id
         }
-        // Game hasn't started — update with latest odds/line/selection (upsert)
-        await updateRecommendation(id, {
+        // Game hasn't started — update with latest odds/line/selection (upsert).
+        // If the recommendation was previously voided (e.g., temporarily dropped
+        // from the active list due to score fluctuations), reset it back to pending.
+        const updates: Partial<TrackedRecommendation> = {
           selection: reco.selection,
           line: reco.line,
           odds: reco.odds,
           probability: reco.probability,
           score: reco.score,
           confidenceTier: reco.confidenceTier
-        })
+        }
+        if (existing.status === 'void') {
+          updates.status = 'pending'
+          console.log(`[Tracking] Resurrecting voided recommendation ${id} back to pending`)
+        }
+        await updateRecommendation(id, updates)
         console.log(`[Tracking] Updated recommendation ${id} with latest odds: ${reco.selection}`)
         return id
       }
@@ -462,6 +469,25 @@ export async function updateRecommendation(id: string, updates: Partial<TrackedR
       if (!sremResponse.ok) {
         const errorText = await sremResponse.text()
         console.error(`[Tracking] Redis SREM failed for ${id}: HTTP ${sremResponse.status} - ${errorText}`)
+      }
+    }
+    
+    // If status is being set back to pending (e.g., resurrecting a voided recommendation),
+    // re-add to the pending set since voiding removed it.
+    if (updates.status === 'pending') {
+      const saddResponse = await fetch(redis.url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${redis.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(['SADD', TRACKING_PENDING_KEY, id]),
+        cache: 'no-store'
+      })
+      
+      if (!saddResponse.ok) {
+        const errorText = await saddResponse.text()
+        console.error(`[Tracking] Redis SADD failed for ${id}: HTTP ${saddResponse.status} - ${errorText}`)
       }
     }
     
@@ -680,15 +706,24 @@ export async function lockInAndCleanupRecommendations(
       // We collect these and enforce the 1 Lock + 3 Strong cap below.
       pendingLockIns.push(primary)
     } else if (!isActive) {
-      // Game hasn't started and pick is no longer in active list → void it
-      await updateRecommendation(primary.id, {
-        status: 'void',
-        settledAt: new Date().toISOString(),
-        actualResult: 'Superseded by higher-ranked pick before game start',
-        supersededAt: new Date().toISOString()
-      })
-      result.voided++
-      console.log(`[Tracking] Voided recommendation ${primary.id} — superseded before game start`)
+      // Game hasn't started and pick is no longer in active list.
+      // Only void non-best_bet picks or picks without a Lock/Strong tier.
+      // Best_bet Lock/Strong picks should NOT be voided just because they
+      // temporarily dropped from the top 4 due to score fluctuations.
+      // The display layer (dedupeAndEnforceCaps) handles showing only the top 4,
+      // and the lock-in mechanism at game start enforces daily caps.
+      const isBestBetTier = primary.source === 'best_bet' &&
+        (primary.confidenceTier === 'lock' || primary.confidenceTier === 'strong')
+      if (!isBestBetTier) {
+        await updateRecommendation(primary.id, {
+          status: 'void',
+          settledAt: new Date().toISOString(),
+          actualResult: 'Superseded by higher-ranked pick before game start',
+          supersededAt: new Date().toISOString()
+        })
+        result.voided++
+        console.log(`[Tracking] Voided recommendation ${primary.id} — superseded before game start`)
+      }
     }
     // If game hasn't started and pick IS active → do nothing, it's still live
   }

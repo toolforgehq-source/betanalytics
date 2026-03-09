@@ -272,23 +272,20 @@ export async function GET(request: Request) {
     
     // ============================================
     // MERGE with existing cached picks to preserve picks from games that already started.
-    // ESPN drops games from its feed once they start, so late-night cron runs would
-    // otherwise overwrite the cache with only the few remaining games, losing all the
-    // picks generated earlier in the day (e.g., Alabama A&M, LSU, etc.).
-    // Strategy: keep existing cached picks for games NOT in the new computation,
-    // and use new picks for games that are still in the feed (updated odds).
+    // ESPN drops games from its feed once they start or may include in-progress games
+    // without odds data. Without merging, picks would disappear when games start.
+    // Strategy: keep old picks unless a new pick exists for the same game+team+betType.
     // ============================================
     const existingCache = await getCachedBestBet()
     if (existingCache) {
-      const newGameIds = new Set(todaysGames.map(g => g.id))
-      
-      // Helper to merge a pick list: keep old picks for games no longer in feed, use new picks for current games
+      // Helper to merge a pick list: keep old picks unless a new pick replaces them.
+      // Previously this checked newGameIds (games in ESPN feed), but ESPN can include
+      // in-progress games without odds data. That caused old picks to be dropped even
+      // though no new pick was produced, making picks disappear when games start.
+      // Fix: Only drop old picks if a new pick exists for the exact same game+team+betType.
       const mergePicks = (newPicks: RankedBet[], oldPicks: RankedBet[]): RankedBet[] => {
-        // Keep old picks whose games are no longer in the ESPN feed
-        const preservedOld = oldPicks.filter(p => !newGameIds.has(p.gameId))
-        // Deduplicate: new picks take priority for games still in feed
         const newKeys = new Set(newPicks.map(p => `${p.gameId}:${p.team}:${p.betType}`))
-        const uniqueOld = preservedOld.filter(p => !newKeys.has(`${p.gameId}:${p.team}:${p.betType}`))
+        const uniqueOld = oldPicks.filter(p => !newKeys.has(`${p.gameId}:${p.team}:${p.betType}`))
         return [...newPicks, ...uniqueOld]
       }
       
