@@ -657,6 +657,7 @@ async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] 
         homeTeam: g.homeTeam,
         awayTeam: g.awayTeam,
         commenceTime: g.commenceTime,
+        isNeutralSite: matchingEspnGame?.neutralSite === true,
         spreads: g.spread !== null ? [{
           bookmaker: provider,
           market: 'spreads',
@@ -692,6 +693,9 @@ async function convertESPNOddsToEnrichedGames(espnOddsData: { games: ESPNOdds[] 
           homeRecord: matchingEspnGame.homeTeam.record,
           awayRecord: matchingEspnGame.awayTeam.record
         }
+      }
+      if (baseGame.isNeutralSite) {
+        console.log(`[chat] Neutral site game: ${g.awayTeam} @ ${g.homeTeam} — HCA will be zeroed out`)
       }
       
       return baseGame
