@@ -533,9 +533,11 @@ export function calculateExpectedScore(ratingA: number, ratingB: number, scale: 
 export function calculateWinProbability(
   homeRating: number,
   awayRating: number,
-  league: string
+  league: string,
+  isNeutralSite: boolean = false
 ): number {
-  const homeAdvantage = HOME_ADVANTAGE[league] || 70
+  // Zero out home advantage for neutral site games (e.g., March Madness, conference tournaments, bowl games)
+  const homeAdvantage = isNeutralSite ? 0 : (HOME_ADVANTAGE[league] || 70)
   const adjustedHomeRating = homeRating + homeAdvantage
   const scale = ELO_SCALE[league] || 480
   return calculateExpectedScore(adjustedHomeRating, awayRating, scale)
@@ -1276,7 +1278,8 @@ export async function getTeamLast10ByName(
 export async function getEloWinProbability(
   league: string,
   homeTeamId: string,
-  awayTeamId: string
+  awayTeamId: string,
+  isNeutralSite: boolean = false
 ): Promise<{ probability: number; homeRating: number; awayRating: number } | null> {
   const eloData = await getEloRatings()
   if (!eloData) return null
@@ -1287,7 +1290,7 @@ export async function getEloWinProbability(
   const homeRating = eloData.ratings[homeKey]?.rating || DEFAULT_RATING
   const awayRating = eloData.ratings[awayKey]?.rating || DEFAULT_RATING
   
-  const probability = calculateWinProbability(homeRating, awayRating, league)
+  const probability = calculateWinProbability(homeRating, awayRating, league, isNeutralSite)
   
   return {
     probability,
@@ -1307,7 +1310,8 @@ export async function getEloWinProbability(
 export async function getEloWinProbabilityByName(
   league: string,
   homeTeamName: string,
-  awayTeamName: string
+  awayTeamName: string,
+  isNeutralSite: boolean = false
 ): Promise<{ probability: number; homeRating: number; awayRating: number; confidence: string; homeFound: boolean; awayFound: boolean; homeGamesPlayed?: number; awayGamesPlayed?: number } | null> {
   console.log(`[Elo Lookup] Starting lookup for ${league}: ${homeTeamName} vs ${awayTeamName}`)
   
@@ -1384,7 +1388,10 @@ export async function getEloWinProbabilityByName(
     return null
   }
   
-  const probability = calculateWinProbability(homeRating, awayRating, league)
+  const probability = calculateWinProbability(homeRating, awayRating, league, isNeutralSite)
+  if (isNeutralSite) {
+    console.log(`[Elo Lookup] NEUTRAL SITE: Home advantage zeroed out for ${homeTeamName} vs ${awayTeamName}`)
+  }
   
   let confidence: string
   if (minGames >= 20) {
@@ -1421,7 +1428,8 @@ export async function getEloWinProbabilityWithInjuries(
   homeTopScorers?: PlayerImportance[],
   awayTopScorers?: PlayerImportance[],
   homePitcher?: PitcherInfo | null,
-  awayPitcher?: PitcherInfo | null
+  awayPitcher?: PitcherInfo | null,
+  isNeutralSite: boolean = false
 ): Promise<{ 
   probability: number
   homeRating: number
@@ -1433,7 +1441,7 @@ export async function getEloWinProbabilityWithInjuries(
   awayAdjustments: string[]
 } | null> {
   // First get base Elo ratings
-  const baseResult = await getEloWinProbabilityByName(league, homeTeamName, awayTeamName)
+  const baseResult = await getEloWinProbabilityByName(league, homeTeamName, awayTeamName, isNeutralSite)
   if (!baseResult) return null
   
   // Calculate effective ratings with injury adjustments
@@ -1459,7 +1467,8 @@ export async function getEloWinProbabilityWithInjuries(
   const probability = calculateWinProbability(
     homeEffective.effectiveRating,
     awayEffective.effectiveRating,
-    league
+    league,
+    isNeutralSite
   )
   
   return {
@@ -1803,7 +1812,8 @@ export function calculateWinProbabilityWithInjuries(
   homeTopScorers?: PlayerImportance[],
   awayTopScorers?: PlayerImportance[],
   homePitcher?: PitcherInfo | null,
-  awayPitcher?: PitcherInfo | null
+  awayPitcher?: PitcherInfo | null,
+  isNeutralSite: boolean = false
 ): { 
   probability: number
   homeEffectiveRating: number
@@ -1834,7 +1844,8 @@ export function calculateWinProbabilityWithInjuries(
   const probability = calculateWinProbability(
     homeEffective.effectiveRating,
     awayEffective.effectiveRating,
-    league
+    league,
+    isNeutralSite
   )
   
   return {
@@ -1889,9 +1900,11 @@ function normalCDF(x: number): number {
 export function calculateExpectedMargin(
   homeElo: number,
   awayElo: number,
-  league: string
+  league: string,
+  isNeutralSite: boolean = false
 ): number {
-  const homeAdvantage = HOME_ADVANTAGE[league] || 70
+  // Zero out home advantage for neutral site games
+  const homeAdvantage = isNeutralSite ? 0 : (HOME_ADVANTAGE[league] || 70)
   const beta = MARGIN_BETA[league] || 0.03
   
   // Elo diff including home advantage
@@ -1919,7 +1932,8 @@ export function calculateSpreadCoverProbability(
   spread: number,
   league: string,
   forHome: boolean = true,
-  teamSpecificSigma?: number  // FIX 2: Optional team-specific sigma for variance adjustment
+  teamSpecificSigma?: number,  // FIX 2: Optional team-specific sigma for variance adjustment
+  isNeutralSite: boolean = false
 ): { probability: number; expectedMargin: number; confidence: string; sigmaUsed: number } {
   // FIX 2: Use team-specific sigma if provided and valid, otherwise use league default
   // Team-specific sigma accounts for blowout risk (bad teams have higher variance)
@@ -1938,7 +1952,7 @@ export function calculateSpreadCoverProbability(
     }
   }
   
-  const expectedMargin = calculateExpectedMargin(homeElo, awayElo, league)
+  const expectedMargin = calculateExpectedMargin(homeElo, awayElo, league, isNeutralSite)
   
   // SPREAD SEMANTICS (from home team's perspective):
   // - Home -3.5: Home must win by > 3.5 to cover → P(margin > 3.5)
@@ -2044,7 +2058,9 @@ export function calculateTotalProbability(
   awayElo: number,
   totalLine: number,
   league: string,
-  isOver: boolean = true
+  isOver: boolean = true,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _isNeutralSite: boolean = false  // Reserved for future use — totals don't use HOME_ADVANTAGE directly
 ): { probability: number; expectedTotal: number; confidence: string } {
   const sigma = TOTAL_SIGMA[league] || 15
   // FIX 3: Pass the market line to anchor expected total to matchup-specific context
@@ -2089,7 +2105,8 @@ export async function getEloSpreadProbabilityByName(
   homeTeamName: string,
   awayTeamName: string,
   spread: number,
-  forHome: boolean = true
+  forHome: boolean = true,
+  isNeutralSite: boolean = false
 ): Promise<{
   probability: number
   expectedMargin: number
@@ -2131,7 +2148,8 @@ export async function getEloSpreadProbabilityByName(
     spread, 
     league, 
     forHome,
-    teamMarginStdDev  // FIX 2: Pass team-specific sigma
+    teamMarginStdDev,  // FIX 2: Pass team-specific sigma
+    isNeutralSite
   )
   
   return {
@@ -2151,7 +2169,8 @@ export async function getEloTotalProbabilityByName(
   homeTeamName: string,
   awayTeamName: string,
   totalLine: number,
-  isOver: boolean = true
+  isOver: boolean = true,
+  isNeutralSite: boolean = false
 ): Promise<{
   probability: number
   expectedTotal: number
@@ -2180,7 +2199,7 @@ export async function getEloTotalProbabilityByName(
   const homeRating = eloData.ratings[homeKey].rating
   const awayRating = eloData.ratings[awayKey].rating
   
-  const result = calculateTotalProbability(homeRating, awayRating, totalLine, league, isOver)
+  const result = calculateTotalProbability(homeRating, awayRating, totalLine, league, isOver, isNeutralSite)
   
   return {
     ...result,

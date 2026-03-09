@@ -159,6 +159,7 @@ export interface ESPNGameData {
   injuries: ESPNInjury[]
   probables: ESPNProbable[]
   venue?: string
+  neutralSite?: boolean
   broadcast?: string
   status: string
 }
@@ -1065,6 +1066,7 @@ async function fetchESPNScoreboard(sport: string, league: string, leagueName: st
         injuries,
         probables,
         venue: competition.venue?.fullName || null,
+        neutralSite: competition.neutralSite === true,
         broadcast: competition.broadcasts?.[0]?.names?.[0] || null,
         status: event.status?.type?.description || 'Scheduled',
       } as ESPNGameData
@@ -1414,6 +1416,7 @@ interface ESPNEvent {
 
 interface ESPNCompetition {
   competitors?: ESPNCompetitor[]
+  neutralSite?: boolean
   venue?: {
     fullName?: string
   }
