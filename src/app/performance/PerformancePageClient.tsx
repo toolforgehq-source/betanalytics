@@ -180,7 +180,7 @@ export default function PerformancePageClient() {
           overall: buildStats(trackedPicks),
           lock: buildStats(lockPicks),
           strong: buildStats(strongPicks),
-          recentPicks: settledTrackedRecos.slice(0, 30),
+          recentPicks: settledTrackedRecos,  // Show ALL historical picks, not just 30
           startDate: new Date().toISOString()
         })
       } catch {
