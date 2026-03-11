@@ -541,30 +541,61 @@ export async function getPendingRecommendations(): Promise<TrackedRecommendation
 /**
  * Get recent recommendations (for dashboard)
  */
+/**
+ * Get recent recommendations from the tracking system.
+ * @param limit Number of recommendations to fetch. Pass 0 to fetch ALL recommendations (no limit).
+ */
 export async function getRecentRecommendations(limit: number = 100): Promise<TrackedRecommendation[]> {
   const redis = await getRedisClient()
   if (!redis) return []
   
   try {
     // Get recent IDs from sorted set (newest first)
+    // When limit is 0, fetch ALL entries (ZREVRANGE 0 -1)
+    const endIndex = limit > 0 ? limit - 1 : -1
     const response = await fetch(redis.url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['ZREVRANGE', TRACKING_INDEX_KEY, 0, limit - 1]),
+      body: JSON.stringify(['ZREVRANGE', TRACKING_INDEX_KEY, 0, endIndex]),
       cache: 'no-store'
     })
     
     const data = await response.json()
-    if (!data.result || !Array.isArray(data.result)) return []
+    if (!data.result || !Array.isArray(data.result) || data.result.length === 0) return []
     
-    // Fetch each recommendation
+    // Batch fetch all recommendations using MGET for efficiency.
+    // Previously this fetched one-by-one (N+1 Redis calls), which was too slow
+    // for large histories and forced low limits (~200) that only covered ~5 days.
+    const keys = data.result.map((id: string) => `${TRACKING_KEY_PREFIX}${id}`)
+    const mgetResponse = await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['MGET', ...keys]),
+      cache: 'no-store'
+    })
+    
+    const mgetData = await mgetResponse.json()
+    if (!mgetData.result || !Array.isArray(mgetData.result)) return []
+    
     const recommendations: TrackedRecommendation[] = []
-    for (const id of data.result) {
-      const reco = await getRecommendation(id)
-      if (reco) recommendations.push(reco)
+    for (const raw of mgetData.result) {
+      if (!raw) continue
+      try {
+        let parsed = raw
+        if (typeof parsed === 'string') parsed = JSON.parse(parsed)
+        if (typeof parsed === 'string') parsed = JSON.parse(parsed) // Handle double-encoded
+        if (parsed && typeof parsed === 'object') {
+          recommendations.push(parsed as TrackedRecommendation)
+        }
+      } catch {
+        // Skip unparseable entries
+      }
     }
     
     return recommendations
@@ -854,7 +885,8 @@ export function calculateProfit(odds: number, won: boolean): number {
  * Calculate tracking statistics from all recommendations
  */
 export async function calculateTrackingStats(): Promise<TrackingStats> {
-  const allRecommendations = await getRecentRecommendations(1000)
+  // Fetch ALL recommendations (no limit) so stats reflect the entire history, not just recent days
+  const allRecommendations = await getRecentRecommendations(0)
   
   // IMPORTANT: Only count best_bet picks with lock/strong tier in the official record.
   // Props, parlays, sport_bets, and value-tier picks should NOT inflate the public record.

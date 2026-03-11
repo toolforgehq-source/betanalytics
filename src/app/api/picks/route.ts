@@ -31,7 +31,7 @@ export async function GET() {
     const [trackRecord, rawAllPicks, rawRecentRecos, stats, cachedBestBet] = await Promise.all([
       getTrackRecord(),
       getAllPicks(),
-      getRecentRecommendations(200),
+      getRecentRecommendations(0),  // Fetch ALL recommendations (no limit) for complete history
       calculateTrackingStats(),
       getCachedBestBet()
     ])
@@ -89,9 +89,10 @@ export async function GET() {
       r.source !== 'best_bet' ||
       (r.confidenceTier !== 'lock' && r.confidenceTier !== 'strong')
     )
+    // Return ALL capped recommendations — no artificial slice limit.
+    // Previously .slice(0, 100) truncated history to ~5 days.
     const allRecentRecos = [...cappedRecos, ...nonTrackedRecos]
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .slice(0, 100)
 
     // ============================================
     // LIVE PICKS from cached best bet result
