@@ -493,7 +493,7 @@ function applyStaticCalibration(rawProbability: number, sport?: string): number 
  * Get correction factor for a probability
  * Returns the adjusted probability based on:
  * 1. Static compression (always active — prevents extreme overconfidence)
- * 2. Historical calibration (active after 50+ settled bets — fine-tunes from actual results)
+ * 2. Historical calibration (active after 30+ settled bets — fine-tunes from actual results)
  */
 export async function getCalibratedProbability(
   rawProbability: number,
@@ -505,7 +505,10 @@ export async function getCalibratedProbability(
   // Step 2: If we have enough historical data, also apply bucket correction
   const stats = await calculateCalibrationStats()
   
-  if (stats.completedRecords >= 50) {
+  // Threshold lowered from 50 to 30 to activate historical correction sooner.
+  // With 30+ settled picks, the bucket correction provides meaningful signal
+  // that improves probability accuracy for Kelly Criterion sizing.
+  if (stats.completedRecords >= 30) {
     const bucket = stats.buckets.find(b => 
       calibratedProb >= b.minProb && calibratedProb < b.maxProb
     )
