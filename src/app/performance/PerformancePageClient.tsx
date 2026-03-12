@@ -160,10 +160,13 @@ export default function PerformancePageClient() {
               if (bLocked !== aLocked) return bLocked - aLocked
               return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
             })
+            // Re-assign tiers by position (highest-priority = lock, next = strong).
+            // The cron may store all picks as 'strong', but the Model Picks page
+            // promotes the top pick to 'lock'. Mirror that here so the record matches.
             let locks = 0, strongs = 0
             for (const pick of dayPicks) {
-              if (pick.confidenceTier === 'lock' && locks < MAX_DAILY_LOCKS) { locks++; result.push(pick) }
-              else if (pick.confidenceTier === 'strong' && strongs < MAX_DAILY_STRONG) { strongs++; result.push(pick) }
+              if (locks < MAX_DAILY_LOCKS) { pick.confidenceTier = 'lock'; locks++; result.push(pick) }
+              else if (strongs < MAX_DAILY_STRONG) { pick.confidenceTier = 'strong'; strongs++; result.push(pick) }
             }
           }
           return result
