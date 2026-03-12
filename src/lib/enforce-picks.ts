@@ -88,19 +88,32 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   const allDeduped = Array.from(dedupMap.values())
   allDeduped.sort((a, b) => (b.score || 0) - (a.score || 0))
   
-  // Step 3: Assign tiers purely by score rank.
-  // Highest score = Lock, next best = Strong, rest = value.
-  // No special priority for started/locked-in games — score is king.
+  // Step 3: Assign tiers by score rank WITH same-game dedup.
+  // Only 1 pick per gameId can be Lock or Strong. This prevents correlated
+  // losses when the model likes multiple bet types on the same game (e.g.,
+  // Radford ML + Radford -2.5 both in top 4 — if Radford loses, you lose 2 picks).
+  // The highest-scored bet from each game gets priority; duplicates stay as value.
   let lockCount = 0
   let strongCount = 0
+  const topTierGameIds = new Set<string>()
   
   for (const pick of allDeduped) {
+    const gameId = String(pick.gameId || '')
+    
+    // If this game already has a pick in Lock/Strong, skip to value tier
+    if (gameId && topTierGameIds.has(gameId)) {
+      pick.confidenceTier = 'value'
+      continue
+    }
+    
     if (lockCount < MAX_LOCKS) {
       pick.confidenceTier = 'lock'
       lockCount++
+      if (gameId) topTierGameIds.add(gameId)
     } else if (strongCount < MAX_STRONG) {
       pick.confidenceTier = 'strong'
       strongCount++
+      if (gameId) topTierGameIds.add(gameId)
     } else {
       pick.confidenceTier = 'value'
     }

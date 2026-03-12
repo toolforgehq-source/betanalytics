@@ -447,9 +447,46 @@ export async function calculateCalibrationStats(): Promise<CalibrationStats> {
  */
 const STATIC_COMPRESSION = 0.85  // Compress distance from 50% by 15%
 
-function applyStaticCalibration(rawProbability: number): number {
-  // Compress toward 0.5: calibrated = 0.5 + compression * (raw - 0.5)
-  return 0.5 + STATIC_COMPRESSION * (rawProbability - 0.5)
+/**
+ * Sport-specific calibration corrections based on historical performance.
+ * 
+ * Historical data (31 settled picks):
+ *   NCAAB: 18-9 (67%) — model's 60-65% bucket overestimates by ~4%
+ *   NHL: 1-2 (33%) — model severely overestimates hockey
+ *   Soccer: 0-1 (0%) — model severely overestimates soccer
+ * 
+ * These multipliers are applied to the distance from 50% AFTER static compression,
+ * further compressing probabilities for sports where the model is overconfident.
+ * 
+ * Example for NCAAB (0.94x): 62% → distance = 12% → compressed = 12% * 0.94 = 11.28% → 61.28%
+ * Example for NHL (0.80x): 62% → distance = 12% → compressed = 12% * 0.80 = 9.6% → 59.6%
+ */
+const SPORT_CALIBRATION_CORRECTIONS: Record<string, number> = {
+  // NCAAB: slight overconfidence (-4% in 60-65% bucket)
+  'basketball_ncaab': 0.94,
+  // NHL: severe overconfidence (model says ~55% but actual is ~33%)
+  'icehockey_nhl': 0.80,
+  // Soccer leagues: severe overconfidence (0% actual on limited data)
+  'soccer_spain_la_liga': 0.75,
+  'soccer_epl': 0.75,
+  'soccer_germany_bundesliga': 0.75,
+  'soccer_italy_serie_a': 0.75,
+  'soccer_france_ligue_one': 0.75,
+}
+
+function applyStaticCalibration(rawProbability: number, sport?: string): number {
+  // Step 1: Compress toward 0.5: calibrated = 0.5 + compression * (raw - 0.5)
+  let calibrated = 0.5 + STATIC_COMPRESSION * (rawProbability - 0.5)
+  
+  // Step 2: Apply sport-specific correction if available
+  if (sport) {
+    const sportCorrection = SPORT_CALIBRATION_CORRECTIONS[sport.toLowerCase()]
+    if (sportCorrection !== undefined) {
+      calibrated = 0.5 + sportCorrection * (calibrated - 0.5)
+    }
+  }
+  
+  return calibrated
 }
 
 /**
@@ -459,10 +496,11 @@ function applyStaticCalibration(rawProbability: number): number {
  * 2. Historical calibration (active after 50+ settled bets — fine-tunes from actual results)
  */
 export async function getCalibratedProbability(
-  rawProbability: number
+  rawProbability: number,
+  sport?: string
 ): Promise<number> {
-  // Step 1: Always apply static compression to prevent overconfident extremes
-  let calibratedProb = applyStaticCalibration(rawProbability)
+  // Step 1: Always apply static compression (+ sport-specific correction) to prevent overconfident extremes
+  let calibratedProb = applyStaticCalibration(rawProbability, sport)
   
   // Step 2: If we have enough historical data, also apply bucket correction
   const stats = await calculateCalibrationStats()
