@@ -548,7 +548,8 @@ function calculateBetScore(
   spreadSize?: number,     // absolute spread size (e.g., 21.5)
   eloGap?: number,         // absolute Elo difference between teams (e.g., 351)
   sport?: string,          // sport key (e.g., 'basketball_ncaab', 'icehockey_nhl')
-  betType?: string         // bet type (e.g., 'moneyline', 'spread', 'total')
+  betType?: string,        // bet type (e.g., 'moneyline', 'spread', 'total')
+  isUnderdog?: boolean     // true if betting on underdog getting points (spread > 0)
 ): number {
   // ============================================
   // KELLY OPTIMIZATION: Edge-heavy scoring for Kelly Criterion
@@ -660,6 +661,27 @@ function calculateBetScore(
   }
   
   // ============================================
+  // UNDERDOG BLOWOUT PENALTY: up to -12 points
+  // ============================================
+  // Historical data: 3 of 12 losses were underdogs getting points that got
+  // destroyed by 17-19 points (La Salle +5.5 lost by 19, SFA +2.5 lost by 17,
+  // Miss State +7.5 lost by 18). The model gave these scores of 79-87.
+  // When an underdog faces a team with a large Elo advantage, the spread
+  // cover probability is unreliable — the better team can pull away at any time.
+  //
+  // Penalty applies when: isUnderdog=true AND eloGap > 150
+  // Formula: -((eloGap - 150) * 0.04), capped at -12
+  // Examples:
+  //   eloGap 200, underdog = -(50 * 0.04) = -2 points
+  //   eloGap 300, underdog = -(150 * 0.04) = -6 points
+  //   eloGap 400, underdog = -(250 * 0.04) = -10 points
+  //   eloGap 500+, underdog = -12 points (cap)
+  let underdogBlowoutPenalty = 0
+  if (isUnderdog && eloGap !== undefined && eloGap > 150) {
+    underdogBlowoutPenalty = -Math.min(12, (eloGap - 150) * 0.04)
+  }
+  
+  // ============================================
   // MONEYLINE PENALTY: -5 points
   // ============================================
   // Historical data: Moneylines are 5-4 (55.6%) with -13.4% ROI.
@@ -696,9 +718,9 @@ function calculateBetScore(
   // ============================================
   // Base: probScore + roiScore + edgeScore (-70 to 100)
   // Bonus: spreadQualityBonus (+10 max for tight spreads with good prob)
-  // Penalties: spreadPenalty (-20 max) + eloGapPenalty (-15 max) + moneylinePenalty (-5)
+  // Penalties: spreadPenalty (-20 max) + eloGapPenalty (-15 max) + moneylinePenalty (-5) + underdogBlowoutPenalty (-12 max)
   // Sport multiplier applied to final score to bias toward proven sports
-  const rawScore = probScore + roiScore + edgeScore + spreadQualityBonus + spreadPenalty + eloGapPenalty + moneylinePenalty
+  const rawScore = probScore + roiScore + edgeScore + spreadQualityBonus + spreadPenalty + eloGapPenalty + moneylinePenalty + underdogBlowoutPenalty
   return Math.round(rawScore * sportMultiplier)
 }
 
@@ -1660,7 +1682,7 @@ export async function analyzeGame(
       // Calculate score — penalize large spreads and huge Elo gaps
       const spreadSizeForScore = Math.abs(point)
       const eloGapForScore = homeElo && awayElo ? Math.abs(homeElo - awayElo) : undefined
-      const score = calculateBetScore(eloCoverProb, edge, roi, spreadSizeForScore, eloGapForScore, game.sport, 'spread')
+      const score = calculateBetScore(eloCoverProb, edge, roi, spreadSizeForScore, eloGapForScore, game.sport, 'spread', point > 0)
       
       // Collect all book prices for this spread
       const allBookPrices = entries.map(e => ({
@@ -2428,7 +2450,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       const roi = calculateROI(ev)
       const sportQuerySpreadSize = Math.abs(point)
       const sportQuerySpreadEloGap = homeEloRating && awayEloRating ? Math.abs(homeEloRating - awayEloRating) : undefined
-      const score = calculateBetScore(coverProb, edge, roi, sportQuerySpreadSize, sportQuerySpreadEloGap, game.sport, 'spread')
+      const score = calculateBetScore(coverProb, edge, roi, sportQuerySpreadSize, sportQuerySpreadEloGap, game.sport, 'spread', point > 0)
       
       // Collect all book prices for this spread
       const allBookPrices = entries.map(e => ({
