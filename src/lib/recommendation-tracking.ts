@@ -194,17 +194,14 @@ export function enforceDailyCaps(recommendations: TrackedRecommendation[]): Trac
   for (const dayPicks of Array.from(byDay.values())) {
     // Priority order for cap selection:
     // 1. Locked-in picks first (what users actually saw at game time)
-    // 2. Then by LATEST createdAt (most recently created = most recent Lock of the Day)
-    //    This matches what users last saw on the page. The cron updates the Lock of
-    //    the Day periodically, so the latest pick is the "final" version for the day.
-    //    Previously we sorted by score, which could select a higher-scored pick that
-    //    lost over a later pick that won (e.g., Valparaiso score 88 LOST over
-    //    Fairfield score 87 WON on the same day).
+    // 2. Then by highest score (matches dedupeAndEnforceCaps — the same function
+    //    the Model Picks page uses to assign tiers). This ensures the Performance
+    //    page agrees with what users saw: highest-scored pick = Lock of the Day.
     dayPicks.sort((a, b) => {
       const aLocked = a.lockedIn ? 1 : 0
       const bLocked = b.lockedIn ? 1 : 0
       if (bLocked !== aLocked) return bLocked - aLocked
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      return (b.score ?? 0) - (a.score ?? 0)
     })
     // Check if there's already a stored lock for this day.
     // If not, promote the top pick to lock — the cron sometimes stores all
@@ -298,20 +295,20 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
           console.log(`[Tracking] Recommendation ${id} is locked in (game started), preserving`)
           return id
         }
-        // Game hasn't started — update with latest odds/line/selection (upsert).
+        // Game hasn't started — update with latest odds/line/selection/tier (upsert).
         // If the recommendation was previously voided (e.g., temporarily dropped
         // from the active list due to score fluctuations), reset it back to pending.
-        // NOTE: confidenceTier is intentionally NOT updated here. The tier assigned
-        // on first creation is the "true" tier (based on the full set of games at
-        // that time). Later cron runs may see a different game set (e.g., started
-        // games dropped from ESPN feed) and assign different tiers, causing the
-        // Performance page to disagree with what the Model Picks page showed all day.
+        // confidenceTier IS updated here because the cron now uses dedupeAndEnforceCaps()
+        // — the same function the Model Picks page uses — so the tier reflects what
+        // users actually see. Previously the tier was frozen at creation time which
+        // caused mismatches (e.g., a pick shown as Lock on the page stored as 'strong').
         const updates: Partial<TrackedRecommendation> = {
           selection: reco.selection,
           line: reco.line,
           odds: reco.odds,
           probability: reco.probability,
           score: reco.score,
+          confidenceTier: reco.confidenceTier,
         }
         if (existing.status === 'void') {
           updates.status = 'pending'
