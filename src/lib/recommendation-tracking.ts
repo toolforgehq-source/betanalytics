@@ -206,19 +206,21 @@ export function enforceDailyCaps(recommendations: TrackedRecommendation[]): Trac
       if (bLocked !== aLocked) return bLocked - aLocked
       return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     })
-    // Re-assign tiers by position rather than relying on stored tier.
-    // The cron may store all picks as 'strong' even though the Model Picks page
-    // promotes the highest-priority pick to 'lock'. We mirror that logic here
-    // so the Performance record matches what users saw on the page.
+    // Check if there's already a stored lock for this day.
+    // If not, promote the top pick to lock — the cron sometimes stores all
+    // picks as 'strong' even though the Model Picks page showed a Lock of
+    // the Day. This ensures the Performance record matches what users saw.
+    const hasStoredLock = dayPicks.some(p => p.confidenceTier === 'lock')
+    if (!hasStoredLock && dayPicks.length > 0) {
+      dayPicks[0].confidenceTier = 'lock'
+    }
     let lockCount = 0
     let strongCount = 0
     for (const pick of dayPicks) {
-      if (lockCount < MAX_DAILY_LOCKS) {
-        pick.confidenceTier = 'lock'
+      if (pick.confidenceTier === 'lock' && lockCount < MAX_DAILY_LOCKS) {
         lockCount++
         result.push(pick)
-      } else if (strongCount < MAX_DAILY_STRONG) {
-        pick.confidenceTier = 'strong'
+      } else if (pick.confidenceTier === 'strong' && strongCount < MAX_DAILY_STRONG) {
         strongCount++
         result.push(pick)
       }
