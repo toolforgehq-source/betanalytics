@@ -546,59 +546,64 @@ function calculateBetScore(
   edge: number,            // decimal (e.g., 0.03 = 3%)
   roi: number,             // percentage (e.g., 5.0 = 5%)
   spreadSize?: number,     // absolute spread size (e.g., 21.5)
-  eloGap?: number          // absolute Elo difference between teams (e.g., 351)
+  eloGap?: number,         // absolute Elo difference between teams (e.g., 351)
+  sport?: string,          // sport key (e.g., 'basketball_ncaab', 'icehockey_nhl')
+  betType?: string         // bet type (e.g., 'moneyline', 'spread', 'total')
 ): number {
   // ============================================
-  // WIN PCT FIX: Re-balanced scoring to weight edge more heavily
-  // Edge (model vs market disagreement) is the best predictor of long-term profitability.
-  // Previous weights (45 prob / 35 ROI / 20 edge) over-weighted probability,
-  // causing heavy favorites with tiny edges to outscore moderate favorites with large edges.
-  // New weights: 35 prob / 30 ROI / 35 edge
+  // KELLY OPTIMIZATION: Edge-heavy scoring for Kelly Criterion
+  // Kelly sizes bets by edge — picks with big edges (where market is most wrong)
+  // are the best Kelly bets. Historical data shows:
+  //   - High-score picks (80+) hit at 73% with big edges
+  //   - Medium-score picks (60-80) hit at 50% with thin edges
+  // Edge-heavy weights ensure top 4 picks are the best Kelly opportunities.
+  // Previous weights: 35 prob / 30 ROI / 35 edge
+  // New weights: 30 prob / 15 ROI / 55 edge
   // ============================================
   
   // ============================================
-  // PROBABILITY SCORE: 35 points maximum (was 45)
+  // PROBABILITY SCORE: 30 points maximum (was 35)
   // ============================================
-  // Formula: ((Win Probability - 50) / 40) × 35
-  // 50% = 0 points, 60% = 8.75 points, 70% = 17.5 points, 90% = 35 points
+  // Formula: ((Win Probability - 50) / 40) × 30
+  // 50% = 0 points, 60% = 7.5 points, 70% = 15 points, 90% = 30 points
   const probPercent = winProbability * 100  // Convert to 0-100 scale
-  const probScore = Math.max(0, Math.min(35, ((probPercent - 50) / 40) * 35))
+  const probScore = Math.max(0, Math.min(30, ((probPercent - 50) / 40) * 30))
   
   // ============================================
-  // ROI SCORE: 30 points maximum (was 35, can go negative!)
+  // ROI SCORE: 15 points maximum (was 30, can go negative!)
   // ============================================
   // Different formulas for positive vs negative ROI:
-  // - Positive ROI: Score = 15 + (ROI / 20) × 15
-  // - Negative ROI: Score = 15 + (ROI / 10) × 15 (penalized more heavily)
+  // - Positive ROI: Score = 7.5 + (ROI / 20) × 7.5
+  // - Negative ROI: Score = 7.5 + (ROI / 10) × 7.5 (penalized more heavily)
   // 
   // Examples:
-  // +20% ROI = 30 points (max)
-  // +5% ROI = 18.75 points
-  // 0% ROI = 15 points
-  // -4% ROI = 9 points
+  // +20% ROI = 15 points (max)
+  // +5% ROI = 9.375 points
+  // 0% ROI = 7.5 points
+  // -4% ROI = 4.5 points
   // -10% ROI = 0 points
   let roiScore: number
   if (roi >= 0) {
     // Positive ROI: rewarded
-    roiScore = 15 + (roi / 20) * 15
+    roiScore = 7.5 + (roi / 20) * 7.5
   } else {
     // Negative ROI: penalized more heavily
-    roiScore = 15 + (roi / 10) * 15
+    roiScore = 7.5 + (roi / 10) * 7.5
   }
-  roiScore = Math.max(-30, Math.min(30, roiScore))
+  roiScore = Math.max(-15, Math.min(15, roiScore))
   
   // ============================================
-  // EDGE SCORE: 35 points maximum (was 20, can go negative!)
+  // EDGE SCORE: 55 points maximum (was 35, can go negative!)
   // ============================================
-  // Formula: (Edge / 10) × 35
-  // +10% edge = 35 points (max)
-  // +5% edge = 17.5 points
-  // +3% edge = 10.5 points
+  // Formula: (Edge / 10) × 55
+  // +10% edge = 55 points (max)
+  // +5% edge = 27.5 points
+  // +3% edge = 16.5 points
   // 0% edge = 0 points
-  // -5% edge = -17.5 points
-  // -10% edge = -35 points
+  // -5% edge = -27.5 points
+  // -10% edge = -55 points
   const edgePercent = edge * 100  // Convert to percentage
-  const edgeScore = Math.max(-35, Math.min(35, (edgePercent / 10) * 35))
+  const edgeScore = Math.max(-55, Math.min(55, (edgePercent / 10) * 55))
   
   // ============================================
   // SPREAD QUALITY BONUS: up to +10 points
@@ -655,13 +660,46 @@ function calculateBetScore(
   }
   
   // ============================================
+  // MONEYLINE PENALTY: -5 points
+  // ============================================
+  // Historical data: Moneylines are 5-4 (55.6%) with -13.4% ROI.
+  // Spreads are 13-8 (61.9%) with +17.3% ROI.
+  // Moneyline losses are expensive (full unit lost) while wins on favorites
+  // pay less than a unit. This penalty pushes spreads into the top 4 over MLs.
+  let moneylinePenalty = 0
+  if (betType === 'moneyline') {
+    moneylinePenalty = -5
+  }
+  
+  // ============================================
+  // SPORT PERFORMANCE MULTIPLIER
+  // ============================================
+  // Historical data by sport:
+  //   NCAAB: 18-9 (67%) — model works well here
+  //   NHL: 1-2 (33%) — model doesn't work for hockey
+  //   La Liga/Soccer: 0-1 (0%) — model doesn't work for soccer
+  // Apply a score multiplier so NCAAB picks naturally outrank non-NCAAB picks
+  // unless the non-NCAAB edge is massive enough to overcome the penalty.
+  let sportMultiplier = 1.0
+  if (sport) {
+    const sportLower = sport.toLowerCase()
+    if (sportLower.includes('hockey') || sportLower.includes('nhl')) {
+      sportMultiplier = 0.7  // 30% penalty for hockey
+    } else if (sportLower.includes('soccer') || sportLower.includes('la_liga') || sportLower.includes('epl') || sportLower.includes('bundesliga') || sportLower.includes('serie_a') || sportLower.includes('ligue')) {
+      sportMultiplier = 0.5  // 50% penalty for soccer
+    }
+    // NCAAB, NBA, NFL, MLB all stay at 1.0 (default)
+  }
+  
+  // ============================================
   // TOTAL SCORE
   // ============================================
-  // Possible range: -100 to 110 points
-  // - Base: probScore + roiScore + edgeScore (-65 to 100)
-  // - Bonus: spreadQualityBonus (+10 max for tight spreads with good prob)
-  // - Penalties: spreadPenalty (-20 max) + eloGapPenalty (-15 max)
-  return Math.round(probScore + roiScore + edgeScore + spreadQualityBonus + spreadPenalty + eloGapPenalty)
+  // Base: probScore + roiScore + edgeScore (-70 to 100)
+  // Bonus: spreadQualityBonus (+10 max for tight spreads with good prob)
+  // Penalties: spreadPenalty (-20 max) + eloGapPenalty (-15 max) + moneylinePenalty (-5)
+  // Sport multiplier applied to final score to bias toward proven sports
+  const rawScore = probScore + roiScore + edgeScore + spreadQualityBonus + spreadPenalty + eloGapPenalty + moneylinePenalty
+  return Math.round(rawScore * sportMultiplier)
 }
 
 /**
@@ -1234,7 +1272,7 @@ export async function analyzeGame(
     
     // WIN PCT FIX: Apply calibration to moneyline probability (was only applied to spreads)
     // This corrects for systematic over/under-confidence based on historical accuracy
-    const calibratedModelProbability = await getCalibratedProbability(modelProbability)
+    const calibratedModelProbability = await getCalibratedProbability(modelProbability, game.sport)
     
     // Apply situational adjustment to calibrated model probability
     const adjustedModelProbability = applyAdjustment(calibratedModelProbability, situationalAdj.totalAdjustment)
@@ -1331,7 +1369,7 @@ export async function analyzeGame(
     
     // Calculate score using EV-based scoring system with adjusted probability
     const eloGapForScore = homeElo && awayElo ? Math.abs(homeElo - awayElo) : undefined
-    const score = calculateBetScore(adjustedModelProbability, edge, roi, undefined, eloGapForScore)
+    const score = calculateBetScore(adjustedModelProbability, edge, roi, undefined, eloGapForScore, game.sport, 'moneyline')
     
     rankedBets.push({
       gameId: game.id,
@@ -1514,7 +1552,7 @@ export async function analyzeGame(
       
       // FIX 3: Apply calibration to adjust probability based on historical accuracy
       // This corrects for systematic over/under-confidence in our predictions
-      const calibratedEloCoverProb = await getCalibratedProbability(rawEloCoverProb)
+      const calibratedEloCoverProb = await getCalibratedProbability(rawEloCoverProb, game.sport)
       
       // FIX: Blend spread cover probability with market consensus (like moneylines and totals already do)
       // Without blending, the raw Elo model can disagree with the market by 10+ points on large
@@ -1622,7 +1660,7 @@ export async function analyzeGame(
       // Calculate score — penalize large spreads and huge Elo gaps
       const spreadSizeForScore = Math.abs(point)
       const eloGapForScore = homeElo && awayElo ? Math.abs(homeElo - awayElo) : undefined
-      const score = calculateBetScore(eloCoverProb, edge, roi, spreadSizeForScore, eloGapForScore)
+      const score = calculateBetScore(eloCoverProb, edge, roi, spreadSizeForScore, eloGapForScore, game.sport, 'spread')
       
       // Collect all book prices for this spread
       const allBookPrices = entries.map(e => ({
@@ -1812,7 +1850,7 @@ export async function analyzeGame(
           ? blendWithMarket(baseEloOverProb, marketOverProb, eloResult.confidence)
           : baseEloOverProb
         // WIN PCT FIX: Apply calibration to totals (was only applied to spreads)
-        const calibratedOverProb = await getCalibratedProbability(blendedOverProb)
+        const calibratedOverProb = await getCalibratedProbability(blendedOverProb, game.sport)
         // Apply pace adjustment: positive pace = high-scoring game = boosts over probability
         const paceAdjustedOverProb = applyAdjustment(calibratedOverProb, paceAdjustment)
         const eloOverProb = applyAdjustment(paceAdjustedOverProb, totalSituationalAdj.totalAdjustment)
@@ -1839,7 +1877,7 @@ export async function analyzeGame(
           console.log(`[analyzeGame] Multi-signal rejection: Over ${line} — sharp money moving against`)
         } else if (eloOverProb >= MIN_TOTAL_PROBABILITY && edge >= MIN_TOTAL_EDGE && ev > 0 && roi >= MIN_TOTAL_ROI) {
           if (bestOverEntry.outcome.price >= MAX_JUICE_ODDS) {
-            const score = calculateBetScore(eloOverProb, edge, roi)
+            const score = calculateBetScore(eloOverProb, edge, roi, undefined, undefined, game.sport, 'total')
             
             const allBookPrices = overEntries.map(e => ({
               book: e.book,
@@ -1938,7 +1976,7 @@ export async function analyzeGame(
           ? blendWithMarket(baseEloUnderProb, marketUnderProb, eloResult.confidence)
           : baseEloUnderProb
         // WIN PCT FIX: Apply calibration to totals (was only applied to spreads)
-        const calibratedUnderProb = await getCalibratedProbability(blendedUnderProb)
+        const calibratedUnderProb = await getCalibratedProbability(blendedUnderProb, game.sport)
         // Apply pace adjustment: negative pace = low-scoring game = boosts under probability
         const paceAdjustedUnderProb = applyAdjustment(calibratedUnderProb, -paceAdjustment)
         const eloUnderProb = applyAdjustment(paceAdjustedUnderProb, totalSituationalAdj.totalAdjustment)
@@ -1965,7 +2003,7 @@ export async function analyzeGame(
           console.log(`[analyzeGame] Multi-signal rejection: Under ${line} — sharp money moving against`)
         } else if (eloUnderProb >= MIN_TOTAL_PROBABILITY && edge >= MIN_TOTAL_EDGE && ev > 0 && roi >= MIN_TOTAL_ROI) {
           if (bestUnderEntry.outcome.price >= MAX_JUICE_ODDS) {
-            const score = calculateBetScore(eloUnderProb, edge, roi)
+            const score = calculateBetScore(eloUnderProb, edge, roi, undefined, undefined, game.sport, 'total')
             
             const allBookPrices = underEntries.map(e => ({
               book: e.book,
@@ -2251,7 +2289,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     const ev = calculateExpectedValue(bestPrice.price, modelProbability)
     const roi = calculateROI(ev)
     const sportQueryEloGap = eloResult?.homeRating && eloResult?.awayRating ? Math.abs(eloResult.homeRating - eloResult.awayRating) : undefined
-    const score = calculateBetScore(modelProbability, edge, roi, undefined, sportQueryEloGap)
+    const score = calculateBetScore(modelProbability, edge, roi, undefined, sportQueryEloGap, game.sport, 'moneyline')
     
     rankedBets.push({
       gameId: game.id,
@@ -2390,7 +2428,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       const roi = calculateROI(ev)
       const sportQuerySpreadSize = Math.abs(point)
       const sportQuerySpreadEloGap = homeEloRating && awayEloRating ? Math.abs(homeEloRating - awayEloRating) : undefined
-      const score = calculateBetScore(coverProb, edge, roi, sportQuerySpreadSize, sportQuerySpreadEloGap)
+      const score = calculateBetScore(coverProb, edge, roi, sportQuerySpreadSize, sportQuerySpreadEloGap, game.sport, 'spread')
       
       // Collect all book prices for this spread
       const allBookPrices = entries.map(e => ({
@@ -2493,7 +2531,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           const edge = overProb - impliedProb
           const ev = calculateExpectedValue(bestOverEntry.outcome.price, overProb)
           const roi = calculateROI(ev)
-          const score = calculateBetScore(overProb, edge, roi)
+          const score = calculateBetScore(overProb, edge, roi, undefined, undefined, game.sport, 'total')
           
           const allBookPrices = overEntries.map(e => ({
             book: e.book,
@@ -2562,7 +2600,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           const edge = underProb - impliedProb
           const ev = calculateExpectedValue(bestUnderEntry.outcome.price, underProb)
           const roi = calculateROI(ev)
-          const score = calculateBetScore(underProb, edge, roi)
+          const score = calculateBetScore(underProb, edge, roi, undefined, undefined, game.sport, 'total')
           
           const allBookPrices = underEntries.map(e => ({
             book: e.book,
@@ -3177,21 +3215,28 @@ export async function computeBestBets(
   let globalStrongCount = 0
   const globalTierMap = new Map<string, 'lock' | 'strong' | 'value'>()
   
-  // Assign tiers purely by score rank — the highest-scored picks get the
-  // lock/strong slots. allMergedBets is already sorted by score descending.
-  // No additional qualifying criteria here; picks have already been filtered
-  // by the hard filters (52%+ prob, -4.5%+ ROI, -250 odds), and the score
-  // encodes probability, edge, and ROI. This ensures the globally best-scored
-  // bet is ALWAYS the Lock, and the next best are Strong Plays.
+  // Assign tiers by score rank WITH same-game dedup — only 1 pick per gameId
+  // can be Lock or Strong. This prevents correlated losses when the model likes
+  // multiple bet types on the same game (e.g., Radford ML + Radford -2.5).
+  // allMergedBets is already sorted by score descending.
+  const globalTopTierGameIds = new Set<string>()
   for (const bet of allMergedBets) {
     const key = `${bet.gameId}:${bet.team}:${bet.betType}`
+    
+    // If this game already has a pick in Lock/Strong, skip to value tier
+    if (globalTopTierGameIds.has(bet.gameId)) {
+      globalTierMap.set(key, 'value')
+      continue
+    }
     
     if (globalLockCount < MAX_LOCKS) {
       globalTierMap.set(key, 'lock')
       globalLockCount++
+      globalTopTierGameIds.add(bet.gameId)
     } else if (globalStrongCount < MAX_STRONG) {
       globalTierMap.set(key, 'strong')
       globalStrongCount++
+      globalTopTierGameIds.add(bet.gameId)
     } else {
       globalTierMap.set(key, 'value')
     }
