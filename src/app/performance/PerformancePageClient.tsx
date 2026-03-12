@@ -152,22 +152,14 @@ export default function PerformancePageClient() {
           }
           const result: RecentPick[] = []
           for (const dayPicks of Array.from(byDay.values())) {
-            // Prioritize locked-in picks (what users actually saw), then by highest score
-            // Score-based sorting matches dedupeAndEnforceCaps (Model Picks page logic)
-            // so the Performance page agrees: highest-scored pick = Lock of the Day.
+            // Prioritize locked-in picks (what users actually saw), then by latest createdAt
+            // Latest = most recent Lock of the Day, which is what users last saw on the page
             dayPicks.sort((a, b) => {
               const aLocked = a.lockedIn ? 1 : 0
               const bLocked = b.lockedIn ? 1 : 0
               if (bLocked !== aLocked) return bLocked - aLocked
-              return (b.score ?? 0) - (a.score ?? 0)
+              return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
             })
-            // If no stored lock exists for this day, promote the top pick to lock.
-            // The cron sometimes stores all picks as 'strong', but the Model Picks
-            // page showed a Lock of the Day. This ensures the record matches.
-            const hasStoredLock = dayPicks.some(p => p.confidenceTier === 'lock')
-            if (!hasStoredLock && dayPicks.length > 0) {
-              dayPicks[0].confidenceTier = 'lock'
-            }
             let locks = 0, strongs = 0
             for (const pick of dayPicks) {
               if (pick.confidenceTier === 'lock' && locks < MAX_DAILY_LOCKS) { locks++; result.push(pick) }

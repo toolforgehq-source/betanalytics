@@ -13,7 +13,6 @@ import {
 } from "@/lib/bet-ranking"
 import { storePick, getAllPicks, autoGradePicks, lockInAndCleanupPicks } from "@/lib/pick-tracking"
 import { trackBestBet, lockInAndCleanupRecommendations } from "@/lib/recommendation-tracking"
-import { dedupeAndEnforceCaps } from "@/lib/enforce-picks"
 import { getWeatherForGames } from "@/lib/weather"
 import { getLineMovement } from "@/lib/line-movement"
 import { getCachedTeamScheduleData } from "@/lib/team-schedule"
@@ -317,21 +316,43 @@ export async function GET(request: Request) {
     // The cron processes 80+ games and can timeout on Vercel if pick storage runs too late.
     // ============================================
     let picksStored = 0
+    const strictLockStrong = bestBetResult.allRankedBets.filter(
+      b => b.confidenceTier === 'lock' || b.confidenceTier === 'strong'
+    )
+    const eloLockStrong = bestBetResult.allEloBets.filter(
+      b => b.confidenceTier === 'lock' || b.confidenceTier === 'strong'
+    )
+    
+    // Merge: start with strict picks, then add elo picks not already covered (by gameId + team)
+    const seenKeys = new Set(strictLockStrong.map(b => `${b.gameId}:${b.team}`))
+    const additionalEloPicks = eloLockStrong.filter(b => !seenKeys.has(`${b.gameId}:${b.team}`))
+    const mergedLockStrong = [...strictLockStrong, ...additionalEloPicks]
+    
+    console.log(`[fetch-odds] Found ${mergedLockStrong.length} Lock/Strong picks (${strictLockStrong.length} from strict + ${additionalEloPicks.length} from relaxed elo) out of ${bestBetResult.allRankedBets.length} strict + ${bestBetResult.allEloBets.length} elo bets`)
     
     // ============================================
-    // USE dedupeAndEnforceCaps() TO DETERMINE LOCK/STRONG PICKS.
-    // This is the SAME function the Model Picks page uses to assign tiers.
-    // Previously, the cron used computeBestBets() tier assignments (which could
-    // differ from what users saw), causing mismatches — e.g., UC Davis shown as
-    // Lock of the Day on the page but never stored in the tracking system because
-    // computeBestBets() assigned it as 'value'.
-    // Now both the cron and the Model Picks page use the same tier logic.
+    // TIER CAP ENFORCEMENT: Only store max 1 Lock + 3 Strong = 4 picks per day.
+    // The mergedLockStrong list can have 6-8+ picks because strict and elo pools
+    // are independently tiered. Without this cap, excess picks get stored, locked
+    // in when games start, graded, and inflate the public record.
     // ============================================
-    const allBetsForTiering = [...bestBetResult.allRankedBets, ...bestBetResult.allEloBets]
-      .map(b => ({ ...b }))  // shallow copy to avoid mutating originals (tier summary uses original tiers)
-    const lockStrongBets = dedupeAndEnforceCaps(allBetsForTiering) as RankedBet[]
-    
-    console.log(`[fetch-odds] dedupeAndEnforceCaps selected ${lockStrongBets.length} Lock/Strong picks: ${lockStrongBets.map(b => `${b.team}(t=${b.confidenceTier},s=${b.score})`).join(', ')}`)
+    const MAX_STORED_LOCKS = 1
+    const MAX_STORED_STRONG = 3
+    mergedLockStrong.sort((a, b) => b.score - a.score)
+    let storedLockCount = 0
+    let storedStrongCount = 0
+    const lockStrongBets = mergedLockStrong.filter(bet => {
+      if (bet.confidenceTier === 'lock' && storedLockCount < MAX_STORED_LOCKS) {
+        storedLockCount++
+        return true
+      }
+      if (bet.confidenceTier === 'strong' && storedStrongCount < MAX_STORED_STRONG) {
+        storedStrongCount++
+        return true
+      }
+      return false
+    })
+    console.log(`[fetch-odds] After tier cap: ${lockStrongBets.length} picks to store (${storedLockCount} lock + ${storedStrongCount} strong), dropped ${mergedLockStrong.length - lockStrongBets.length} excess`)
     
     // Log top 5 bets by score from each source for debugging tier assignment
     const topStrict = bestBetResult.allRankedBets.slice(0, 5)
