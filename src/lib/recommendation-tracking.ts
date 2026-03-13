@@ -50,6 +50,10 @@ export interface TrackedRecommendation {
   actualResult?: string         // e.g., 'Lakers won 112-108'
   profit?: number               // Profit/loss in units (1 unit = $100)
   
+  // Elo ratings (preserved from RankedBet so the UI can always display them)
+  homeElo?: number
+  awayElo?: number
+
   // For props - additional tracking
   playerName?: string
   market?: string               // e.g., 'player_points'
@@ -1095,7 +1099,9 @@ export async function trackBestBet(bet: RankedBet): Promise<string | null> {
     probability: bet.consensusProbability,
     score: bet.score,
     source: 'best_bet',
-    confidenceTier: bet.confidenceTier
+    confidenceTier: bet.confidenceTier,
+    homeElo: bet.homeElo,
+    awayElo: bet.awayElo
   })
 }
 
@@ -1150,7 +1156,9 @@ export async function trackSportBet(bet: RankedBet, sportName: string): Promise<
     probability: bet.consensusProbability,
     score: bet.score,
     source: 'sport_bet',
-    confidenceTier: bet.confidenceTier
+    confidenceTier: bet.confidenceTier,
+    homeElo: bet.homeElo,
+    awayElo: bet.awayElo
   })
 }
 
