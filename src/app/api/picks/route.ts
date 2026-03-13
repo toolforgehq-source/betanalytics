@@ -148,7 +148,8 @@ export async function GET() {
     const lockCount = enforcedPicks.filter(p => p.confidenceTier === 'lock').length
     const strongCount = enforcedPicks.filter(p => p.confidenceTier === 'strong').length
     const startedCount = enforcedPicks.filter(p => p.gameStarted).length
-    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong, ${startedCount} already started)`)
+    const frozenCount = enforcedPicks.filter(p => p.frozen).length
+    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong, ${startedCount} already started, ${frozenCount} frozen)`)
 
     return NextResponse.json({
       success: true,

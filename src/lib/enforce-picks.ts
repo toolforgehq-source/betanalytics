@@ -43,14 +43,21 @@ export function computeEdge(pick: PickLike): number {
   return prob - impliedProb
 }
 
+// How far before game time a pick becomes "frozen" (cannot be bumped from its tier slot).
+// Once a game is within this window, the pick stays in Lock/Strong regardless of
+// score changes from later model updates.  This lets users bet with confidence
+// knowing the board won't rotate under them.
+export const FREEZE_WINDOW_MS = 60 * 60 * 1000 // 1 hour
+
 /**
  * Deduplicate and enforce tier caps on a list of picks.
  * This is the final gate before displaying picks to the user.
  *
  * Steps:
  * 1. Deduplicate by gameId:team:betType (prefer higher score version)
- * 2. Sort by score descending
- * 3. Re-tier: highest-scored bet = Lock, next N = Strong, rest = value
+ * 2. Mark picks within FREEZE_WINDOW_MS of game time as "frozen"
+ * 3. Assign tiers: frozen picks claim slots first (by score), then remaining
+ *    slots are filled by unfrozen picks (by score)
  * 4. Return only Lock + Strong picks
  */
 export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
@@ -80,15 +87,31 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     }
   }
   
-  // Step 2: Sort ALL deduped picks by score descending.
-  // Score is the single source of truth — the highest-scoring picks always
-  // get the top tier slots, regardless of whether their game has started.
-  // This prevents low-scoring started games (e.g. Alcorn State) from stealing
-  // slots away from genuinely high-scoring picks.
+  // Step 2: Sort ALL deduped picks by score descending and mark frozen status.
   const allDeduped = Array.from(dedupMap.values())
   allDeduped.sort((a, b) => (b.score || 0) - (a.score || 0))
   
-  // Step 3: Assign tiers by score rank WITH same-game dedup.
+  const now = Date.now()
+  
+  // Separate picks into frozen (within FREEZE_WINDOW_MS of game time or already started)
+  // and unfrozen.  Both lists stay sorted by score descending.
+  const frozen: PickLike[] = []
+  const unfrozen: PickLike[] = []
+  
+  for (const pick of allDeduped) {
+    const gameStart = pick.commenceTime ? new Date(pick.commenceTime as string).getTime() : Infinity
+    const timeUntilGame = gameStart - now
+    
+    if (timeUntilGame <= FREEZE_WINDOW_MS) {
+      // Game starts within 1 hour (or has already started) → frozen
+      pick.frozen = true
+      frozen.push(pick)
+    } else {
+      unfrozen.push(pick)
+    }
+  }
+  
+  // Step 3: Assign tiers — frozen picks claim slots first, then unfrozen picks.
   // Only 1 pick per gameId can be Lock or Strong. This prevents correlated
   // losses when the model likes multiple bet types on the same game (e.g.,
   // Radford ML + Radford -2.5 both in top 4 — if Radford loses, you lose 2 picks).
@@ -97,13 +120,14 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   let strongCount = 0
   const topTierGameIds = new Set<string>()
   
-  for (const pick of allDeduped) {
+  // Helper to assign a tier to a single pick
+  const assignTier = (pick: PickLike) => {
     const gameId = String(pick.gameId || '')
     
     // If this game already has a pick in Lock/Strong, skip to value tier
     if (gameId && topTierGameIds.has(gameId)) {
       pick.confidenceTier = 'value'
-      continue
+      return
     }
     
     if (lockCount < MAX_LOCKS) {
@@ -117,6 +141,16 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     } else {
       pick.confidenceTier = 'value'
     }
+  }
+  
+  // First pass: frozen picks claim tier slots (sorted by score among themselves)
+  for (const pick of frozen) {
+    assignTier(pick)
+  }
+  
+  // Second pass: unfrozen picks fill remaining slots
+  for (const pick of unfrozen) {
+    assignTier(pick)
   }
   
   // Step 4: Return Lock/Strong picks
