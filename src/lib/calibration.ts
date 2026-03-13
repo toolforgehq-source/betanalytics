@@ -466,6 +466,9 @@ const SPORT_CALIBRATION_CORRECTIONS: Record<string, number> = {
   'basketball_ncaab': 0.94,
   // NHL: severe overconfidence (model says ~55% but actual is ~33%)
   'icehockey_nhl': 0.80,
+  // MLB: moderate overconfidence — baseball is inherently high-variance
+  // (best teams win ~60%, worst ~40%), so compress predictions toward 50%
+  'baseball_mlb': 0.88,
   // Soccer leagues: severe overconfidence (0% actual on limited data)
   'soccer_spain_la_liga': 0.75,
   'soccer_epl': 0.75,

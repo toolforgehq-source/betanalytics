@@ -25,7 +25,7 @@ const K_FACTORS: Record<string, number> = {
   'NBA': 20,      // 82 games, moderate reactivity
   'NFL': 32,      // 17 games, higher reactivity needed
   'NHL': 20,      // 82 games
-  'MLB': 8,       // 162 games, very stable
+  'MLB': 8,       // 162 games, very stable (boosted to 16 early season, see getEffectiveKFactor)
   'NCAAB': 32,    // Fewer games, higher reactivity
   'NCAAF': 40,    // Very few games, highest reactivity
   // Soccer leagues
@@ -47,6 +47,14 @@ const K_FACTORS: Record<string, number> = {
 // Minimum games threshold: teams with fewer than this many games
 // should not be used for predictions (insufficient data)
 const MIN_GAMES_FOR_PREDICTIONS = 5
+
+// EARLY-SEASON K-FACTOR BOOST
+// MLB's base K=8 is correct for mid-season stability, but at season start
+// ratings are based on last year's regressed data and need to converge faster.
+// For teams with fewer than 30 games played this season, boost K by 2x.
+const EARLY_SEASON_K_BOOST: Record<string, { maxGames: number; multiplier: number }> = {
+  'MLB': { maxGames: 30, multiplier: 2.0 },  // K=8 → K=16 for first 30 games
+}
 
 // RECENCY WEIGHTING: Recent games get a higher K-factor multiplier
 // so Elo reacts more strongly to current form.
@@ -334,7 +342,7 @@ const SEASON_START_DATES: Record<string, { month: number; day: number }> = {
   'NBA': { month: 10, day: 20 },       // NBA season starts late October
   'NFL': { month: 9, day: 5 },         // NFL season starts early September
   'NHL': { month: 10, day: 10 },       // NHL season starts early October
-  'MLB': { month: 3, day: 28 },        // MLB season starts late March
+  'MLB': { month: 3, day: 27 },        // MLB Opening Day 2026 is March 26, regression applied day before
   'NCAAB': { month: 11, day: 5 },      // College basketball starts early November
   'NCAAF': { month: 8, day: 25 },      // College football starts late August
   // Soccer seasons
@@ -876,6 +884,13 @@ async function fetchCompletedGames(
       // Only process completed games
       if (!event.status?.type?.completed) continue
       
+      // Filter out preseason/spring training games (season type 1 = preseason, 2 = regular, 3 = postseason)
+      // Spring training games are meaningless for Elo — starters play 3-5 innings, lineups rotate constantly
+      const seasonType = event.season?.type
+      if (seasonType !== undefined && seasonType !== 2 && seasonType !== 3) {
+        continue
+      }
+      
       const competition = event.competitions?.[0]
       if (!competition) continue
       
@@ -1093,14 +1108,22 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
       : RECENCY_K_MULTIPLIER.NORMAL
     const recencyMultiplier = (homeRecency + awayRecency) / 2
     
-    // Update ratings with recency-weighted K-factor
+    // EARLY-SEASON K-FACTOR BOOST: For leagues like MLB, use higher K-factor
+    // when teams have played fewer than N games so ratings converge faster
+    const earlySeasonBoost = EARLY_SEASON_K_BOOST[game.league]
+    const earlySeasonMultiplier = earlySeasonBoost && 
+      Math.max(homeTeam.gamesPlayed, awayTeam.gamesPlayed) < earlySeasonBoost.maxGames
+      ? earlySeasonBoost.multiplier
+      : 1.0
+    
+    // Update ratings with recency-weighted and early-season-boosted K-factor
     const { newHomeRating, newAwayRating } = updateRatingsAfterGame(
       homeTeam.rating,
       awayTeam.rating,
       game.homeScore,
       game.awayScore,
       game.league,
-      recencyMultiplier
+      recencyMultiplier * earlySeasonMultiplier
     )
     
     homeTeam.rating = newHomeRating

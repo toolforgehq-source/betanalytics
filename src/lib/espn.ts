@@ -133,6 +133,7 @@ export interface ESPNProbable {
   team: string
   player: string
   position: string
+  era?: number  // Starting pitcher ERA (from ESPN statistics)
 }
 
 export interface ESPNGameData {
@@ -1031,10 +1032,22 @@ async function fetchESPNScoreboard(sport: string, league: string, leagueName: st
       for (const competitor of competition.competitors || []) {
         if (competitor.probables && Array.isArray(competitor.probables)) {
           for (const probable of competitor.probables) {
+            // Extract ERA from statistics array if available (MLB pitchers)
+            let era: number | undefined
+            if (probable.statistics && Array.isArray(probable.statistics)) {
+              const eraStat = probable.statistics.find(
+                (s: { name?: string; abbreviation?: string }) => s.name === 'ERA' || s.abbreviation === 'ERA'
+              )
+              if (eraStat && eraStat.displayValue) {
+                const parsed = parseFloat(eraStat.displayValue)
+                if (!isNaN(parsed)) era = parsed
+              }
+            }
             probables.push({
               team: competitor.team?.displayName || competitor.team?.name || 'Unknown',
               player: probable.athlete?.displayName || 'Unknown',
-              position: probable.position?.abbreviation || probable.position?.name || ''
+              position: probable.position?.abbreviation || probable.position?.name || '',
+              era
             })
           }
         }
