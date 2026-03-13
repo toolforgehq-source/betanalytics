@@ -16,7 +16,7 @@
 
 import type { Game } from './odds'
 import type { EnrichedGame } from './combined-data'
-import type { ESPNInjury } from './espn'
+import type { ESPNInjury, ESPNProbable } from './espn'
 import { getPlayerPropProbability, getPlayerStatsData, type PlayerStats, type EnhancedPropProbability } from './player-stats'
 import { trackBestBet, trackParlay, trackSportBet, trackPropBet } from './recommendation-tracking'
 import { 
@@ -27,7 +27,8 @@ import {
   getTeamMarginStatsByName,
   getTeamLast10ByName,
   type InjuryInfo,
-  type PlayerImportance
+  type PlayerImportance,
+  type PitcherInfo
 } from './elo'
 import {
   calculateSituationalFactors,
@@ -356,6 +357,28 @@ function convertESPNInjuriesToInjuryInfo(espnInjuries: ESPNInjury[]): InjuryInfo
     status: injury.status,
     details: injury.details
   }))
+}
+
+/**
+ * Extract starting pitcher info from ESPN probables data
+ * Returns PitcherInfo for a specific team, or null if not available
+ */
+function extractPitcherInfo(probables: ESPNProbable[], teamName: string): PitcherInfo | null {
+  if (!probables || probables.length === 0) return null
+  
+  const teamNorm = teamName.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const pitcher = probables.find(p => {
+    const pTeamNorm = p.team.toLowerCase().replace(/[^a-z0-9]/g, '')
+    return pTeamNorm.includes(teamNorm) || teamNorm.includes(pTeamNorm)
+  })
+  
+  if (!pitcher) return null
+  
+  return {
+    name: pitcher.player,
+    team: pitcher.team,
+    era: pitcher.era
+  }
 }
 
 /**
@@ -1188,6 +1211,15 @@ export async function analyzeGame(
           getTopScorersForTeam(game.awayTeam, game.sport)
         ])
         
+        // Extract starting pitcher data from ESPN probables (MLB)
+        const enrichedGame = game as EnrichedGame
+        const probables = enrichedGame.espnData?.probables || []
+        const homePitcher = extractPitcherInfo(probables, game.homeTeam)
+        const awayPitcher = extractPitcherInfo(probables, game.awayTeam)
+        if (homePitcher || awayPitcher) {
+          console.log(`[analyzeGame] Pitcher data: home=${homePitcher?.name || 'N/A'} (ERA ${homePitcher?.era ?? 'N/A'}), away=${awayPitcher?.name || 'N/A'} (ERA ${awayPitcher?.era ?? 'N/A'})`)
+        }
+        
         const injuryResult = await getEloWinProbabilityWithInjuries(
           eloLeague,
           game.homeTeam,
@@ -1195,8 +1227,8 @@ export async function analyzeGame(
           injuries,
           homeTopScorers,
           awayTopScorers,
-          undefined,  // homePitcher
-          undefined,  // awayPitcher
+          homePitcher ?? undefined,
+          awayPitcher ?? undefined,
           isNeutralSite
         )
         
@@ -2167,6 +2199,15 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           getTopScorersForTeam(game.awayTeam, game.sport)
         ])
         
+        // Extract starting pitcher data from ESPN probables (MLB)
+        const enrichedGame = game as EnrichedGame
+        const probables = enrichedGame.espnData?.probables || []
+        const homePitcher = extractPitcherInfo(probables, game.homeTeam)
+        const awayPitcher = extractPitcherInfo(probables, game.awayTeam)
+        if (homePitcher || awayPitcher) {
+          console.log(`[analyzeGameForSportQuery] Pitcher data: home=${homePitcher?.name || 'N/A'} (ERA ${homePitcher?.era ?? 'N/A'}), away=${awayPitcher?.name || 'N/A'} (ERA ${awayPitcher?.era ?? 'N/A'})`)
+        }
+        
         const injuryResult = await getEloWinProbabilityWithInjuries(
           eloLeague,
           game.homeTeam,
@@ -2174,8 +2215,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           injuries,
           homeTopScorers,
           awayTopScorers,
-          undefined,  // homePitcher
-          undefined,  // awayPitcher
+          homePitcher ?? undefined,
+          awayPitcher ?? undefined,
           isNeutralSite
         )
         
