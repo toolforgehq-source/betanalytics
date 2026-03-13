@@ -6,6 +6,7 @@
  *
  * Single source of truth for:
  * - Deduplication (gameId:team:betType, prefer higher score)
+ * - Kelly Criterion filtering (only bets with meaningful Kelly fraction qualify)
  * - Score-based tier assignment (highest score = Lock, next best = Strong)
  * - Tier caps (max 1 Lock, max 3 Strong)
  */
@@ -16,6 +17,109 @@ export type PickLike = Record<string, any>
 // These caps MUST match the values in bet-ranking.ts computeBestBets()
 export const MAX_LOCKS = 1
 export const MAX_STRONG = 3
+
+// ============================================
+// KELLY CRITERION GATES FOR LOCK/STRONG TIERS
+// ============================================
+// These hard filters prevent ridiculous picks from appearing in the top 4.
+// Heavy favorites (-345) have tiny payouts → tiny Kelly fractions.
+// Big underdogs (+650) have low win probabilities → tiny Kelly fractions.
+// Only bets in the sweet spot (moderate odds with real edges) qualify.
+export const TIER_MAX_JUICE_ODDS = -250   // No heavy favorites worse than -250
+export const TIER_MAX_PLUS_ODDS = 400     // No long underdogs beyond +400
+export const TIER_MIN_KELLY = 0.02        // Minimum 2% Kelly fraction for Lock/Strong
+export const TIER_MIN_PROBABILITY = 55    // Minimum 55% win probability for Lock/Strong
+
+/**
+ * Calculate Kelly Criterion fraction for a bet.
+ * Kelly fraction = (b * p - q) / b
+ * where b = decimal payout, p = win probability (0-1), q = 1-p
+ *
+ * This represents the optimal fraction of bankroll to wager.
+ * Higher Kelly fraction = better bet for long-term bankroll growth.
+ *
+ * Examples:
+ *   -150 favorite, 65% prob → Kelly = (0.667 * 0.65 - 0.35) / 0.667 = 12.5%
+ *   +200 underdog, 40% prob → Kelly = (2.0 * 0.40 - 0.60) / 2.0 = 10.0%
+ *   -345 favorite, 80% prob → Kelly = (0.290 * 0.80 - 0.20) / 0.290 = 11.0%
+ *   +650 underdog, 20% prob → Kelly = (6.5 * 0.20 - 0.80) / 6.5 = 7.7%
+ *   -110 pick, 55% prob     → Kelly = (0.909 * 0.55 - 0.45) / 0.909 = 5.5%
+ */
+export function calculateKellyFraction(probabilityPct: number, americanOdds: number): number {
+  if (americanOdds === 0 || probabilityPct <= 0 || probabilityPct >= 100) return 0
+
+  // Convert American odds to decimal payout (net profit per $1 wagered)
+  let b: number
+  if (americanOdds > 0) {
+    b = americanOdds / 100  // e.g., +200 → 2.0
+  } else {
+    b = 100 / Math.abs(americanOdds)  // e.g., -150 → 0.667
+  }
+
+  const p = probabilityPct / 100  // Convert percentage to decimal
+  const q = 1 - p
+
+  // Kelly fraction: f* = (bp - q) / b
+  const kelly = (b * p - q) / b
+
+  return Math.max(0, kelly)  // Never negative (don't bet if negative edge)
+}
+
+/**
+ * Check if a pick's odds are within the acceptable range for Lock/Strong tiers.
+ * Rejects heavy favorites (worse than -250) and long underdogs (beyond +400).
+ */
+function isOddsInTierRange(americanOdds: number): boolean {
+  if (americanOdds === 0) return false
+  if (americanOdds < TIER_MAX_JUICE_ODDS) return false  // e.g., -345 < -250 → reject
+  if (americanOdds > TIER_MAX_PLUS_ODDS) return false   // e.g., +650 > +400 → reject
+  return true
+}
+
+/**
+ * Get the Kelly fraction for a pick, computing from available fields.
+ */
+function getPickKellyFraction(pick: PickLike): number {
+  const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
+  const odds = (pick.bestPrice || pick.odds || 0) as number
+  if (prob <= 0 || odds === 0) return 0
+  return calculateKellyFraction(prob, odds)
+}
+
+/**
+ * Get the win probability for a pick from available fields.
+ */
+function getPickProbability(pick: PickLike): number {
+  return (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
+}
+
+/**
+ * Get the American odds for a pick from available fields.
+ */
+function getPickOdds(pick: PickLike): number {
+  return (pick.bestPrice || pick.odds || 0) as number
+}
+
+/**
+ * Check if a pick qualifies for Lock/Strong tier based on Kelly Criterion gates.
+ * This is the HARD FILTER that prevents ridiculous picks from appearing in top 4.
+ */
+function qualifiesForTopTier(pick: PickLike): boolean {
+  const odds = getPickOdds(pick)
+  const prob = getPickProbability(pick)
+  const kelly = getPickKellyFraction(pick)
+
+  // Hard filter: odds must be in [-250, +400] range
+  if (!isOddsInTierRange(odds)) return false
+
+  // Hard filter: minimum 55% win probability
+  if (prob < TIER_MIN_PROBABILITY) return false
+
+  // Hard filter: minimum 2% Kelly fraction (meaningful bet size)
+  if (kelly < TIER_MIN_KELLY) return false
+
+  return true
+}
 
 /**
  * Compute edge (probability - implied probability) from American odds.
@@ -116,6 +220,10 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   // losses when the model likes multiple bet types on the same game (e.g.,
   // Radford ML + Radford -2.5 both in top 4 — if Radford loses, you lose 2 picks).
   // The highest-scored bet from each game gets priority; duplicates stay as value.
+  //
+  // KELLY CRITERION GATE: Only picks that pass qualifiesForTopTier() can be
+  // Lock or Strong. This prevents heavy favorites (-345), long underdogs (+650),
+  // and low-Kelly-fraction bets from appearing in the top 4.
   let lockCount = 0
   let strongCount = 0
   const topTierGameIds = new Set<string>()
@@ -126,6 +234,12 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     
     // If this game already has a pick in Lock/Strong, skip to value tier
     if (gameId && topTierGameIds.has(gameId)) {
+      pick.confidenceTier = 'value'
+      return
+    }
+    
+    // KELLY CRITERION GATE: Must pass hard filters to be Lock/Strong
+    if (!qualifiesForTopTier(pick)) {
       pick.confidenceTier = 'value'
       return
     }
