@@ -387,3 +387,27 @@ export function dedupeAndSort(picks: PickLike[]): PickLike[] {
   
   return Array.from(dedupMap.values()).sort((a, b) => (b.score || 0) - (a.score || 0))
 }
+
+/**
+ * Build a deduped lookup map from raw picks.
+ * Key is "gameId:team:betType", value is the highest-scored version.
+ * Used by the picks API to resolve pinned picks against fresh data.
+ */
+export function dedupeToMap(picks: PickLike[]): Map<string, PickLike> {
+  const dedupMap = new Map<string, PickLike>()
+  for (const pick of picks) {
+    const team = pick.team || (pick.selection ? String(pick.selection).replace(/\s+[+-]?\d[\d.]*$/, '').replace(/\s+ML$/i, '').trim() : '')
+    if (!pick.gameId || !team || !pick.betType) continue
+    if (String(pick.gameId).includes('_')) continue
+    if (pick.betType === 'prop') continue
+    
+    if (!pick.team) pick.team = team
+    
+    const key = `${pick.gameId}:${team}:${pick.betType}`
+    const existing = dedupMap.get(key)
+    if (!existing || (pick.score || 0) > (existing.score || 0)) {
+      dedupMap.set(key, pick)
+    }
+  }
+  return dedupMap
+}

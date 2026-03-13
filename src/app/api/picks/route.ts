@@ -21,7 +21,188 @@ import { NextResponse } from 'next/server'
 import { getTrackRecord, getAllPicks, type StoredPick } from '@/lib/pick-tracking'
 import { getRecentRecommendations, calculateTrackingStats, enforceDailyCaps } from '@/lib/recommendation-tracking'
 import { getCachedBestBet, type RankedBet } from '@/lib/bet-ranking'
-import { dedupeAndEnforceCaps, type PickLike } from '@/lib/enforce-picks'
+import { dedupeAndEnforceCaps, dedupeToMap, MAX_LOCKS, MAX_STRONG, type PickLike } from '@/lib/enforce-picks'
+
+// ============================================
+// PICK PINNING — Prevents picks from rotating on refresh
+// ============================================
+// Once a pick is assigned Lock/Strong for the day, its tier assignment
+// is persisted in Redis. Subsequent API calls honor the persisted
+// assignments instead of recomputing from scratch. Only EMPTY slots
+// (caused by game cancellations or data removal) get filled with new picks.
+// This ensures users always see the same picks regardless of how many
+// times they refresh or when the cron updates odds/scores.
+
+interface PinnedPick {
+  gameId: string
+  team: string
+  betType: string
+  tier: 'lock' | 'strong'
+  pinnedAt: string
+}
+
+const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks:'
+
+async function getPinRedis() {
+  const url = process.env.KV_REST_API_URL
+  const token = process.env.KV_REST_API_TOKEN
+  if (!url || !token) return null
+  return { url, token }
+}
+
+/**
+ * Load today's pinned tier assignments from Redis.
+ */
+async function loadPinnedPicks(dateKey: string): Promise<PinnedPick[]> {
+  const redis = await getPinRedis()
+  if (!redis) return []
+  try {
+    const res = await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['GET', `${PINNED_PICKS_PREFIX}${dateKey}`]),
+      cache: 'no-store'
+    })
+    const data = await res.json()
+    if (!data.result) return []
+    let parsed = data.result
+    if (typeof parsed === 'string') parsed = JSON.parse(parsed)
+    if (typeof parsed === 'string') parsed = JSON.parse(parsed)
+    return Array.isArray(parsed) ? parsed : []
+  } catch (err) {
+    console.error('[API /picks] Error loading pinned picks:', err)
+    return []
+  }
+}
+
+/**
+ * Persist today's tier assignments to Redis.
+ * TTL is set to expire at 2 AM ET (same as the best bet cache).
+ */
+async function savePinnedPicks(dateKey: string, pins: PinnedPick[]): Promise<void> {
+  const redis = await getPinRedis()
+  if (!redis) return
+  try {
+    await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['SET', `${PINNED_PICKS_PREFIX}${dateKey}`, JSON.stringify(pins)]),
+      cache: 'no-store'
+    })
+    // Expire at 2 AM ET (36 hours max to cover full betting day + buffer)
+    await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['EXPIRE', `${PINNED_PICKS_PREFIX}${dateKey}`, 36 * 60 * 60]),
+      cache: 'no-store'
+    })
+  } catch (err) {
+    console.error('[API /picks] Error saving pinned picks:', err)
+  }
+}
+
+/**
+ * Resolve pinned picks against fresh data and fill any empty slots.
+ *
+ * 1. For each pinned pick, find the matching pick in the fresh deduped pool
+ *    (by gameId:team:betType). This gives us the latest odds/scores while
+ *    keeping the tier assignment fixed.
+ * 2. If a pinned pick is no longer in the data (game removed), its slot opens up.
+ * 3. Fill empty slots from the freshly computed enforcedPicks.
+ * 4. Return the final picks + whether new pins were added.
+ */
+function resolvePinnedPicks(
+  rawPicks: PickLike[],
+  pinned: PinnedPick[],
+  enforcedPicks: PickLike[]
+): { picks: PickLike[]; updatedPins: PinnedPick[]; changed: boolean } {
+  // Build deduped lookup from ALL raw picks (for resolving pinned picks)
+  const dedupMap = dedupeToMap(rawPicks)
+
+  // Resolve each pinned pick against fresh data
+  const resolvedPicks: PickLike[] = []
+  const validPins: PinnedPick[] = []
+  const usedGameIds = new Set<string>()
+  let lockCount = 0
+  let strongCount = 0
+
+  for (const pin of pinned) {
+    const key = `${pin.gameId}:${pin.team}:${pin.betType}`
+    const freshPick = dedupMap.get(key)
+    if (freshPick) {
+      // Found in fresh data — use latest odds/scores but keep pinned tier
+      freshPick.confidenceTier = pin.tier
+      resolvedPicks.push(freshPick)
+      validPins.push(pin)
+      usedGameIds.add(String(pin.gameId))
+      if (pin.tier === 'lock') lockCount++
+      else strongCount++
+    } else {
+      // Pick no longer in data (game cancelled/removed) — slot opens up
+      console.log(`[API /picks] Pinned pick ${key} no longer in data — slot released`)
+    }
+  }
+
+  // Fill empty slots from freshly computed enforcedPicks
+  let changed = validPins.length !== pinned.length // changed if we lost any pins
+  for (const pick of enforcedPicks) {
+    if (lockCount >= MAX_LOCKS && strongCount >= MAX_STRONG) break
+
+    const gameId = String(pick.gameId || '')
+    // Don't add another pick from a game that already has a pinned pick
+    if (usedGameIds.has(gameId)) continue
+
+    const key = `${pick.gameId}:${pick.team || ''}:${pick.betType}`
+    // Don't add if already in resolved set
+    if (resolvedPicks.some(rp => `${rp.gameId}:${rp.team || ''}:${rp.betType}` === key)) continue
+
+    if (lockCount < MAX_LOCKS) {
+      pick.confidenceTier = 'lock'
+      resolvedPicks.push(pick)
+      validPins.push({
+        gameId: gameId,
+        team: String(pick.team || ''),
+        betType: String(pick.betType || ''),
+        tier: 'lock',
+        pinnedAt: new Date().toISOString()
+      })
+      lockCount++
+      usedGameIds.add(gameId)
+      changed = true
+    } else if (strongCount < MAX_STRONG) {
+      pick.confidenceTier = 'strong'
+      resolvedPicks.push(pick)
+      validPins.push({
+        gameId: gameId,
+        team: String(pick.team || ''),
+        betType: String(pick.betType || ''),
+        tier: 'strong',
+        pinnedAt: new Date().toISOString()
+      })
+      strongCount++
+      usedGameIds.add(gameId)
+      changed = true
+    }
+  }
+
+  // Sort: locks first, then strong, by score within each tier
+  resolvedPicks.sort((a, b) => {
+    if (a.confidenceTier === 'lock' && b.confidenceTier !== 'lock') return -1
+    if (a.confidenceTier !== 'lock' && b.confidenceTier === 'lock') return 1
+    return (b.score || 0) - (a.score || 0)
+  })
+
+  return { picks: resolvedPicks, updatedPins: validPins, changed }
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -132,11 +313,49 @@ export async function GET() {
     const rawPicks: PickLike[] = [...livePicks, ...todaysRecommendations]
     console.log(`[API /picks] Merging ${livePicks.length} live picks + ${todaysRecommendations.length} stored recos = ${rawPicks.length} raw picks`)
     const enforcedPicks = dedupeAndEnforceCaps(rawPicks)
+
+    // ============================================
+    // PICK PINNING: Prevent picks from rotating on refresh
+    // ============================================
+    // Once tier assignments are computed, they are persisted in Redis.
+    // On subsequent requests, the persisted assignments are used instead
+    // of recomputing (which could produce different results due to
+    // odds changes, freeze window timing, or cron updates).
+    // Only EMPTY slots (from game cancellations) get filled with new picks.
+    const dateKey = todayStr.replace(/\//g, '-')
+    const pinnedPicks = await loadPinnedPicks(dateKey)
+
+    let finalPicks: PickLike[]
+    if (pinnedPicks.length > 0) {
+      // We have persisted tier assignments — resolve against fresh data
+      console.log(`[API /picks] Found ${pinnedPicks.length} pinned picks — resolving against fresh data`)
+      const { picks, updatedPins, changed } = resolvePinnedPicks(rawPicks, pinnedPicks, enforcedPicks)
+      finalPicks = picks
+      // Update Redis if pins changed (lost pins or filled new slots)
+      if (changed) {
+        console.log(`[API /picks] Pins changed (${pinnedPicks.length} → ${updatedPins.length}) — saving updated pins`)
+        await savePinnedPicks(dateKey, updatedPins)
+      }
+    } else {
+      // No pinned picks for today — use freshly computed picks and pin them
+      console.log(`[API /picks] No pinned picks for today — pinning ${enforcedPicks.length} computed picks`)
+      finalPicks = enforcedPicks
+      const newPins: PinnedPick[] = enforcedPicks.map(p => ({
+        gameId: String(p.gameId || ''),
+        team: String(p.team || ''),
+        betType: String(p.betType || ''),
+        tier: p.confidenceTier as 'lock' | 'strong',
+        pinnedAt: new Date().toISOString()
+      }))
+      if (newPins.length > 0) {
+        await savePinnedPicks(dateKey, newPins)
+      }
+    }
     
     // Mark picks whose games have already started so the frontend can show appropriate status.
     // We keep them visible (users may want to see what was recommended) but flag them.
     const nowMs = Date.now()
-    for (const pick of enforcedPicks) {
+    for (const pick of finalPicks) {
       if (pick.commenceTime) {
         const gameStart = new Date(pick.commenceTime as string).getTime()
         if (nowMs >= gameStart) {
@@ -145,17 +364,17 @@ export async function GET() {
       }
     }
     
-    const lockCount = enforcedPicks.filter(p => p.confidenceTier === 'lock').length
-    const strongCount = enforcedPicks.filter(p => p.confidenceTier === 'strong').length
-    const startedCount = enforcedPicks.filter(p => p.gameStarted).length
-    const frozenCount = enforcedPicks.filter(p => p.frozen).length
-    console.log(`[API /picks] Final enforced picks: ${enforcedPicks.length} total (${lockCount} locks, ${strongCount} strong, ${startedCount} already started, ${frozenCount} frozen)`)
+    const lockCount = finalPicks.filter(p => p.confidenceTier === 'lock').length
+    const strongCount = finalPicks.filter(p => p.confidenceTier === 'strong').length
+    const startedCount = finalPicks.filter(p => p.gameStarted).length
+    const frozenCount = finalPicks.filter(p => p.frozen).length
+    console.log(`[API /picks] Final picks: ${finalPicks.length} total (${lockCount} locks, ${strongCount} strong, ${startedCount} already started, ${frozenCount} frozen, pinned=${pinnedPicks.length > 0})`)
 
     return NextResponse.json({
       success: true,
       todaysPicks,
       todaysRecommendations,
-      livePicks: enforcedPicks,  // ALWAYS deduped + tier-capped
+      livePicks: finalPicks,  // ALWAYS deduped + tier-capped + pinned
       recentSettled,
       recentRecommendations: allRecentRecos,
       settledRecommendations: settledRecos,
