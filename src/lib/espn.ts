@@ -1469,5 +1469,10 @@ interface ESPNCompetitor {
       abbreviation?: string
       name?: string
     }
+    statistics?: Array<{
+      name?: string
+      abbreviation?: string
+      displayValue?: string
+    }>
   }>
 }
