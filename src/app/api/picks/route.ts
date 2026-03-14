@@ -141,6 +141,16 @@ function resolveHybridPicks(
     const key = `${pin.gameId}:${pin.team}:${pin.betType}`
     const freshPick = dedupMap.get(key)
     if (freshPick) {
+      // Only honor the pin if the game is actually within the freeze window
+      // (or has already started). Pins for games >1hr away were created by
+      // the old "lock everything on first load" approach and should be dropped
+      // so those picks can recalculate fresh with latest data.
+      const gameStart = freshPick.commenceTime ? new Date(freshPick.commenceTime as string).getTime() : Infinity
+      const timeUntilGame = gameStart - now
+      if (timeUntilGame > FREEZE_WINDOW_MS) {
+        console.log(`[API /picks] Dropping stale pin ${key} — game is ${Math.round(timeUntilGame / 60000)}min away (not yet frozen)`)
+        continue
+      }
       freshPick.confidenceTier = pin.tier
       freshPick.frozen = true
       resolvedPicks.push(freshPick)
