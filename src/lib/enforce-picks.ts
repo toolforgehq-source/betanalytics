@@ -197,21 +197,15 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   
   const now = Date.now()
   
-  // Separate picks into frozen (within FREEZE_WINDOW_MS of game time or already started)
-  // and unfrozen.  Both lists stay sorted by score descending.
-  const frozen: PickLike[] = []
-  const unfrozen: PickLike[] = []
-  
+  // Mark frozen status on each pick (for display purposes only — does NOT
+  // affect slot priority). The freeze window is used by resolveHybridPicks
+  // to decide whether to pin a pick in Redis.
   for (const pick of allDeduped) {
     const gameStart = pick.commenceTime ? new Date(pick.commenceTime as string).getTime() : Infinity
     const timeUntilGame = gameStart - now
     
     if (timeUntilGame <= FREEZE_WINDOW_MS) {
-      // Game starts within 1 hour (or has already started) → frozen
       pick.frozen = true
-      frozen.push(pick)
-    } else {
-      unfrozen.push(pick)
     }
   }
   
