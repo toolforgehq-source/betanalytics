@@ -215,11 +215,16 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     }
   }
   
-  // Step 3: Assign tiers — frozen picks claim slots first, then unfrozen picks.
+  // Step 3: Assign tiers PURELY BY SCORE — no freeze-window priority.
+  // Previously, frozen picks claimed slots first, which let low-score games
+  // (e.g. European soccer at score 39) steal slots from high-score games
+  // (e.g. UCLA at score 87) just because they happened to start sooner.
+  // Now ALL picks compete on score alone. The freeze window only affects
+  // whether a pick gets pinned in Redis (handled by resolveHybridPicks),
+  // NOT whether it gets a slot.
+  //
   // Only 1 pick per gameId can be Lock or Strong. This prevents correlated
-  // losses when the model likes multiple bet types on the same game (e.g.,
-  // Radford ML + Radford -2.5 both in top 4 — if Radford loses, you lose 2 picks).
-  // The highest-scored bet from each game gets priority; duplicates stay as value.
+  // losses when the model likes multiple bet types on the same game.
   //
   // KELLY CRITERION GATE: Only picks that pass qualifiesForTopTier() can be
   // Lock or Strong. This prevents heavy favorites (-345), long underdogs (+650),
@@ -257,13 +262,10 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     }
   }
   
-  // First pass: frozen picks claim tier slots (sorted by score among themselves)
-  for (const pick of frozen) {
-    assignTier(pick)
-  }
-  
-  // Second pass: unfrozen picks fill remaining slots
-  for (const pick of unfrozen) {
+  // Single pass: ALL picks compete by score (allDeduped is already sorted by score desc).
+  // Frozen status is still marked on the pick for display purposes, but does NOT
+  // give priority for slot assignment.
+  for (const pick of allDeduped) {
     assignTier(pick)
   }
   

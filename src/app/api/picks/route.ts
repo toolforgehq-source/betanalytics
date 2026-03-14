@@ -41,7 +41,9 @@ interface PinnedPick {
   pinnedAt: string
 }
 
-const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks:'
+// v2: Bumped to invalidate bad pins created by the old freeze-window-priority
+// logic that let low-score games steal slots from high-score games.
+const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks-v2:'
 
 async function getPinRedis() {
   const url = process.env.KV_REST_API_URL
@@ -111,15 +113,19 @@ async function savePinnedPicks(dateKey: string, pins: PinnedPick[]): Promise<voi
 }
 
 /**
- * Hybrid pick resolution: pinned (frozen) picks stay locked, unfrozen picks
- * are recalculated fresh from the model on every request.
+ * Hybrid pick resolution: pinned (frozen) picks stay locked, remaining slots
+ * are filled PURELY BY SCORE from the model on every request.
  *
  * Flow:
- * 1. Load any previously pinned picks from Redis
- * 2. Resolve pinned picks against fresh data (latest odds/scores, same tier)
- * 3. Check enforcedPicks for newly frozen games — pin them now
- * 4. Fill remaining slots from enforcedPicks (unfrozen, recalculated fresh)
- * 5. Return final picks + updated pins
+ * 1. Load any previously pinned picks from Redis — honor existing frozen picks
+ * 2. Fill remaining slots from enforcedPicks sorted by score (best first)
+ *    - If a selected pick is within the freeze window, also pin it in Redis
+ *    - If not in the freeze window, it shows as a fresh (unfrozen) pick
+ * 3. Return final picks + updated pins
+ *
+ * KEY CHANGE: Freeze-window status does NOT give priority for slot assignment.
+ * Only the highest-scoring picks get slots. This prevents low-score games
+ * that happen to start soon from stealing slots from high-score later games.
  */
 function resolveHybridPicks(
   rawPicks: PickLike[],
@@ -164,39 +170,44 @@ function resolveHybridPicks(
     }
   }
 
-  // --- Phase 2: Check enforcedPicks for newly frozen games that should be pinned ---
+  // --- Phase 2: Fill remaining slots PURELY BY SCORE ---
+  // Previously, Phase 2 grabbed slots for ANY freeze-window pick before
+  // Phase 3 could fill by score. This let low-score European soccer games
+  // (score 39) steal slots from high-score NCAAB games (score 87).
+  // Now we iterate enforcedPicks (already sorted by score) in a single pass.
+  // If a selected pick happens to be in the freeze window, we also pin it.
   let changed = validPins.length !== pinned.length
   const newlyPinned: PickLike[] = []
 
   for (const pick of enforcedPicks) {
+    if (lockCount >= MAX_LOCKS && strongCount >= MAX_STRONG) break
+
     const gameId = String(pick.gameId || '')
     const key = `${pick.gameId}:${pick.team || ''}:${pick.betType}`
 
-    // Skip if already pinned
+    // Skip if already pinned/used
     if (pinnedKeys.has(key)) continue
-    // Skip if this game already has a pinned pick
     if (usedGameIds.has(gameId)) continue
 
-    // Check if this pick's game is within the freeze window
+    // Assign tier based on score (enforcedPicks is sorted by score desc)
+    if (lockCount < MAX_LOCKS) {
+      pick.confidenceTier = 'lock'
+      lockCount++
+    } else if (strongCount < MAX_STRONG) {
+      pick.confidenceTier = 'strong'
+      strongCount++
+    } else {
+      continue
+    }
+
+    resolvedPicks.push(pick)
+    usedGameIds.add(gameId)
+
+    // If this pick is within the freeze window, also pin it in Redis
     const gameStart = pick.commenceTime ? new Date(pick.commenceTime as string).getTime() : Infinity
     const timeUntilGame = gameStart - now
-
     if (timeUntilGame <= FREEZE_WINDOW_MS) {
-      // Game is within 1 hour — pin it permanently
-      if (lockCount >= MAX_LOCKS && strongCount >= MAX_STRONG) continue
-
-      if (lockCount < MAX_LOCKS) {
-        pick.confidenceTier = 'lock'
-        lockCount++
-      } else if (strongCount < MAX_STRONG) {
-        pick.confidenceTier = 'strong'
-        strongCount++
-      } else {
-        continue
-      }
-
       pick.frozen = true
-      resolvedPicks.push(pick)
       validPins.push({
         gameId: gameId,
         team: String(pick.team || ''),
@@ -204,7 +215,6 @@ function resolveHybridPicks(
         tier: pick.confidenceTier as 'lock' | 'strong',
         pinnedAt: new Date().toISOString()
       })
-      usedGameIds.add(gameId)
       pinnedKeys.add(key)
       changed = true
       newlyPinned.push(pick)
@@ -213,37 +223,6 @@ function resolveHybridPicks(
 
   if (newlyPinned.length > 0) {
     console.log(`[API /picks] Newly pinned ${newlyPinned.length} picks entering freeze window: ${newlyPinned.map(p => p.team).join(', ')}`)
-  }
-
-  // --- Phase 3: Fill remaining slots with fresh (unfrozen) picks ---
-  // These are NOT pinned — they recalculate on every request so the model
-  // can incorporate new injuries, line moves, weather, etc.
-  for (const pick of enforcedPicks) {
-    if (lockCount >= MAX_LOCKS && strongCount >= MAX_STRONG) break
-
-    const gameId = String(pick.gameId || '')
-    const key = `${pick.gameId}:${pick.team || ''}:${pick.betType}`
-
-    if (pinnedKeys.has(key)) continue
-    if (usedGameIds.has(gameId)) continue
-    if (resolvedPicks.some(rp => `${rp.gameId}:${rp.team || ''}:${rp.betType}` === key)) continue
-
-    // Only fill with unfrozen picks (frozen ones were handled in Phase 2)
-    const gameStart = pick.commenceTime ? new Date(pick.commenceTime as string).getTime() : Infinity
-    const timeUntilGame = gameStart - now
-    if (timeUntilGame <= FREEZE_WINDOW_MS) continue // Already handled above
-
-    if (lockCount < MAX_LOCKS) {
-      pick.confidenceTier = 'lock'
-      resolvedPicks.push(pick)
-      lockCount++
-      usedGameIds.add(gameId)
-    } else if (strongCount < MAX_STRONG) {
-      pick.confidenceTier = 'strong'
-      resolvedPicks.push(pick)
-      strongCount++
-      usedGameIds.add(gameId)
-    }
   }
 
   // Sort: locks first, then strong, by score within each tier
