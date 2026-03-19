@@ -56,6 +56,50 @@ const EARLY_SEASON_K_BOOST: Record<string, { maxGames: number; multiplier: numbe
   'MLB': { maxGames: 30, multiplier: 2.0 },  // K=8 → K=16 for first 30 games
 }
 
+// ============================================
+// STRENGTH OF SCHEDULE (SOS) K-FACTOR WEIGHTING
+// ============================================
+//
+// Problem: In NCAAB with 360+ teams across isolated conferences, standard Elo
+// converges too slowly. Mid-major teams inflate by beating each other, while
+// power conference teams get dragged down by losses to other strong teams.
+// Example: NDSU (Summit League) can end up rated higher than Michigan State (Big Ten).
+//
+// Solution: Weight the K-factor by opponent strength relative to the league average.
+// Beating a team rated well above average → higher K (more credit)
+// Beating a team rated well below average → lower K (less credit)
+// This deflates mid-major bubbles and properly rewards power conference strength.
+//
+// The multiplier is: 1.0 + SOS_STRENGTH * ((opponentRating - DEFAULT_RATING) / SOS_SCALE)
+// Clamped to [SOS_MIN_MULTIPLIER, SOS_MAX_MULTIPLIER] to prevent extreme swings.
+//
+// Set enabled=false to disable for a league (defaults to off).
+const SOS_K_FACTOR_CONFIG: Record<string, {
+  enabled: boolean
+  strength: number       // How aggressive the SOS weighting is (0.0 = off, 1.0 = full)
+  scale: number          // Elo points from average that produce a full strength adjustment
+  minMultiplier: number  // Floor for SOS K multiplier
+  maxMultiplier: number  // Ceiling for SOS K multiplier
+}> = {
+  'NCAAB': { enabled: true, strength: 0.5, scale: 300, minMultiplier: 0.6, maxMultiplier: 1.5 },
+  // Other leagues can be enabled later if needed:
+  // 'NCAAF': { enabled: true, strength: 0.4, scale: 300, minMultiplier: 0.7, maxMultiplier: 1.4 },
+}
+
+// MULTI-PASS RECALIBRATION CONFIG
+// Replay all games multiple times so opponent ratings used in calculations
+// are themselves more accurate. Each pass uses the previous pass's final ratings
+// as starting points. After 3-4 passes, ratings converge to "true" values.
+// Set passes=1 to disable (single pass = normal Elo behavior).
+const MULTI_PASS_CONFIG: Record<string, {
+  enabled: boolean
+  passes: number  // Number of passes to run (1 = normal, 3-4 = recommended for convergence)
+}> = {
+  'NCAAB': { enabled: true, passes: 3 },
+  // Other leagues can be enabled later if needed:
+  // 'NCAAF': { enabled: true, passes: 3 },
+}
+
 // RECENCY WEIGHTING: Recent games get a higher K-factor multiplier
 // so Elo reacts more strongly to current form.
 // - Games played within 7 days of last game: 1.15x K-factor (team is in rhythm)
@@ -247,6 +291,29 @@ const MOV_SCALE: Record<string, number> = {
   'soccer_france_ligue_one': 3.0,
   'soccer_usa_mls': 3.0,
   'soccer_uefa_champs_league': 3.0,
+}
+
+/**
+ * Calculate SOS (Strength of Schedule) K-factor multiplier
+ * Returns a multiplier for the K-factor based on opponent strength relative to league average.
+ * Beating strong opponents → higher K (more credit), beating weak opponents → lower K (less credit).
+ */
+function calculateSOSMultiplier(
+  opponentRating: number,
+  league: string
+): number {
+  const config = SOS_K_FACTOR_CONFIG[league]
+  if (!config || !config.enabled) return 1.0
+  
+  // How far above/below average is the opponent?
+  const ratingDiff = opponentRating - DEFAULT_RATING
+  
+  // Scale the adjustment: strength controls intensity, scale controls sensitivity
+  const adjustment = config.strength * (ratingDiff / config.scale)
+  
+  // Apply multiplier with clamping
+  const multiplier = 1.0 + adjustment
+  return Math.max(config.minMultiplier, Math.min(config.maxMultiplier, multiplier))
 }
 
 /**
@@ -625,12 +692,18 @@ export function updateRatingsAfterGame(
   // Calculate MOV multiplier (blowouts = more rating change)
   const movMultiplier = calculateMOVMultiplier(margin, winnerEloDiff, league)
   
-  // Apply MOV multiplier and recency multiplier to K-factor
-  const adjustedKFactor = baseKFactor * movMultiplier * recencyMultiplier
+  // Calculate SOS multiplier per team (opponent strength weighting)
+  // Home team's K is weighted by how strong the AWAY team is (and vice versa)
+  const homeSOS = calculateSOSMultiplier(awayRating, league)
+  const awaySOS = calculateSOSMultiplier(homeRating, league)
+  
+  // Apply MOV, recency, and SOS multipliers to K-factor
+  const homeKFactor = baseKFactor * movMultiplier * recencyMultiplier * homeSOS
+  const awayKFactor = baseKFactor * movMultiplier * recencyMultiplier * awaySOS
   
   // Calculate new ratings (without home advantage - that's only for prediction)
-  const newHomeRating = calculateNewRating(homeRating, homeExpected, homeActual, adjustedKFactor)
-  const newAwayRating = calculateNewRating(awayRating, awayExpected, awayActual, adjustedKFactor)
+  const newHomeRating = calculateNewRating(homeRating, homeExpected, homeActual, homeKFactor)
+  const newAwayRating = calculateNewRating(awayRating, awayExpected, awayActual, awayKFactor)
   
   return {
     newHomeRating: Math.round(newHomeRating),
@@ -1204,6 +1277,228 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
   await saveProcessedGameIds(processedIds)
   
   console.log(`[Elo] Updated ratings: ${newGamesProcessed} new games processed, ${Object.keys(eloData.ratings).length} teams tracked`)
+  
+  return eloData
+}
+
+/**
+ * Multi-pass Elo recalibration for leagues with isolated conference structures (e.g., NCAAB).
+ * 
+ * Problem: In a single-pass Elo system, teams in weak conferences inflate by beating
+ * each other, because the opponent ratings used in calculations are themselves inaccurate.
+ * 
+ * Solution: Replay all games multiple times. Each pass uses the previous pass's final
+ * ratings as starting points. After 3-4 passes, ratings converge because opponent
+ * strengths used in calculations are now accurate.
+ * 
+ * This function:
+ * 1. Takes all games for a league
+ * 2. Runs pass 1: normal Elo from 1500 (same as current behavior)
+ * 3. Runs pass 2-N: resets games played but keeps final ratings from previous pass
+ * 4. Returns the converged ratings after all passes
+ * 
+ * Only runs for leagues with MULTI_PASS_CONFIG enabled. Other leagues pass through unchanged.
+ */
+export async function multiPassRecalibrate(
+  games: GameResult[],
+  leagueFilter?: string
+): Promise<EloRatings> {
+  // Determine which leagues need multi-pass
+  const leaguesToRecalibrate = leagueFilter 
+    ? [leagueFilter].filter(l => MULTI_PASS_CONFIG[l]?.enabled)
+    : Object.keys(MULTI_PASS_CONFIG).filter(l => MULTI_PASS_CONFIG[l]?.enabled)
+  
+  if (leaguesToRecalibrate.length === 0) {
+    // No leagues need multi-pass, just do a normal single-pass update
+    return updateEloRatings(games)
+  }
+  
+  // Separate games into multi-pass leagues and normal leagues
+  const multiPassGames = games.filter(g => leaguesToRecalibrate.includes(g.league))
+  const normalGames = games.filter(g => !leaguesToRecalibrate.includes(g.league))
+  
+  // Process normal leagues with standard single-pass
+  const eloData = await updateEloRatings(normalGames)
+  
+  // For each multi-pass league, run N passes
+  for (const league of leaguesToRecalibrate) {
+    const config = MULTI_PASS_CONFIG[league]
+    if (!config) continue
+    
+    const leagueGames = multiPassGames.filter(g => g.league === league)
+    if (leagueGames.length === 0) continue
+    
+    const sortedGames = [...leagueGames].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    )
+    
+    console.log(`[Elo Multi-Pass] Starting ${config.passes}-pass recalibration for ${league} (${sortedGames.length} games)`)
+    
+    // Track ratings across passes — start from current ratings (which may include
+    // previous seasons' regressed ratings) or from DEFAULT_RATING for new teams
+    let passRatings: Record<string, number> = {}
+    
+    for (let pass = 1; pass <= config.passes; pass++) {
+      // Reset team data for this pass but keep ratings from previous pass
+      const leagueTeamKeys = Object.keys(eloData.ratings).filter(k => eloData.ratings[k].league === league)
+      
+      if (pass === 1) {
+        // First pass: use whatever ratings are currently in the system (or DEFAULT_RATING)
+        for (const key of leagueTeamKeys) {
+          passRatings[key] = eloData.ratings[key].rating
+        }
+      }
+      
+      // Reset league teams for this pass: keep rating from previous pass, reset games/stats
+      for (const key of leagueTeamKeys) {
+        eloData.ratings[key].rating = passRatings[key] ?? DEFAULT_RATING
+        eloData.ratings[key].gamesPlayed = 0
+        eloData.ratings[key].recentResults = []
+        eloData.ratings[key].marginStats = undefined
+      }
+      
+      // Replay all games for this league
+      for (const game of sortedGames) {
+        const homeKey = `${game.league}:${game.homeTeamId}`
+        const awayKey = `${game.league}:${game.awayTeamId}`
+        
+        // Initialize if new team
+        if (!eloData.ratings[homeKey]) {
+          eloData.ratings[homeKey] = {
+            teamId: game.homeTeamId,
+            teamName: game.homeTeamName,
+            league: game.league,
+            rating: passRatings[homeKey] ?? DEFAULT_RATING,
+            gamesPlayed: 0,
+            lastUpdated: game.date
+          }
+        }
+        if (!eloData.ratings[awayKey]) {
+          eloData.ratings[awayKey] = {
+            teamId: game.awayTeamId,
+            teamName: game.awayTeamName,
+            league: game.league,
+            rating: passRatings[awayKey] ?? DEFAULT_RATING,
+            gamesPlayed: 0,
+            lastUpdated: game.date
+          }
+        }
+        
+        const homeTeam = eloData.ratings[homeKey]
+        const awayTeam = eloData.ratings[awayKey]
+        
+        // Calculate recency multiplier
+        const gameDate = new Date(game.date)
+        const homeLastPlayed = new Date(homeTeam.lastUpdated)
+        const awayLastPlayed = new Date(awayTeam.lastUpdated)
+        const homeDaysSinceLast = Math.max(0, Math.floor((gameDate.getTime() - homeLastPlayed.getTime()) / (1000 * 60 * 60 * 24)))
+        const awayDaysSinceLast = Math.max(0, Math.floor((gameDate.getTime() - awayLastPlayed.getTime()) / (1000 * 60 * 60 * 24)))
+        
+        const homeRecency = homeDaysSinceLast <= RECENCY_RECENT_DAYS ? RECENCY_K_MULTIPLIER.RECENT
+          : homeDaysSinceLast >= RECENCY_STALE_DAYS ? RECENCY_K_MULTIPLIER.STALE
+          : RECENCY_K_MULTIPLIER.NORMAL
+        const awayRecency = awayDaysSinceLast <= RECENCY_RECENT_DAYS ? RECENCY_K_MULTIPLIER.RECENT
+          : awayDaysSinceLast >= RECENCY_STALE_DAYS ? RECENCY_K_MULTIPLIER.STALE
+          : RECENCY_K_MULTIPLIER.NORMAL
+        const recencyMultiplier = (homeRecency + awayRecency) / 2
+        
+        // Early-season K-factor boost
+        const earlySeasonBoost = EARLY_SEASON_K_BOOST[game.league]
+        const earlySeasonMultiplier = earlySeasonBoost && 
+          Math.max(homeTeam.gamesPlayed, awayTeam.gamesPlayed) < earlySeasonBoost.maxGames
+          ? earlySeasonBoost.multiplier
+          : 1.0
+        
+        // Update ratings
+        const { newHomeRating, newAwayRating } = updateRatingsAfterGame(
+          homeTeam.rating,
+          awayTeam.rating,
+          game.homeScore,
+          game.awayScore,
+          game.league,
+          recencyMultiplier * earlySeasonMultiplier
+        )
+        
+        homeTeam.rating = newHomeRating
+        homeTeam.gamesPlayed++
+        homeTeam.lastUpdated = game.date
+        
+        awayTeam.rating = newAwayRating
+        awayTeam.gamesPlayed++
+        awayTeam.lastUpdated = game.date
+        
+        // Update recent results
+        const homeResult = game.homeScore > game.awayScore ? 1 : game.homeScore < game.awayScore ? 0 : 0.5
+        const awayResult = game.awayScore > game.homeScore ? 1 : game.awayScore < game.homeScore ? 0 : 0.5
+        if (!homeTeam.recentResults) homeTeam.recentResults = []
+        homeTeam.recentResults.push(homeResult)
+        if (homeTeam.recentResults.length > 10) homeTeam.recentResults.shift()
+        if (!awayTeam.recentResults) awayTeam.recentResults = []
+        awayTeam.recentResults.push(awayResult)
+        if (awayTeam.recentResults.length > 10) awayTeam.recentResults.shift()
+        
+        // Update margin stats
+        const homeMargin = game.homeScore - game.awayScore
+        const awayMargin = game.awayScore - game.homeScore
+        
+        if (!homeTeam.marginStats) {
+          homeTeam.marginStats = {
+            totalMargin: 0, marginSquaredSum: 0, marginCount: 0,
+            avgMargin: 0, marginVariance: 0, marginStdDev: MARGIN_SIGMA[game.league] || 12
+          }
+        }
+        homeTeam.marginStats.totalMargin += homeMargin
+        homeTeam.marginStats.marginSquaredSum += homeMargin * homeMargin
+        homeTeam.marginStats.marginCount++
+        homeTeam.marginStats.avgMargin = homeTeam.marginStats.totalMargin / homeTeam.marginStats.marginCount
+        const homeAvgSq = homeTeam.marginStats.marginSquaredSum / homeTeam.marginStats.marginCount
+        homeTeam.marginStats.marginVariance = homeAvgSq - (homeTeam.marginStats.avgMargin * homeTeam.marginStats.avgMargin)
+        homeTeam.marginStats.marginStdDev = Math.sqrt(Math.max(0, homeTeam.marginStats.marginVariance))
+        
+        if (!awayTeam.marginStats) {
+          awayTeam.marginStats = {
+            totalMargin: 0, marginSquaredSum: 0, marginCount: 0,
+            avgMargin: 0, marginVariance: 0, marginStdDev: MARGIN_SIGMA[game.league] || 12
+          }
+        }
+        awayTeam.marginStats.totalMargin += awayMargin
+        awayTeam.marginStats.marginSquaredSum += awayMargin * awayMargin
+        awayTeam.marginStats.marginCount++
+        awayTeam.marginStats.avgMargin = awayTeam.marginStats.totalMargin / awayTeam.marginStats.marginCount
+        const awayAvgSq = awayTeam.marginStats.marginSquaredSum / awayTeam.marginStats.marginCount
+        awayTeam.marginStats.marginVariance = awayAvgSq - (awayTeam.marginStats.avgMargin * awayTeam.marginStats.avgMargin)
+        awayTeam.marginStats.marginStdDev = Math.sqrt(Math.max(0, awayTeam.marginStats.marginVariance))
+      }
+      
+      // Save this pass's final ratings for next pass's starting point
+      const updatedLeagueKeys = Object.keys(eloData.ratings).filter(k => eloData.ratings[k].league === league)
+      passRatings = {}
+      for (const key of updatedLeagueKeys) {
+        passRatings[key] = eloData.ratings[key].rating
+      }
+      
+      // Log pass results
+      const leagueRatings = updatedLeagueKeys.map(k => eloData.ratings[k]).sort((a, b) => b.rating - a.rating)
+      const top3 = leagueRatings.slice(0, 3).map(r => `${r.teamName}:${r.rating}`).join(', ')
+      const bot3 = leagueRatings.slice(-3).map(r => `${r.teamName}:${r.rating}`).join(', ')
+      console.log(`[Elo Multi-Pass] ${league} pass ${pass}/${config.passes}: ${updatedLeagueKeys.length} teams | Top: ${top3} | Bot: ${bot3}`)
+    }
+  }
+  
+  // Mark all multi-pass games as processed
+  const processedIds = await getProcessedGameIds()
+  for (const game of multiPassGames) {
+    processedIds.add(game.gameId)
+  }
+  
+  // Update metadata and save
+  eloData.lastUpdated = new Date().toISOString()
+  eloData.gamesProcessed = (eloData.gamesProcessed || 0) + multiPassGames.length
+  
+  await saveEloRatings(eloData)
+  await saveProcessedGameIds(processedIds)
+  
+  console.log(`[Elo Multi-Pass] Recalibration complete for ${leaguesToRecalibrate.join(', ')}`)
   
   return eloData
 }

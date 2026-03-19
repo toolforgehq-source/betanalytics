@@ -14,6 +14,7 @@ import { requireDebugAuth } from "@/lib/debug-auth"
 import {
   backfillHistoricalGames,
   updateEloRatings, 
+  multiPassRecalibrate,
   getEloStats,
   saveEloRatings,
   getEloRatings,
@@ -203,8 +204,14 @@ export async function GET(request: Request) {
     // Pass league filter if specified
     const games = await backfillHistoricalGames(startDate, endDate, leagueParam || undefined)
     
+    // Use multi-pass recalibration if requested (for leagues like NCAAB with conference bubbles)
+    // ?multipass=true enables multi-pass for leagues that have it configured
+    const useMultiPass = url.searchParams.get('multipass') === 'true'
+    
     // Update ratings (this also saves to Redis)
-    const eloData = await updateEloRatings(games)
+    const eloData = useMultiPass
+      ? await multiPassRecalibrate(games, leagueParam || undefined)
+      : await updateEloRatings(games)
     
     // Explicitly save again and check result
     const saveResult = await saveEloRatings(eloData)
@@ -231,7 +238,8 @@ export async function GET(request: Request) {
     
     return NextResponse.json({
       success: true,
-      message: fullBackfill ? 'Full backfill complete' : `Backfill complete`,
+      message: fullBackfill ? (useMultiPass ? 'Full multi-pass backfill complete' : 'Full backfill complete') : `Backfill complete`,
+      multiPass: useMultiPass,
       dateRange: {
         start: startDate.toISOString().split('T')[0],
         end: endDate.toISOString().split('T')[0]
