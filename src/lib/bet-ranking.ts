@@ -215,9 +215,10 @@ const FALLBACK_ODDS_RELAXED = -300   // Relaxed odds limit
 const FALLBACK_PROB_RELAXED = 0.50   // Relaxed probability floor
 
 // Legacy thresholds (for qualified bets - stricter)
-// Raised from 3% to 4%: a 3% edge on a -150 favorite is barely breakeven after juice.
-// 4% provides a meaningful buffer that survives real-world variance.
-const MIN_EDGE = 0.04             // 4% minimum edge for "qualified" moneyline bets
+// Lowered from 4% to 2%: 4% was blocking almost every NBA/NHL moneyline because those
+// markets are efficient and edges are small. 2% lets quality MLs from all sports compete
+// for the top 4 picks instead of only NCAAB spreads getting through.
+const MIN_EDGE = 0.02             // 2% minimum edge for "qualified" moneyline bets
 
 // Spread-specific thresholds (more relaxed since spreads are ~50% probability)
 const MIN_SPREAD_PROBABILITY = 0.48  // 48% minimum for spreads (they're designed to be ~50%)
@@ -285,7 +286,7 @@ function blendWithMarket(
 const MIN_SPREAD_MARGIN_EDGE: Record<string, number> = {
   'NBA': 3,        // Only bet when expected margin differs by 3+ points from market
   'NFL': 2.5,      // NFL has fewer games, slightly lower threshold
-  'NHL': 999,      // NHL: Don't recommend puck lines at all (use moneylines only)
+  'NHL': 1.5,      // NHL: Allow puck lines to compete (was 999 = blocked entirely)
   'MLB': 1,        // MLB run lines are 1.5, so smaller threshold
   'NCAAB': 2,      // Lowered from 4: market-anchored margins are naturally smaller, so 2pt edge is meaningful
   'NCAAF': 3,      // Similar to NFL but more variance
@@ -741,10 +742,9 @@ function calculateBetScore(
   // Spreads are 13-8 (61.9%) with +17.3% ROI.
   // Moneyline losses are expensive (full unit lost) while wins on favorites
   // pay less than a unit. This penalty pushes spreads into the top 4 over MLs.
-  let moneylinePenalty = 0
-  if (betType === 'moneyline') {
-    moneylinePenalty = -5
-  }
+  // Moneyline penalty removed: let MLs compete fairly with spreads
+  // Previously -5 penalty was making it even harder for NBA/NHL MLs to reach top 4
+  const moneylinePenalty = 0
   
   // ============================================
   // SPORT PERFORMANCE MULTIPLIER
@@ -759,9 +759,9 @@ function calculateBetScore(
   if (sport) {
     const sportLower = sport.toLowerCase()
     if (sportLower.includes('hockey') || sportLower.includes('nhl')) {
-      sportMultiplier = 0.7  // 30% penalty for hockey
+      sportMultiplier = 1.0  // No penalty for hockey — let NHL compete equally
     } else if (sportLower.includes('soccer') || sportLower.includes('la_liga') || sportLower.includes('epl') || sportLower.includes('bundesliga') || sportLower.includes('serie_a') || sportLower.includes('ligue')) {
-      sportMultiplier = 0.5  // 50% penalty for soccer
+      sportMultiplier = 0.65  // Moderate penalty for soccer — only really good bets break through
     }
     // NCAAB, NBA, NFL, MLB all stay at 1.0 (default)
   }
@@ -3088,8 +3088,8 @@ export async function computeBestBets(
     // This ensures the best bet is ALWAYS the Lock, not some lower-scored bet
     // that happens to pass arbitrary extra filters
     const isLockCandidate = 
-      prob >= 58 &&
-      edge >= 4 &&
+      prob >= 55 &&
+      edge >= 2 &&
       (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
       !isHugeSpread &&
@@ -3098,9 +3098,11 @@ export async function computeBestBets(
       lockCount < MAX_LOCKS
     
     // STRONG criteria: solid picks with meaningful edge
+    // Lowered from prob>=58/edge>=4 to prob>=55/edge>=2 so NBA/NHL/MLB picks can qualify
+    // 4% edge was impossible in efficient markets, locking out everything except NCAAB spreads
     const isStrongCandidate =
-      prob >= 58 &&
-      edge >= 4 &&
+      prob >= 55 &&
+      edge >= 2 &&
       (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
       !isHugeSpread &&
@@ -3241,9 +3243,10 @@ export async function computeBestBets(
     const isOddsInRange = odds >= -250 && odds <= 400  // Match strict pass
     
     // Lock = highest-scored bet meeting Strong criteria (no extra gates)
+    // Lowered from prob>=58/edge>=4 to prob>=55/edge>=2 to match strict pass
     const isLockCandidate = 
-      prob >= 58 &&
-      betEdge >= 4 &&
+      prob >= 55 &&
+      betEdge >= 2 &&
       (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
       !isHugeSpread &&
@@ -3252,8 +3255,8 @@ export async function computeBestBets(
       lockCount < MAX_LOCKS  // Use GLOBAL counter from strict pass
     
     const isStrongCandidate =
-      prob >= 58 &&
-      betEdge >= 4 &&
+      prob >= 55 &&
+      betEdge >= 2 &&
       (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
       !hasSharpAgainst &&
       !isHugeSpread &&
