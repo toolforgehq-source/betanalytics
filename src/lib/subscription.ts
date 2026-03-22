@@ -74,20 +74,10 @@ export async function checkSubscription() {
     }
   }
 
-  const sub = await db.subscriptions.findByUserId(session.user.id)
+  try {
+    const sub = await db.subscriptions.findByUserId(session.user.id)
 
-  if (sub && (sub.status === 'active' || sub.status === 'trialing')) {
-    return {
-      isSubscribed: true,
-      isFreeTrialAvailable: false,
-      questionsRemaining: -1,
-      trialDaysRemaining: 0,
-    }
-  }
-
-  if (session.user.email) {
-    const synced = await syncSubscriptionFromStripe(session.user.id, session.user.email)
-    if (synced) {
+    if (sub && (sub.status === 'active' || sub.status === 'trialing')) {
       return {
         isSubscribed: true,
         isFreeTrialAvailable: false,
@@ -95,20 +85,43 @@ export async function checkSubscription() {
         trialDaysRemaining: 0,
       }
     }
-  }
 
-  const user = await db.users.findById(session.user.id)
-  const createdAt = user?.createdAt ? new Date(user.createdAt) : new Date()
-  const now = new Date()
-  const trialEndDate = new Date(createdAt.getTime() + 3 * 24 * 60 * 60 * 1000)
-  const trialDaysRemaining = Math.max(0, Math.ceil((trialEndDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))
-  const isInTrial = trialDaysRemaining > 0
+    if (session.user.email) {
+      const synced = await syncSubscriptionFromStripe(session.user.id, session.user.email)
+      if (synced) {
+        return {
+          isSubscribed: true,
+          isFreeTrialAvailable: false,
+          questionsRemaining: -1,
+          trialDaysRemaining: 0,
+        }
+      }
+    }
 
-  return {
-    isSubscribed: false,
-    isFreeTrialAvailable: isInTrial,
-    questionsRemaining: isInTrial ? -1 : 0,
-    trialDaysRemaining,
+    const user = await db.users.findById(session.user.id)
+    const createdAt = user?.createdAt ? new Date(user.createdAt) : new Date()
+    const now = new Date()
+    const trialEndDate = new Date(createdAt.getTime() + 3 * 24 * 60 * 60 * 1000)
+    const trialDaysRemaining = Math.max(0, Math.ceil((trialEndDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))
+    const isInTrial = trialDaysRemaining > 0
+
+    return {
+      isSubscribed: false,
+      isFreeTrialAvailable: isInTrial,
+      questionsRemaining: isInTrial ? -1 : 0,
+      trialDaysRemaining,
+    }
+  } catch (error) {
+    // If Redis is rate-limited or unavailable, fail open — allow access rather than crashing the page.
+    // The user is already authenticated (session exists). Blocking them due to a Redis outage is worse
+    // than temporarily granting access.
+    console.error('[subscription] Redis/DB error during subscription check — failing open:', error)
+    return {
+      isSubscribed: true,
+      isFreeTrialAvailable: false,
+      questionsRemaining: -1,
+      trialDaysRemaining: 0,
+    }
   }
 }
 
@@ -119,6 +132,11 @@ export async function checkTermsAccepted() {
     return false
   }
 
-  const user = await db.users.findById(session.user.id)
-  return user?.termsAcceptedAt !== null
+  try {
+    const user = await db.users.findById(session.user.id)
+    return user?.termsAcceptedAt !== null
+  } catch (error) {
+    console.error('[subscription] Redis/DB error during terms check — failing open:', error)
+    return true
+  }
 }
