@@ -154,7 +154,7 @@ export async function storePick(pick: Omit<StoredPick, 'id' | 'createdAt' | 'sta
     existingPicks.push(newPick)
     
     // Store back to Redis
-    await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
+    const writeResponse = await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${redis.token}`,
@@ -162,6 +162,13 @@ export async function storePick(pick: Omit<StoredPick, 'id' | 'createdAt' | 'sta
       },
       body: JSON.stringify(JSON.stringify(existingPicks))
     })
+    
+    if (!writeResponse.ok) {
+      const errBody = await writeResponse.json().catch(() => ({}))
+      console.error(`[storePick] REDIS WRITE FAILED (${writeResponse.status}):`, JSON.stringify(errBody))
+      console.error('[storePick] Pick NOT stored — check Upstash request limits')
+      return null
+    }
     
     console.log(`[storePick] Stored pick: ${newPick.id} - ${newPick.team}`)
     return newPick
@@ -244,7 +251,7 @@ export async function gradePick(
     }
     
     // Store updated picks
-    await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
+    const writeResponse = await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${redis.token}`,
@@ -252,6 +259,13 @@ export async function gradePick(
       },
       body: JSON.stringify(JSON.stringify(picks))
     })
+    
+    if (!writeResponse.ok) {
+      const errBody = await writeResponse.json().catch(() => ({}))
+      console.error(`[gradePick] REDIS WRITE FAILED (${writeResponse.status}):`, JSON.stringify(errBody))
+      console.error(`[gradePick] Grade for ${pickId} NOT persisted — check Upstash request limits`)
+      return false
+    }
     
     // Recalculate track record
     await calculateAndStoreTrackRecord(picks)
@@ -605,7 +619,7 @@ export async function lockInAndCleanupPicks(
   // Write updated picks back to Redis if anything changed
   if (modified) {
     try {
-      await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
+      const writeResponse = await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${redis.token}`,
@@ -614,8 +628,14 @@ export async function lockInAndCleanupPicks(
         body: JSON.stringify(JSON.stringify(picks))
       })
       
-      // Recalculate track record after cleanup
-      await calculateAndStoreTrackRecord(picks)
+      if (!writeResponse.ok) {
+        const errBody = await writeResponse.json().catch(() => ({}))
+        console.error(`[Picks] REDIS WRITE FAILED (${writeResponse.status}):`, JSON.stringify(errBody))
+        console.error('[Picks] Lock-in/cleanup NOT persisted — check Upstash request limits')
+      } else {
+        // Recalculate track record after cleanup
+        await calculateAndStoreTrackRecord(picks)
+      }
     } catch (error) {
       console.error('[Picks] Error writing cleanup results:', error)
     }
@@ -626,51 +646,108 @@ export async function lockInAndCleanupPicks(
 }
 
 // ============================================
-// AUTO-GRADING SYSTEM
+// AUTO-GRADING SYSTEM (ESPN-based)
 // ============================================
 
 /**
- * Score data from The Odds API
+ * ESPN game result from the event summary or scoreboard API
  */
-interface GameScore {
-  id: string
-  sport_key: string
-  sport_title: string
-  commence_time: string
+interface ESPNGameResult {
   completed: boolean
-  home_team: string
-  away_team: string
-  scores: { name: string; score: string }[] | null
-  last_update: string | null
+  homeTeam: string
+  awayTeam: string
+  homeScore: number
+  awayScore: number
 }
 
 /**
- * Fetch scores for a specific sport from The Odds API
+ * Map sport key to ESPN sport/league format for score lookups
  */
-async function fetchSportScores(sportKey: string): Promise<GameScore[]> {
-  const apiKey = process.env.ODDS_API_KEY
-  if (!apiKey) {
-    console.error('[fetchSportScores] ODDS_API_KEY not configured')
-    return []
+function getESPNSportLeagueForPicks(sport: string): { espnSport: string; espnLeague: string } {
+  if (sport.includes('nfl') || (sport.includes('football') && !sport.includes('ncaa'))) {
+    return { espnSport: 'football', espnLeague: 'nfl' }
+  } else if (sport.includes('ncaaf') || (sport.includes('football') && sport.includes('ncaa'))) {
+    return { espnSport: 'football', espnLeague: 'college-football' }
+  } else if (sport.includes('nhl') || sport.includes('hockey')) {
+    return { espnSport: 'hockey', espnLeague: 'nhl' }
+  } else if (sport.includes('mlb') || sport.includes('baseball')) {
+    return { espnSport: 'baseball', espnLeague: 'mlb' }
+  } else if (sport.includes('ncaab') || (sport.includes('basketball') && sport.includes('ncaa'))) {
+    return { espnSport: 'basketball', espnLeague: 'mens-college-basketball' }
+  } else if (sport.includes('nba')) {
+    return { espnSport: 'basketball', espnLeague: 'nba' }
+  } else if (sport.includes('soccer') || sport.includes('epl')) {
+    return { espnSport: 'soccer', espnLeague: 'eng.1' }
   }
-  
+  // Default to NBA
+  return { espnSport: 'basketball', espnLeague: 'nba' }
+}
+
+/**
+ * Fetch game result from ESPN using the event summary endpoint.
+ * Picks store ESPN game IDs (e.g. 401856562), so we query ESPN directly.
+ */
+async function fetchESPNGameResult(sport: string, gameId: string): Promise<ESPNGameResult | null> {
   try {
-    // Fetch scores from the last 3 days
-    const url = `https://api.the-odds-api.com/v4/sports/${sportKey}/scores/?apiKey=${apiKey}&daysFrom=3`
+    const { espnSport, espnLeague } = getESPNSportLeagueForPicks(sport)
+    
+    // Use the event summary endpoint — works for any game, past or present
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${espnSport}/${espnLeague}/summary?event=${gameId}`
     const response = await fetch(url, {
       headers: { 'Accept': 'application/json' },
       cache: 'no-store'
     })
     
     if (!response.ok) {
-      console.error(`[fetchSportScores] API error for ${sportKey}: ${response.status}`)
-      return []
+      console.error(`[autoGrade] ESPN API error for game ${gameId}: ${response.status}`)
+      return null
     }
     
-    return await response.json()
+    const data = await response.json()
+    return parseESPNResult(data)
   } catch (error) {
-    console.error(`[fetchSportScores] Error fetching ${sportKey} scores:`, error)
-    return []
+    console.error(`[autoGrade] Error fetching ESPN game ${gameId}:`, error)
+    return null
+  }
+}
+
+/**
+ * Parse ESPN event summary response into a game result
+ */
+function parseESPNResult(data: Record<string, unknown>): ESPNGameResult | null {
+  try {
+    const header = data.header as Record<string, unknown> | undefined
+    if (!header) return null
+    
+    const competitions = header.competitions as Record<string, unknown>[] | undefined
+    const competition = competitions?.[0]
+    if (!competition) return null
+    
+    const statusObj = competition.status as Record<string, unknown> | undefined
+    const statusType = statusObj?.type as Record<string, unknown> | undefined
+    const completed = statusType?.completed === true
+    
+    const competitors = competition.competitors as Record<string, unknown>[] | undefined
+    if (!competitors || competitors.length < 2) return null
+    
+    const homeCompetitor = competitors.find((c) => c.homeAway === 'home')
+    const awayCompetitor = competitors.find((c) => c.homeAway === 'away')
+    
+    if (!homeCompetitor || !awayCompetitor) return null
+    
+    const homeTeamObj = homeCompetitor.team as Record<string, unknown> | undefined
+    const awayTeamObj = awayCompetitor.team as Record<string, unknown> | undefined
+    
+    return {
+      completed,
+      homeTeam: String(homeTeamObj?.displayName || homeTeamObj?.name || ''),
+      awayTeam: String(awayTeamObj?.displayName || awayTeamObj?.name || ''),
+      homeScore: parseInt(String(homeCompetitor.score)) || 0,
+      awayScore: parseInt(String(awayCompetitor.score)) || 0,
+    }
+  } catch (error) {
+    console.error('[autoGrade] Error parsing ESPN event data:', error)
+    return null
   }
 }
 
@@ -775,8 +852,9 @@ function gradeTotalPick(
 }
 
 /**
- * Auto-grade all pending picks using scores from The Odds API
- * Returns the number of picks graded
+ * Auto-grade all pending picks using ESPN scores.
+ * Picks store ESPN game IDs (e.g. 401856562), so we fetch results
+ * directly from ESPN's event summary API per game.
  */
 export async function autoGradePicks(): Promise<{
   graded: number
@@ -802,102 +880,57 @@ export async function autoGradePicks(): Promise<{
   result.pending = pendingPicks.length
   result.details.push(`Found ${pendingPicks.length} pending picks to grade`)
   
-  // Group picks by sport to minimize API calls
-  const picksBySport = new Map<string, StoredPick[]>()
-  for (const pick of pendingPicks) {
-    const existing = picksBySport.get(pick.sport) || []
-    existing.push(pick)
-    picksBySport.set(pick.sport, existing)
-  }
+  // Deduplicate ESPN API calls — multiple picks can reference the same game
+  const gameResultCache = new Map<string, ESPNGameResult | null>()
   
-  // Fetch scores for each sport and grade picks
-  const sportEntries = Array.from(picksBySport.entries())
-  for (const [sport, picks] of sportEntries) {
-    result.details.push(`Fetching scores for ${sport}...`)
-    const scores = await fetchSportScores(sport)
+  for (const pick of pendingPicks) {
+    // Fetch game result from ESPN (with caching to avoid duplicate API calls)
+    let gameResult = gameResultCache.get(pick.gameId)
+    if (gameResult === undefined) {
+      gameResult = await fetchESPNGameResult(pick.sport, pick.gameId)
+      gameResultCache.set(pick.gameId, gameResult)
+    }
     
-    if (scores.length === 0) {
-      result.details.push(`No scores available for ${sport}`)
+    if (!gameResult) {
+      result.details.push(`No ESPN result for game ${pick.gameId} (${pick.awayTeam} @ ${pick.homeTeam})`)
       continue
     }
     
-    // Create a map of game ID to score data
-    const scoreMap = new Map<string, GameScore>()
-    for (const score of scores) {
-      scoreMap.set(score.id, score)
+    if (!gameResult.completed) {
+      result.details.push(`Game ${pick.gameId} not yet completed`)
+      continue
     }
     
-    // Grade each pick
-    for (const pick of picks) {
-      const gameScore = scoreMap.get(pick.gameId)
-      
-      if (!gameScore) {
-        result.details.push(`No score found for game ${pick.gameId} (${pick.awayTeam} @ ${pick.homeTeam})`)
-        continue
-      }
-      
-      if (!gameScore.completed) {
-        result.details.push(`Game ${pick.gameId} not yet completed`)
-        continue
-      }
-      
-      if (!gameScore.scores || gameScore.scores.length < 2) {
-        result.details.push(`Invalid scores for game ${pick.gameId}`)
-        result.errors++
-        continue
-      }
-      
-      // Extract scores
-      const homeScoreData = gameScore.scores.find(s => s.name === gameScore.home_team)
-      const awayScoreData = gameScore.scores.find(s => s.name === gameScore.away_team)
-      
-      if (!homeScoreData || !awayScoreData) {
-        result.details.push(`Could not match team names for game ${pick.gameId}`)
-        result.errors++
-        continue
-      }
-      
-      const homeScore = parseInt(homeScoreData.score, 10)
-      const awayScore = parseInt(awayScoreData.score, 10)
-      
-      if (isNaN(homeScore) || isNaN(awayScore)) {
-        result.details.push(`Invalid score values for game ${pick.gameId}`)
-        result.errors++
-        continue
-      }
-      
-      // Grade based on bet type
-      let gradeResult: 'won' | 'lost' | 'push'
-      let actualResult: string
-      const scoreDisplay = `${gameScore.away_team} ${awayScore} - ${gameScore.home_team} ${homeScore}`
-      
-      if (pick.betType === 'moneyline') {
-        gradeResult = gradeMoneylinePick(pick, homeScore, awayScore)
-        actualResult = scoreDisplay
-      } else if (pick.betType === 'spread') {
-        gradeResult = gradeSpreadPick(pick, homeScore, awayScore)
-        const margin = homeScore - awayScore
-        actualResult = `${scoreDisplay} (margin: ${margin > 0 ? '+' : ''}${margin}, line: ${pick.line})`
-      } else if (pick.betType === 'total') {
-        gradeResult = gradeTotalPick(pick, homeScore, awayScore)
-        const total = homeScore + awayScore
-        actualResult = `${scoreDisplay} (total: ${total}, line: ${pick.line})`
-      } else {
-        // Unknown bet type (e.g., prop) - skip for now
-        result.details.push(`Skipping ${pick.betType} bet for ${pick.gameId} (unsupported bet type)`)
-        continue
-      }
-      
-      // Update the pick
-      const success = await gradePick(pick.id, gradeResult, actualResult)
-      
-      if (success) {
-        result.graded++
-        result.details.push(`Graded ${pick.team}: ${gradeResult.toUpperCase()} (${actualResult})`)
-      } else {
-        result.errors++
-        result.details.push(`Failed to grade pick ${pick.id}`)
-      }
+    // Grade based on bet type
+    let gradeResult: 'won' | 'lost' | 'push'
+    let actualResult: string
+    const scoreDisplay = `${gameResult.awayTeam} ${gameResult.awayScore} - ${gameResult.homeTeam} ${gameResult.homeScore}`
+    
+    if (pick.betType === 'moneyline') {
+      gradeResult = gradeMoneylinePick(pick, gameResult.homeScore, gameResult.awayScore)
+      actualResult = scoreDisplay
+    } else if (pick.betType === 'spread') {
+      gradeResult = gradeSpreadPick(pick, gameResult.homeScore, gameResult.awayScore)
+      const margin = gameResult.homeScore - gameResult.awayScore
+      actualResult = `${scoreDisplay} (margin: ${margin > 0 ? '+' : ''}${margin}, line: ${pick.line})`
+    } else if (pick.betType === 'total') {
+      gradeResult = gradeTotalPick(pick, gameResult.homeScore, gameResult.awayScore)
+      const total = gameResult.homeScore + gameResult.awayScore
+      actualResult = `${scoreDisplay} (total: ${total}, line: ${pick.line})`
+    } else {
+      result.details.push(`Skipping ${pick.betType} bet for ${pick.gameId} (unsupported bet type)`)
+      continue
+    }
+    
+    // Update the pick
+    const success = await gradePick(pick.id, gradeResult, actualResult)
+    
+    if (success) {
+      result.graded++
+      result.details.push(`Graded ${pick.team}: ${gradeResult.toUpperCase()} (${actualResult})`)
+    } else {
+      result.errors++
+      result.details.push(`REDIS WRITE FAILED grading pick ${pick.id} — check Upstash request limits`)
     }
   }
   
