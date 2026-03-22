@@ -287,7 +287,7 @@ const MIN_SPREAD_MARGIN_EDGE: Record<string, number> = {
   'NFL': 2.5,      // NFL has fewer games, slightly lower threshold
   'NHL': 999,      // NHL: Don't recommend puck lines at all (use moneylines only)
   'MLB': 1,        // MLB run lines are 1.5, so smaller threshold
-  'NCAAB': 4,      // College has more variance, need higher threshold
+  'NCAAB': 2,      // Lowered from 4: market-anchored margins are naturally smaller, so 2pt edge is meaningful
   'NCAAF': 3,      // Similar to NFL but more variance
   'soccer_epl': 0.5,
   'soccer_spain_la_liga': 0.5,
@@ -2517,6 +2517,14 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       
       const impliedProb = marketCoverProb
       const edge = coverProb - impliedProb
+      
+      // SANITY CHECK: Reject spreads with impossibly large edges (likely Elo miscalibration)
+      // This was missing from the sport query path, allowing 20%+ phantom edges through
+      if (edge > MAX_SANE_EDGE) {
+        console.warn(`[analyzeGameForSportQuery] SANITY CHECK FAILED: ${teamName} spread ${point > 0 ? '+' : ''}${point} has edge ${(edge * 100).toFixed(1)}% > ${(MAX_SANE_EDGE * 100).toFixed(0)}% max. Skipping.`)
+        return
+      }
+      
       const ev = calculateExpectedValue(bestEntry.outcome.price, coverProb)
       const roi = calculateROI(ev)
       const sportQuerySpreadSize = Math.abs(point)
