@@ -81,7 +81,7 @@ const SOS_K_FACTOR_CONFIG: Record<string, {
   minMultiplier: number  // Floor for SOS K multiplier
   maxMultiplier: number  // Ceiling for SOS K multiplier
 }> = {
-  'NCAAB': { enabled: true, strength: 0.5, scale: 300, minMultiplier: 0.6, maxMultiplier: 1.5 },
+  'NCAAB': { enabled: false, strength: 0.5, scale: 300, minMultiplier: 0.6, maxMultiplier: 1.5 },
   // Other leagues can be enabled later if needed:
   // 'NCAAF': { enabled: true, strength: 0.4, scale: 300, minMultiplier: 0.7, maxMultiplier: 1.4 },
 }
@@ -179,6 +179,21 @@ const MARGIN_SIGMA: Record<string, number> = {
   'soccer_france_ligue_one': 1.5,
   'soccer_usa_mls': 1.6,
   'soccer_uefa_champs_league': 1.5,
+}
+
+// SPREAD_MARKET_ANCHOR: Controls how much spread probability anchors to market
+// Prevents Elo from wildly disagreeing with market spreads (which causes overconfident picks)
+// Without this, Elo can disagree by 10-20+ points, producing 70-97% probabilities that are wrong
+const SPREAD_MARKET_ANCHOR: Record<string, {
+  enabled: boolean
+  maxDisagreement: number  // Max points Elo expected margin can disagree with market spread
+  marketWeight: number     // Weight for market's expected margin (0-1), rest goes to capped Elo
+}> = {
+  'NCAAB': { enabled: true, maxDisagreement: 5, marketWeight: 0.5 },
+  'NCAAF': { enabled: true, maxDisagreement: 5, marketWeight: 0.5 },
+  // NBA/NFL have tighter Elo-market alignment, less aggressive anchoring needed
+  'NBA': { enabled: true, maxDisagreement: 6, marketWeight: 0.4 },
+  'NFL': { enabled: true, maxDisagreement: 5, marketWeight: 0.4 },
 }
 
 // TOTAL_BASELINE: Average total points per game (league baseline)
@@ -2270,7 +2285,27 @@ export function calculateSpreadCoverProbability(
     }
   }
   
-  const expectedMargin = calculateExpectedMargin(homeElo, awayElo, league, isNeutralSite)
+  const eloMargin = calculateExpectedMargin(homeElo, awayElo, league, isNeutralSite)
+  
+  // MARKET-ANCHORED EXPECTED MARGIN
+  // The market spread IS the best available estimate of the true expected margin.
+  // Pure Elo margins can disagree with the market by 10-20+ points, producing
+  // extreme probabilities (70-97%) that are systematically wrong.
+  // Solution: blend Elo margin with market margin and cap maximum disagreement.
+  const marketAnchor = SPREAD_MARKET_ANCHOR[league]
+  let expectedMargin: number
+  if (marketAnchor?.enabled) {
+    // Market's expected margin from home perspective: if spread is -3.5, market expects home +3.5
+    const marketMargin = -spread
+    // Cap how much Elo can disagree with market
+    const disagreement = eloMargin - marketMargin
+    const cappedDisagreement = Math.max(-marketAnchor.maxDisagreement, Math.min(marketAnchor.maxDisagreement, disagreement))
+    const cappedEloMargin = marketMargin + cappedDisagreement
+    // Blend: market provides the anchor, Elo provides the adjustment
+    expectedMargin = marketAnchor.marketWeight * marketMargin + (1 - marketAnchor.marketWeight) * cappedEloMargin
+  } else {
+    expectedMargin = eloMargin
+  }
   
   // SPREAD SEMANTICS (from home team's perspective):
   // - Home -3.5: Home must win by > 3.5 to cover → P(margin > 3.5)
