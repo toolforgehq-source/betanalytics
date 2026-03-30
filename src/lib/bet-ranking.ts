@@ -3041,26 +3041,13 @@ export async function computeBestBets(
   // ============================================
   // TIERED CONFIDENCE SYSTEM
   // ============================================
-  // Strict tiering to ensure only the highest-conviction picks get premium labels.
-  // These labels drive our public win rate — only the best of the best qualify.
+  // Simple score-based tiering: the top 4 picks by score get premium labels.
+  // The score already incorporates probability, edge, Kelly fraction, ROI,
+  // sport penalties, and situational factors — no need for extra quality gates.
   //
-  // LOCK OF THE DAY (target: 65%+ win rate):
-  //   - Same criteria as Strong Play (highest-scored qualifying bet gets Lock)
-  //   - The Lock is simply the #1 bet by score that meets Strong Play criteria
-  //   - Maximum 1 lock per day across all sports
-  //
-  // STRONG PLAY (target: 60-65% win rate):
-  //   - Elo probability 58%+
-  //   - Edge 4%+
-  //   - Elo confidence 'medium' or higher
-  //   - No sharp money against
-  //   - Spread ≤ 12 points
-  //   - Elo gap ≤ 250
-  //   - Maximum 3 strong plays per day
-  //
-  // VALUE SPOT:
-  //   - Everything else that passes base filters
-  //   - Not publicly tracked — internal only
+  // LOCK OF THE DAY: #1 pick by score (max 1/day)
+  // STRONG PLAY: #2-4 picks by score (max 3/day)
+  // VALUE SPOT: everything else (internal only)
   
   const MAX_LOCKS = 1
   const MAX_STRONG = 3
@@ -3072,50 +3059,13 @@ export async function computeBestBets(
   // which could promote a Score 73 pick to Lock while demoting a Score 82 pick to Strong.
   const sortedEloPoweredBets = [...eloPoweredBets].sort((a, b) => b.score - a.score)
   
+  // Bets are already sorted by score descending. Assign tiers purely by rank.
   const tieredBets: RankedBet[] = sortedEloPoweredBets.map(bet => {
-    const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
-    const edge = bet.edge
-    const confidence = bet.eloConfidence || 'medium'
-    const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
-    const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
-    const isHugeSpread = spreadSize > 12   // Block from Lock & Strong (was >10, bumped to allow +10.5 / +11.5 type games)
-    const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
-    const isHugeEloGap = eloGap > 250      // 250+ Elo gap = unreliable
-    const odds = bet.bestPrice
-    const isOddsInRange = odds >= -250 && odds <= 400  // No heavy favorites or long underdogs
-    
-    // LOCK criteria: the single best bet of the day
-    // Lock = highest-scored bet that meets Strong Play criteria (no extra gates)
-    // This ensures the best bet is ALWAYS the Lock, not some lower-scored bet
-    // that happens to pass arbitrary extra filters
-    const isLockCandidate = 
-      prob >= 58 &&
-      edge >= 4 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      isOddsInRange &&
-      lockCount < MAX_LOCKS
-    
-    // STRONG criteria: solid picks with meaningful edge
-    // Restored to prob>=58/edge>=4: lowering to 55/2 let too many marginal picks through,
-    // tanking the win rate. These stricter thresholds ensure only high-conviction picks qualify.
-    const isStrongCandidate =
-      prob >= 58 &&
-      edge >= 4 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      isOddsInRange &&
-      strongCount < MAX_STRONG
-    
     let tier: 'lock' | 'strong' | 'value'
-    if (isLockCandidate) {
+    if (lockCount < MAX_LOCKS) {
       tier = 'lock'
       lockCount++
-    } else if (isStrongCandidate) {
+    } else if (strongCount < MAX_STRONG) {
       tier = 'strong'
       strongCount++
     } else {
@@ -3225,6 +3175,8 @@ export async function computeBestBets(
   // Sort by score descending BEFORE tiering (same fix as strict bets above)
   const sortedEloPoweredEloBets = [...eloPoweredEloBets].sort((a, b) => b.score - a.score)
   
+  // Bets are already sorted by score descending. Assign tiers purely by rank,
+  // sharing the global lockCount/strongCount from the strict pass above.
   const tieredEloBets: RankedBet[] = sortedEloPoweredEloBets.map(bet => {
     // If this pick was already tiered in the strict pass, copy that tier to stay consistent
     const strictMatch = tieredBets.find(b => b.gameId === bet.gameId && b.team === bet.team && b.betType === bet.betType)
@@ -3232,46 +3184,13 @@ export async function computeBestBets(
       return { ...bet, confidenceTier: strictMatch.confidenceTier }
     }
     
-    const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
-    const betEdge = bet.edge
-    const confidence = bet.eloConfidence || 'medium'
-    const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
-    const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
-    const isHugeSpread = spreadSize > 12   // Match strict pass (was >10, bumped to allow +10.5 / +11.5 type games)
-    const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
-    const isHugeEloGap = eloGap > 250      // Match strict pass
-    const odds = bet.bestPrice
-    const isOddsInRange = odds >= -250 && odds <= 400  // Match strict pass
-    
-    // Lock = highest-scored bet meeting Strong criteria (no extra gates)
-    // Restored to prob>=58/edge>=4 to match strict pass
-    const isLockCandidate = 
-      prob >= 58 &&
-      betEdge >= 4 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      isOddsInRange &&
-      lockCount < MAX_LOCKS  // Use GLOBAL counter from strict pass
-    
-    const isStrongCandidate =
-      prob >= 58 &&
-      betEdge >= 4 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      isOddsInRange &&
-      strongCount < MAX_STRONG  // Use GLOBAL counter from strict pass
-    
     let tier: 'lock' | 'strong' | 'value'
-    if (isLockCandidate) {
+    if (lockCount < MAX_LOCKS) {
       tier = 'lock'
-      lockCount++  // Increment GLOBAL counter
-    } else if (isStrongCandidate) {
+      lockCount++
+    } else if (strongCount < MAX_STRONG) {
       tier = 'strong'
-      strongCount++  // Increment GLOBAL counter
+      strongCount++
     } else {
       tier = 'value'
     }

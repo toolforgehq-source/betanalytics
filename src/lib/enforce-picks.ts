@@ -18,18 +18,6 @@ export type PickLike = Record<string, any>
 export const MAX_LOCKS = 1
 export const MAX_STRONG = 3
 
-// ============================================
-// KELLY CRITERION GATES FOR LOCK/STRONG TIERS
-// ============================================
-// These hard filters prevent ridiculous picks from appearing in the top 4.
-// Heavy favorites (-345) have tiny payouts → tiny Kelly fractions.
-// Big underdogs (+650) have low win probabilities → tiny Kelly fractions.
-// Only bets in the sweet spot (moderate odds with real edges) qualify.
-export const TIER_MAX_JUICE_ODDS = -250   // No heavy favorites worse than -250
-export const TIER_MAX_PLUS_ODDS = 400     // No long underdogs beyond +400
-export const TIER_MIN_KELLY = 0.02        // Minimum 2% Kelly fraction for Lock/Strong
-export const TIER_MIN_PROBABILITY = 58    // Minimum 58% win probability for Lock/Strong
-
 /**
  * Calculate Kelly Criterion fraction for a bet.
  * Kelly fraction = (b * p - q) / b
@@ -63,62 +51,6 @@ export function calculateKellyFraction(probabilityPct: number, americanOdds: num
   const kelly = (b * p - q) / b
 
   return Math.max(0, kelly)  // Never negative (don't bet if negative edge)
-}
-
-/**
- * Check if a pick's odds are within the acceptable range for Lock/Strong tiers.
- * Rejects heavy favorites (worse than -250) and long underdogs (beyond +400).
- */
-function isOddsInTierRange(americanOdds: number): boolean {
-  if (americanOdds === 0) return false
-  if (americanOdds < TIER_MAX_JUICE_ODDS) return false  // e.g., -345 < -250 → reject
-  if (americanOdds > TIER_MAX_PLUS_ODDS) return false   // e.g., +650 > +400 → reject
-  return true
-}
-
-/**
- * Get the Kelly fraction for a pick, computing from available fields.
- */
-function getPickKellyFraction(pick: PickLike): number {
-  const prob = (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
-  const odds = (pick.bestPrice || pick.odds || 0) as number
-  if (prob <= 0 || odds === 0) return 0
-  return calculateKellyFraction(prob, odds)
-}
-
-/**
- * Get the win probability for a pick from available fields.
- */
-function getPickProbability(pick: PickLike): number {
-  return (pick.eloProbability || pick.probability || pick.consensusProbability || 0) as number
-}
-
-/**
- * Get the American odds for a pick from available fields.
- */
-function getPickOdds(pick: PickLike): number {
-  return (pick.bestPrice || pick.odds || 0) as number
-}
-
-/**
- * Check if a pick qualifies for Lock/Strong tier based on Kelly Criterion gates.
- * This is the HARD FILTER that prevents ridiculous picks from appearing in top 4.
- */
-function qualifiesForTopTier(pick: PickLike): boolean {
-  const odds = getPickOdds(pick)
-  const prob = getPickProbability(pick)
-  const kelly = getPickKellyFraction(pick)
-
-  // Hard filter: odds must be in [-250, +400] range
-  if (!isOddsInTierRange(odds)) return false
-
-  // Hard filter: minimum 55% win probability
-  if (prob < TIER_MIN_PROBABILITY) return false
-
-  // Hard filter: minimum 2% Kelly fraction (meaningful bet size)
-  if (kelly < TIER_MIN_KELLY) return false
-
-  return true
 }
 
 /**
@@ -220,9 +152,8 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
   // Only 1 pick per gameId can be Lock or Strong. This prevents correlated
   // losses when the model likes multiple bet types on the same game.
   //
-  // KELLY CRITERION GATE: Only picks that pass qualifiesForTopTier() can be
-  // Lock or Strong. This prevents heavy favorites (-345), long underdogs (+650),
-  // and low-Kelly-fraction bets from appearing in the top 4.
+  // Tiers are assigned purely by score rank: #1 = Lock, #2-4 = Strong, rest = Value.
+  // The score already factors in probability, edge, Kelly, ROI, and sport penalties.
   let lockCount = 0
   let strongCount = 0
   const topTierGameIds = new Set<string>()
@@ -233,12 +164,6 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
     
     // If this game already has a pick in Lock/Strong, skip to value tier
     if (gameId && topTierGameIds.has(gameId)) {
-      pick.confidenceTier = 'value'
-      return
-    }
-    
-    // KELLY CRITERION GATE: Must pass hard filters to be Lock/Strong
-    if (!qualifiesForTopTier(pick)) {
       pick.confidenceTier = 'value'
       return
     }
