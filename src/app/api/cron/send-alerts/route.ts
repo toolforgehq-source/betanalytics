@@ -61,8 +61,18 @@ async function redisCommand(command: string[]): Promise<unknown> {
     cache: 'no-store',
   })
 
+  if (response.status === 429) {
+    console.warn('[send-alerts redis] Rate-limited — returning null')
+    return null
+  }
+
   const data = await response.json()
   if (data.error) {
+    const msg = String(data.error).toLowerCase()
+    if (msg.includes('rate') || msg.includes('limit') || msg.includes('too many') || msg.includes('max daily')) {
+      console.warn(`[send-alerts redis] Upstash limit hit: ${data.error}`)
+      return null
+    }
     console.error('[send-alerts redis] Error:', data.error)
     return null
   }

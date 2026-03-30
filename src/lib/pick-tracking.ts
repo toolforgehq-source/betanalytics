@@ -11,6 +11,8 @@
  * - Track ROI and units won/lost
  */
 
+import { cachedRead, invalidate } from '@/lib/redis-cache'
+
 export interface StoredPick {
   id: string                    // Unique pick ID
   createdAt: string             // When pick was made
@@ -170,6 +172,7 @@ export async function storePick(pick: Omit<StoredPick, 'id' | 'createdAt' | 'sta
       return null
     }
     
+    invalidate('picks:all') // Bust the in-memory cache after write
     console.log(`[storePick] Stored pick: ${newPick.id} - ${newPick.team}`)
     return newPick
   } catch (error) {
@@ -179,46 +182,50 @@ export async function storePick(pick: Omit<StoredPick, 'id' | 'createdAt' | 'sta
 }
 
 /**
- * Get all stored picks
+ * Get all stored picks.
+ * Results are cached in-memory for 2 minutes to reduce Upstash command usage.
+ * Write operations (storePick, gradePick) invalidate the cache.
  */
 export async function getAllPicks(): Promise<StoredPick[]> {
-  const redis = await getRedisClient()
-  if (!redis) return []
-  
-  try {
-    const response = await fetch(`${redis.url}/get/${PICKS_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+  return cachedRead('picks:all', 120, async () => {
+    const redis = await getRedisClient()
+    if (!redis) return []
     
-    if (!response.ok) return []
-    
-    const data = await response.json()
-    if (!data.result) return []
-    
-    // Handle potentially double-encoded JSON from Redis
-    let parsed = data.result
-    if (typeof parsed === 'string') {
-      try {
-        parsed = JSON.parse(parsed)
-      } catch {
-        console.error('[getAllPicks] Failed to parse picks data')
-        return []
+    try {
+      const response = await fetch(`${redis.url}/get/${PICKS_CACHE_KEY}`, {
+        headers: { Authorization: `Bearer ${redis.token}` }
+      })
+      
+      if (!response.ok) return []
+      
+      const data = await response.json()
+      if (!data.result) return []
+      
+      // Handle potentially double-encoded JSON from Redis
+      let parsed = data.result
+      if (typeof parsed === 'string') {
+        try {
+          parsed = JSON.parse(parsed)
+        } catch {
+          console.error('[getAllPicks] Failed to parse picks data')
+          return []
+        }
       }
-    }
-    // If still a string after first parse, try once more (double-encoded)
-    if (typeof parsed === 'string') {
-      try {
-        parsed = JSON.parse(parsed)
-      } catch {
-        console.error('[getAllPicks] Failed to parse double-encoded picks data')
-        return []
+      // If still a string after first parse, try once more (double-encoded)
+      if (typeof parsed === 'string') {
+        try {
+          parsed = JSON.parse(parsed)
+        } catch {
+          console.error('[getAllPicks] Failed to parse double-encoded picks data')
+          return []
+        }
       }
+      return Array.isArray(parsed) ? parsed : []
+    } catch (error) {
+      console.error('[getAllPicks] Error getting picks:', error)
+      return []
     }
-    return Array.isArray(parsed) ? parsed : []
-  } catch (error) {
-    console.error('[getAllPicks] Error getting picks:', error)
-    return []
-  }
+  })
 }
 
 /**
@@ -266,6 +273,8 @@ export async function gradePick(
       console.error(`[gradePick] Grade for ${pickId} NOT persisted — check Upstash request limits`)
       return false
     }
+    
+    invalidate('picks:all') // Bust the in-memory cache after write
     
     // Recalculate track record
     await calculateAndStoreTrackRecord(picks)
@@ -343,45 +352,48 @@ async function calculateAndStoreTrackRecord(picks: StoredPick[]): Promise<void> 
 }
 
 /**
- * Get cached track record
+ * Get cached track record.
+ * Cached in-memory for 5 minutes — track record changes only when picks are graded.
  */
 export async function getTrackRecord(): Promise<PickTrackingData['trackRecord'] | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
-  
-  try {
-    const response = await fetch(`${redis.url}/get/${TRACK_RECORD_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+  return cachedRead('picks:trackRecord', 300, async () => {
+    const redis = await getRedisClient()
+    if (!redis) return null
     
-    if (!response.ok) return null
-    
-    const data = await response.json()
-    if (!data.result) return null
-    
-    // Handle potentially double-encoded JSON from Redis
-    let parsed = data.result
-    if (typeof parsed === 'string') {
-      try {
-        parsed = JSON.parse(parsed)
-      } catch {
-        console.error('[getTrackRecord] Failed to parse track record data')
-        return null
+    try {
+      const response = await fetch(`${redis.url}/get/${TRACK_RECORD_KEY}`, {
+        headers: { Authorization: `Bearer ${redis.token}` }
+      })
+      
+      if (!response.ok) return null
+      
+      const data = await response.json()
+      if (!data.result) return null
+      
+      // Handle potentially double-encoded JSON from Redis
+      let parsed = data.result
+      if (typeof parsed === 'string') {
+        try {
+          parsed = JSON.parse(parsed)
+        } catch {
+          console.error('[getTrackRecord] Failed to parse track record data')
+          return null
+        }
       }
-    }
-    if (typeof parsed === 'string') {
-      try {
-        parsed = JSON.parse(parsed)
-      } catch {
-        console.error('[getTrackRecord] Failed to parse double-encoded track record data')
-        return null
+      if (typeof parsed === 'string') {
+        try {
+          parsed = JSON.parse(parsed)
+        } catch {
+          console.error('[getTrackRecord] Failed to parse double-encoded track record data')
+          return null
+        }
       }
+      return parsed && typeof parsed === 'object' ? parsed : null
+    } catch (error) {
+      console.error('[getTrackRecord] Error getting track record:', error)
+      return null
     }
-    return parsed && typeof parsed === 'object' ? parsed : null
-  } catch (error) {
-    console.error('[getTrackRecord] Error getting track record:', error)
-    return null
-  }
+  })
 }
 
 /**

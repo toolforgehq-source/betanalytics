@@ -88,23 +88,14 @@ async function savePinnedPicks(dateKey: string, pins: PinnedPick[]): Promise<voi
   const redis = await getPinRedis()
   if (!redis) return
   try {
+    // Use SET with EX option (1 command instead of separate SET + EXPIRE = saves 1 Redis command)
     await fetch(redis.url, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${redis.token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(['SET', `${PINNED_PICKS_PREFIX}${dateKey}`, JSON.stringify(pins)]),
-      cache: 'no-store'
-    })
-    // Expire at 2 AM ET (36 hours max to cover full betting day + buffer)
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['EXPIRE', `${PINNED_PICKS_PREFIX}${dateKey}`, 36 * 60 * 60]),
+      body: JSON.stringify(['SET', `${PINNED_PICKS_PREFIX}${dateKey}`, JSON.stringify(pins), 'EX', 36 * 60 * 60]),
       cache: 'no-store'
     })
   } catch (err) {
@@ -240,17 +231,22 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     // Fetch all data in parallel — including the cached best bet result (same source as chat)
-    const [trackRecord, rawAllPicks, rawRecentRecos, stats, cachedBestBet] = await Promise.all([
+    // NOTE: calculateTrackingStats is NOT called here because it would re-fetch
+    // getRecentRecommendations(0) internally, doubling our Redis commands.
+    // Instead we pass the pre-fetched recos to it below.
+    const [trackRecord, rawAllPicks, rawRecentRecos, cachedBestBet] = await Promise.all([
       getTrackRecord(),
       getAllPicks(),
       getRecentRecommendations(0),  // Fetch ALL recommendations (no limit) for complete history
-      calculateTrackingStats(),
       getCachedBestBet()
     ])
 
     // Defensive: ensure arrays are actually arrays
     const allPicks = Array.isArray(rawAllPicks) ? rawAllPicks : []
     const recentRecos = Array.isArray(rawRecentRecos) ? rawRecentRecos : []
+
+    // Calculate stats from the already-fetched recommendations (avoids a second Redis round-trip)
+    const stats = await calculateTrackingStats(recentRecos)
 
     // Separate picks into today's and historical
     // Use the "betting day" boundary: a day runs until 2 AM ET the next morning.
