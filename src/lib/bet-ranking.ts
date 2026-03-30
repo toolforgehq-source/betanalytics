@@ -215,10 +215,10 @@ const FALLBACK_ODDS_RELAXED = -300   // Relaxed odds limit
 const FALLBACK_PROB_RELAXED = 0.50   // Relaxed probability floor
 
 // Legacy thresholds (for qualified bets - stricter)
-// Lowered from 4% to 2%: 4% was blocking almost every NBA/NHL moneyline because those
-// markets are efficient and edges are small. 2% lets quality MLs from all sports compete
-// for the top 4 picks instead of only NCAAB spreads getting through.
-const MIN_EDGE = 0.02             // 2% minimum edge for "qualified" moneyline bets
+// Raised back to 4%: lowering to 2% let through too many marginal picks with tiny edges
+// that weren't real, tanking the win rate. 4% provides a meaningful buffer that survives
+// real-world variance. Markets are efficient — a 2% edge is often just noise.
+const MIN_EDGE = 0.04             // 4% minimum edge for "qualified" moneyline bets
 
 // Spread-specific thresholds (more relaxed since spreads are ~50% probability)
 const MIN_SPREAD_PROBABILITY = 0.48  // 48% minimum for spreads (they're designed to be ~50%)
@@ -286,7 +286,7 @@ function blendWithMarket(
 const MIN_SPREAD_MARGIN_EDGE: Record<string, number> = {
   'NBA': 3,        // Only bet when expected margin differs by 3+ points from market
   'NFL': 2.5,      // NFL has fewer games, slightly lower threshold
-  'NHL': 1.5,      // NHL: Allow puck lines to compete (was 999 = blocked entirely)
+  'NHL': 999,      // NHL: Don't recommend puck lines at all (use moneylines only)
   'MLB': 1,        // MLB run lines are 1.5, so smaller threshold
   'NCAAB': 2,      // Lowered from 4: market-anchored margins are naturally smaller, so 2pt edge is meaningful
   'NCAAF': 3,      // Similar to NFL but more variance
@@ -742,9 +742,10 @@ function calculateBetScore(
   // Spreads are 13-8 (61.9%) with +17.3% ROI.
   // Moneyline losses are expensive (full unit lost) while wins on favorites
   // pay less than a unit. This penalty pushes spreads into the top 4 over MLs.
-  // Moneyline penalty removed: let MLs compete fairly with spreads
-  // Previously -5 penalty was making it even harder for NBA/NHL MLs to reach top 4
-  const moneylinePenalty = 0
+  let moneylinePenalty = 0
+  if (betType === 'moneyline') {
+    moneylinePenalty = -5
+  }
   
   // ============================================
   // SPORT PERFORMANCE MULTIPLIER
@@ -759,9 +760,9 @@ function calculateBetScore(
   if (sport) {
     const sportLower = sport.toLowerCase()
     if (sportLower.includes('hockey') || sportLower.includes('nhl')) {
-      sportMultiplier = 1.0  // No penalty for hockey — let NHL compete equally
+      sportMultiplier = 0.7  // 30% penalty for hockey — model doesn't work well here (1-2, 33%)
     } else if (sportLower.includes('soccer') || sportLower.includes('la_liga') || sportLower.includes('epl') || sportLower.includes('bundesliga') || sportLower.includes('serie_a') || sportLower.includes('ligue')) {
-      sportMultiplier = 0.65  // Moderate penalty for soccer — only really good bets break through
+      sportMultiplier = 0.5  // 50% penalty for soccer — model doesn't work for soccer (0-1, 0%)
     }
     // NCAAB, NBA, NFL, MLB all stay at 1.0 (default)
   }
@@ -3040,26 +3041,13 @@ export async function computeBestBets(
   // ============================================
   // TIERED CONFIDENCE SYSTEM
   // ============================================
-  // Strict tiering to ensure only the highest-conviction picks get premium labels.
-  // These labels drive our public win rate — only the best of the best qualify.
+  // Simple score-based tiering: the top 4 picks by score get premium labels.
+  // The score already incorporates probability, edge, Kelly fraction, ROI,
+  // sport penalties, and situational factors — no need for extra quality gates.
   //
-  // LOCK OF THE DAY (target: 65%+ win rate):
-  //   - Same criteria as Strong Play (highest-scored qualifying bet gets Lock)
-  //   - The Lock is simply the #1 bet by score that meets Strong Play criteria
-  //   - Maximum 1 lock per day across all sports
-  //
-  // STRONG PLAY (target: 60-65% win rate):
-  //   - Elo probability 58%+
-  //   - Edge 4%+
-  //   - Elo confidence 'medium' or higher
-  //   - No sharp money against
-  //   - Spread ≤ 12 points
-  //   - Elo gap ≤ 250
-  //   - Maximum 3 strong plays per day
-  //
-  // VALUE SPOT:
-  //   - Everything else that passes base filters
-  //   - Not publicly tracked — internal only
+  // LOCK OF THE DAY: #1 pick by score (max 1/day)
+  // STRONG PLAY: #2-4 picks by score (max 3/day)
+  // VALUE SPOT: everything else (internal only)
   
   const MAX_LOCKS = 1
   const MAX_STRONG = 3
@@ -3071,50 +3059,13 @@ export async function computeBestBets(
   // which could promote a Score 73 pick to Lock while demoting a Score 82 pick to Strong.
   const sortedEloPoweredBets = [...eloPoweredBets].sort((a, b) => b.score - a.score)
   
+  // Bets are already sorted by score descending. Assign tiers purely by rank.
   const tieredBets: RankedBet[] = sortedEloPoweredBets.map(bet => {
-    const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
-    const edge = bet.edge
-    const confidence = bet.eloConfidence || 'medium'
-    const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
-    const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
-    const isHugeSpread = spreadSize > 12   // Block from Lock & Strong (was >10, bumped to allow +10.5 / +11.5 type games)
-    const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
-    const isHugeEloGap = eloGap > 250      // 250+ Elo gap = unreliable
-    const odds = bet.bestPrice
-    const isOddsInRange = odds >= -250 && odds <= 400  // No heavy favorites or long underdogs
-    
-    // LOCK criteria: the single best bet of the day
-    // Lock = highest-scored bet that meets Strong Play criteria (no extra gates)
-    // This ensures the best bet is ALWAYS the Lock, not some lower-scored bet
-    // that happens to pass arbitrary extra filters
-    const isLockCandidate = 
-      prob >= 55 &&
-      edge >= 2 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      isOddsInRange &&
-      lockCount < MAX_LOCKS
-    
-    // STRONG criteria: solid picks with meaningful edge
-    // Lowered from prob>=58/edge>=4 to prob>=55/edge>=2 so NBA/NHL/MLB picks can qualify
-    // 4% edge was impossible in efficient markets, locking out everything except NCAAB spreads
-    const isStrongCandidate =
-      prob >= 55 &&
-      edge >= 2 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      isOddsInRange &&
-      strongCount < MAX_STRONG
-    
     let tier: 'lock' | 'strong' | 'value'
-    if (isLockCandidate) {
+    if (lockCount < MAX_LOCKS) {
       tier = 'lock'
       lockCount++
-    } else if (isStrongCandidate) {
+    } else if (strongCount < MAX_STRONG) {
       tier = 'strong'
       strongCount++
     } else {
@@ -3224,6 +3175,8 @@ export async function computeBestBets(
   // Sort by score descending BEFORE tiering (same fix as strict bets above)
   const sortedEloPoweredEloBets = [...eloPoweredEloBets].sort((a, b) => b.score - a.score)
   
+  // Bets are already sorted by score descending. Assign tiers purely by rank,
+  // sharing the global lockCount/strongCount from the strict pass above.
   const tieredEloBets: RankedBet[] = sortedEloPoweredEloBets.map(bet => {
     // If this pick was already tiered in the strict pass, copy that tier to stay consistent
     const strictMatch = tieredBets.find(b => b.gameId === bet.gameId && b.team === bet.team && b.betType === bet.betType)
@@ -3231,46 +3184,13 @@ export async function computeBestBets(
       return { ...bet, confidenceTier: strictMatch.confidenceTier }
     }
     
-    const prob = bet.eloProbability !== undefined ? bet.eloProbability : bet.consensusProbability
-    const betEdge = bet.edge
-    const confidence = bet.eloConfidence || 'medium'
-    const hasSharpAgainst = bet.situationalBreakdown?.sharpMoney?.adjustment !== undefined && bet.situationalBreakdown.sharpMoney.adjustment < -0.01
-    const spreadSize = bet.betType === 'spread' && bet.line !== undefined ? Math.abs(bet.line) : 0
-    const isHugeSpread = spreadSize > 12   // Match strict pass (was >10, bumped to allow +10.5 / +11.5 type games)
-    const eloGap = bet.homeElo && bet.awayElo ? Math.abs(bet.homeElo - bet.awayElo) : 0
-    const isHugeEloGap = eloGap > 250      // Match strict pass
-    const odds = bet.bestPrice
-    const isOddsInRange = odds >= -250 && odds <= 400  // Match strict pass
-    
-    // Lock = highest-scored bet meeting Strong criteria (no extra gates)
-    // Lowered from prob>=58/edge>=4 to prob>=55/edge>=2 to match strict pass
-    const isLockCandidate = 
-      prob >= 55 &&
-      betEdge >= 2 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      isOddsInRange &&
-      lockCount < MAX_LOCKS  // Use GLOBAL counter from strict pass
-    
-    const isStrongCandidate =
-      prob >= 55 &&
-      betEdge >= 2 &&
-      (confidence === 'medium' || confidence === 'high' || confidence === 'very_high') &&
-      !hasSharpAgainst &&
-      !isHugeSpread &&
-      !isHugeEloGap &&
-      isOddsInRange &&
-      strongCount < MAX_STRONG  // Use GLOBAL counter from strict pass
-    
     let tier: 'lock' | 'strong' | 'value'
-    if (isLockCandidate) {
+    if (lockCount < MAX_LOCKS) {
       tier = 'lock'
-      lockCount++  // Increment GLOBAL counter
-    } else if (isStrongCandidate) {
+      lockCount++
+    } else if (strongCount < MAX_STRONG) {
       tier = 'strong'
-      strongCount++  // Increment GLOBAL counter
+      strongCount++
     } else {
       tier = 'value'
     }
