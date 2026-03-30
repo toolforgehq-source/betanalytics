@@ -4296,39 +4296,45 @@ export async function cacheBestBet(result: BestBetResult): Promise<void> {
 }
 
 /**
- * Get cached best bet from Redis
+ * Get cached best bet from Redis.
+ * Cached in-memory for 2 minutes — the cron only updates this hourly,
+ * so a short TTL avoids redundant fetches across page views within the same
+ * serverless instance lifetime.
  */
 export async function getCachedBestBet(): Promise<BestBetResult | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
-  
-  try {
-    const response = await fetch(`${redis.url}/get/${BEST_BET_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+  const { cachedRead } = await import('@/lib/redis-cache')
+  return cachedRead('bestBet:cached', 120, async () => {
+    const redis = await getRedisClient()
+    if (!redis) return null
     
-    if (!response.ok) return null
-    
-    const data = await response.json()
-    if (!data.result) return null
-    
-    // Handle double-stringify: cacheBestBet uses JSON.stringify(JSON.stringify(result))
-    // So we need to parse twice if the result is still a string after first parse
-    let parsed = JSON.parse(data.result)
-    if (typeof parsed === 'string') {
-      parsed = JSON.parse(parsed)
-    }
-    // Invalidate if cache version doesn't match (algorithm changed)
-    if (parsed._cacheVersion !== BEST_BET_CACHE_VERSION) {
-      console.log(`[getCachedBestBet] Cache version mismatch (cached: ${parsed._cacheVersion}, current: ${BEST_BET_CACHE_VERSION}), invalidating`)
+    try {
+      const response = await fetch(`${redis.url}/get/${BEST_BET_CACHE_KEY}`, {
+        headers: { Authorization: `Bearer ${redis.token}` }
+      })
+      
+      if (!response.ok) return null
+      
+      const data = await response.json()
+      if (!data.result) return null
+      
+      // Handle double-stringify: cacheBestBet uses JSON.stringify(JSON.stringify(result))
+      // So we need to parse twice if the result is still a string after first parse
+      let parsed = JSON.parse(data.result)
+      if (typeof parsed === 'string') {
+        parsed = JSON.parse(parsed)
+      }
+      // Invalidate if cache version doesn't match (algorithm changed)
+      if (parsed._cacheVersion !== BEST_BET_CACHE_VERSION) {
+        console.log(`[getCachedBestBet] Cache version mismatch (cached: ${parsed._cacheVersion}, current: ${BEST_BET_CACHE_VERSION}), invalidating`)
+        return null
+      }
+      
+      return parsed as BestBetResult
+    } catch (error) {
+      console.error('[getCachedBestBet] Error getting cached best bet:', error)
       return null
     }
-    
-    return parsed as BestBetResult
-  } catch (error) {
-    console.error('[getCachedBestBet] Error getting cached best bet:', error)
-    return null
-  }
+  })
 }
 
 /**

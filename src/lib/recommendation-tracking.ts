@@ -507,7 +507,9 @@ export async function updateRecommendation(id: string, updates: Partial<TrackedR
 }
 
 /**
- * Get all pending recommendations
+ * Get all pending recommendations.
+ * Uses MGET to batch-fetch all pending IDs in a single Redis command
+ * instead of N individual GETs (saves N-1 commands per call).
  */
 export async function getPendingRecommendations(): Promise<TrackedRecommendation[]> {
   const redis = await getRedisClient()
@@ -525,14 +527,47 @@ export async function getPendingRecommendations(): Promise<TrackedRecommendation
       cache: 'no-store'
     })
     
-    const data = await response.json()
-    if (!data.result || !Array.isArray(data.result)) return []
+    if (response.status === 429) {
+      console.warn('[Tracking] Redis rate-limited on SMEMBERS — returning empty')
+      return []
+    }
     
-    // Fetch each recommendation
+    const data = await response.json()
+    if (!data.result || !Array.isArray(data.result) || data.result.length === 0) return []
+    
+    // Batch fetch all pending recommendations using MGET (1 command instead of N)
+    const keys = data.result.map((id: string) => `${TRACKING_KEY_PREFIX}${id}`)
+    const mgetResponse = await fetch(redis.url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${redis.token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(['MGET', ...keys]),
+      cache: 'no-store'
+    })
+    
+    if (mgetResponse.status === 429) {
+      console.warn('[Tracking] Redis rate-limited on MGET — returning empty')
+      return []
+    }
+    
+    const mgetData = await mgetResponse.json()
+    if (!mgetData.result || !Array.isArray(mgetData.result)) return []
+    
     const recommendations: TrackedRecommendation[] = []
-    for (const id of data.result) {
-      const reco = await getRecommendation(id)
-      if (reco) recommendations.push(reco)
+    for (const raw of mgetData.result) {
+      if (!raw) continue
+      try {
+        let parsed = raw
+        if (typeof parsed === 'string') parsed = JSON.parse(parsed)
+        if (typeof parsed === 'string') parsed = JSON.parse(parsed)
+        if (parsed && typeof parsed === 'object') {
+          recommendations.push(parsed as TrackedRecommendation)
+        }
+      } catch {
+        // Skip unparseable entries
+      }
     }
     
     return recommendations
@@ -886,11 +921,14 @@ export function calculateProfit(odds: number, won: boolean): number {
 // ============================================
 
 /**
- * Calculate tracking statistics from all recommendations
+ * Calculate tracking statistics from all recommendations.
+ * Accepts an optional pre-fetched array to avoid a redundant Redis round-trip
+ * when the caller (e.g. /api/picks) already has the data.
  */
-export async function calculateTrackingStats(): Promise<TrackingStats> {
-  // Fetch ALL recommendations (no limit) so stats reflect the entire history, not just recent days
-  const allRecommendations = await getRecentRecommendations(0)
+export async function calculateTrackingStats(
+  prefetchedRecommendations?: TrackedRecommendation[]
+): Promise<TrackingStats> {
+  const allRecommendations = prefetchedRecommendations ?? await getRecentRecommendations(0)
   
   // IMPORTANT: Only count best_bet picks with lock/strong tier in the official record.
   // Props, parlays, sport_bets, and value-tier picks should NOT inflate the public record.

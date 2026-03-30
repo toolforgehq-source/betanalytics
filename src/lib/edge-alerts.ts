@@ -30,8 +30,18 @@ async function redisCommand(command: string[]): Promise<unknown> {
     cache: 'no-store',
   })
 
+  if (response.status === 429) {
+    console.warn(`[EdgeAlerts] Redis rate-limited on ${command[0]} — returning null`)
+    return null
+  }
+
   const data = await response.json()
   if (data.error) {
+    const msg = String(data.error).toLowerCase()
+    if (msg.includes('rate') || msg.includes('limit') || msg.includes('too many') || msg.includes('max daily')) {
+      console.warn(`[EdgeAlerts] Upstash limit hit on ${command[0]}: ${data.error}`)
+      return null
+    }
     throw new Error(data.error)
   }
   return data.result
@@ -115,8 +125,8 @@ async function markAlertSentToday(): Promise<void> {
 
   try {
     const key = `${ALERT_SENT_PREFIX}${getTodayDateKey()}`
-    await redisCommand(['SET', key, '1'])
-    await redisCommand(['EXPIRE', key, `${24 * 60 * 60}`])
+    // Use SET with EX option (1 command instead of separate SET + EXPIRE = 2 commands)
+    await redisCommand(['SET', key, '1', 'EX', `${24 * 60 * 60}`])
   } catch (error) {
     console.error('[EdgeAlerts] Error marking sent:', error)
   }
