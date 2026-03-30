@@ -28,7 +28,7 @@ export const MAX_STRONG = 3
 export const TIER_MAX_JUICE_ODDS = -250   // No heavy favorites worse than -250
 export const TIER_MAX_PLUS_ODDS = 400     // No long underdogs beyond +400
 export const TIER_MIN_KELLY = 0.02        // Minimum 2% Kelly fraction for Lock/Strong
-export const TIER_MIN_PROBABILITY = 55    // Minimum 55% win probability for Lock/Strong
+export const TIER_MIN_PROBABILITY = 58    // Minimum 58% win probability for Lock/Strong
 
 /**
  * Calculate Kelly Criterion fraction for a bet.
