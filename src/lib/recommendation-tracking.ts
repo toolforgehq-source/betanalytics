@@ -297,17 +297,17 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
         // Game hasn't started — update with latest odds/line/selection (upsert).
         // If the recommendation was previously voided (e.g., temporarily dropped
         // from the active list due to score fluctuations), reset it back to pending.
-        // NOTE: confidenceTier is intentionally NOT updated here. The tier assigned
-        // on first creation is the "true" tier (based on the full set of games at
-        // that time). Later cron runs may see a different game set (e.g., started
-        // games dropped from ESPN feed) and assign different tiers, causing the
-        // Performance page to disagree with what the Model Picks page showed all day.
+        // confidenceTier IS updated here so the stored tier stays in sync with the
+        // Model Picks page. Previously it was intentionally excluded, but that caused
+        // picks to appear on Model Picks as lock/strong while the stored record still
+        // had a stale tier (e.g. value), so they never showed on the Performance page.
         const updates: Partial<TrackedRecommendation> = {
           selection: reco.selection,
           line: reco.line,
           odds: reco.odds,
           probability: reco.probability,
           score: reco.score,
+          confidenceTier: reco.confidenceTier,
         }
         if (existing.status === 'void') {
           updates.status = 'pending'

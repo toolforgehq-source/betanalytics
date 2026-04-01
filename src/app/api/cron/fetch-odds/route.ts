@@ -407,6 +407,13 @@ export async function GET(request: Request) {
           (p.status === 'pending' || p.lockedIn)
         )
         
+        // ALWAYS update recommendation-tracking (upserts tier/score/odds).
+        // Previously this was gated by !alreadyHavePick, so once a pick existed
+        // in pick-tracking, the recommendation record was never updated with
+        // new tiers or scores. This caused the Performance page to show stale
+        // data that didn't match the Model Picks page.
+        await trackBestBet(bet)
+        
         if (!alreadyHavePick) {
           // Store in pick-tracking system (for grading/track record)
           await storePick({
@@ -426,10 +433,6 @@ export async function GET(request: Request) {
             bestBook: bet.bestBook
           })
           picksStored++
-          
-          // Store in recommendation-tracking system (this is what the /picks page reads from)
-          // These are TWO SEPARATE Redis stores — both must be written to.
-          await trackBestBet(bet)
           console.log(`[fetch-odds] Stored + tracked: ${bet.team} (tier: ${bet.confidenceTier})`)
         
           // Track CLV for this pick (stores the line at pick time)
@@ -454,7 +457,7 @@ export async function GET(request: Request) {
             predictedProbability: bet.consensusProbability / 100
           })
         } else {
-          console.log(`[fetch-odds] Pick already exists for ${bet.team} (${bet.gameId}) — skipping`)
+          console.log(`[fetch-odds] Pick exists in pick-tracking for ${bet.team} (${bet.gameId}) — updated recommendation only`)
         }
       }
     } else {
