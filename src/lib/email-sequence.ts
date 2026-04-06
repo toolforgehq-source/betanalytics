@@ -6,6 +6,7 @@ import {
   day5TrialExpired,
   week2Winback,
 } from './email-templates'
+import { kvGet, kvSet, kvSadd, kvSrem, kvSmembers, isDbConfigured } from '@/lib/pg-kv'
 
 export type EmailStep = 'welcome' | 'day2_value' | 'day3_trial_ending' | 'day5_expired' | 'week2_winback'
 
@@ -27,45 +28,6 @@ const EMAIL_SEQUENCE: { step: EmailStep; delayDays: number }[] = [
   { step: 'week2_winback', delayDays: 14 },
 ]
 
-function getRedisConfig() {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
-  return { url, token, useRedis: !!(url && token) }
-}
-
-async function redisCommand(command: string[]): Promise<unknown> {
-  const { url, token } = getRedisConfig()
-  if (!url || !token) {
-    throw new Error('Redis not configured')
-  }
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(command),
-    cache: 'no-store',
-  })
-
-  if (response.status === 429) {
-    console.warn(`[EmailSequence] Redis rate-limited on ${command[0]} — returning null`)
-    return null
-  }
-
-  const data = await response.json()
-  if (data.error) {
-    const msg = String(data.error).toLowerCase()
-    if (msg.includes('rate') || msg.includes('limit') || msg.includes('too many') || msg.includes('max daily')) {
-      console.warn(`[EmailSequence] Upstash limit hit on ${command[0]}: ${data.error}`)
-      return null
-    }
-    throw new Error(data.error)
-  }
-  return data.result
-}
-
 const memorySequences: Map<string, EmailSequenceState> = new Map()
 
 export async function createEmailSequence(userId: string, email: string, name: string | null): Promise<EmailSequenceState> {
@@ -79,10 +41,9 @@ export async function createEmailSequence(userId: string, email: string, name: s
     unsubscribed: false,
   }
 
-  const { useRedis } = getRedisConfig()
-  if (useRedis) {
-    await redisCommand(['SET', `email_seq:${userId}`, JSON.stringify(state)])
-    await redisCommand(['SADD', 'email_seq_active', userId])
+  if (isDbConfigured()) {
+    await kvSet(`email_seq:${userId}`, JSON.stringify(state))
+    await kvSadd('email_seq_active', userId)
   } else {
     memorySequences.set(userId, state)
   }
@@ -91,9 +52,8 @@ export async function createEmailSequence(userId: string, email: string, name: s
 }
 
 export async function getEmailSequence(userId: string): Promise<EmailSequenceState | null> {
-  const { useRedis } = getRedisConfig()
-  if (useRedis) {
-    const data = await redisCommand(['GET', `email_seq:${userId}`]) as string | null
+  if (isDbConfigured()) {
+    const data = await kvGet(`email_seq:${userId}`)
     if (!data) return null
     return JSON.parse(data) as EmailSequenceState
   } else {
@@ -106,9 +66,8 @@ export async function updateEmailSequence(userId: string, updates: Partial<Email
   if (!existing) return
 
   const updated = { ...existing, ...updates }
-  const { useRedis } = getRedisConfig()
-  if (useRedis) {
-    await redisCommand(['SET', `email_seq:${userId}`, JSON.stringify(updated)])
+  if (isDbConfigured()) {
+    await kvSet(`email_seq:${userId}`, JSON.stringify(updated))
   } else {
     memorySequences.set(userId, updated)
   }
@@ -116,16 +75,14 @@ export async function updateEmailSequence(userId: string, updates: Partial<Email
 
 export async function markUserConverted(userId: string): Promise<void> {
   await updateEmailSequence(userId, { convertedAt: new Date().toISOString() })
-  const { useRedis } = getRedisConfig()
-  if (useRedis) {
-    await redisCommand(['SREM', 'email_seq_active', userId])
+  if (isDbConfigured()) {
+    await kvSrem('email_seq_active', userId)
   }
 }
 
 export async function getActiveSequenceUserIds(): Promise<string[]> {
-  const { useRedis } = getRedisConfig()
-  if (useRedis) {
-    const members = await redisCommand(['SMEMBERS', 'email_seq_active']) as string[]
+  if (isDbConfigured()) {
+    const members = await kvSmembers('email_seq_active')
     return members || []
   } else {
     return Array.from(memorySequences.entries())
@@ -201,9 +158,8 @@ export async function processEmailSequences(): Promise<{ processed: number; sent
 
     const allSent = EMAIL_SEQUENCE.every(({ step }) => state.emailsSent.includes(step))
     if (allSent) {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        await redisCommand(['SREM', 'email_seq_active', userId])
+      if (isDbConfigured()) {
+        await kvSrem('email_seq_active', userId)
       }
     }
   }

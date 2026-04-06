@@ -16,6 +16,8 @@
 import { NextResponse } from 'next/server'
 import { getAllPicks, type StoredPick } from '@/lib/pick-tracking'
 import { sendEmail, isEmailConfigured } from '@/lib/email'
+import { kvGet, kvSet, kvSmembers } from '@/lib/pg-kv'
+
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -46,38 +48,7 @@ interface AlertPreferences {
 // REDIS HELPERS
 // ============================================
 
-async function redisCommand(command: string[]): Promise<unknown> {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
-  if (!url || !token) return null
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(command),
-    cache: 'no-store',
-  })
-
-  if (response.status === 429) {
-    console.warn('[send-alerts redis] Rate-limited — returning null')
-    return null
-  }
-
-  const data = await response.json()
-  if (data.error) {
-    const msg = String(data.error).toLowerCase()
-    if (msg.includes('rate') || msg.includes('limit') || msg.includes('too many') || msg.includes('max daily')) {
-      console.warn(`[send-alerts redis] Upstash limit hit: ${data.error}`)
-      return null
-    }
-    console.error('[send-alerts redis] Error:', data.error)
-    return null
-  }
-  return data.result
-}
 
 // ============================================
 // PICK FILTERING
@@ -349,24 +320,13 @@ export async function GET(request: Request) {
     }
 
     // 2. Get all subscribed users from Redis set + SCAN fallback for legacy users
-    let subscribers = await redisCommand(['SMEMBERS', 'alert_subscribers']) as string[] | null
+    let subscribers: string[] | null = await kvSmembers('alert_subscribers')
 
     // Fallback: SCAN for alert_prefs:* keys to find users who saved prefs before
     // the alert_subscribers set was introduced. Backfill them into the set.
     if (!subscribers || subscribers.length === 0) {
       const scannedEmails: string[] = []
-      let cursor = '0'
-      do {
-        const result = await redisCommand(['SCAN', cursor, 'MATCH', 'alert_prefs:*', 'COUNT', '100']) as [string, string[]] | null
-        if (!result) break
-        cursor = result[0]
-        for (const key of result[1]) {
-          const email = key.replace('alert_prefs:', '')
-          scannedEmails.push(email)
-          // Backfill into the set for future runs
-          await redisCommand(['SADD', 'alert_subscribers', email])
-        }
-      } while (cursor !== '0')
+      // SCAN is not supported in pg-kv; skip legacy backfill
 
       if (scannedEmails.length > 0) {
         subscribers = scannedEmails
@@ -392,7 +352,7 @@ export async function GET(request: Request) {
     for (const email of subscribers) {
       try {
         // Load user preferences
-        const prefsRaw = await redisCommand(['GET', `alert_prefs:${email}`]) as string | null
+        const prefsRaw = await kvGet(`alert_prefs:${email}`)
         if (!prefsRaw) {
           emailsSkipped++
           continue
@@ -417,7 +377,7 @@ export async function GET(request: Request) {
 
         // Check frequency — avoid sending too often
         const lastSentKey = `alert_last_sent:${email}`
-        const lastSent = await redisCommand(['GET', lastSentKey]) as string | null
+        const lastSent = await kvGet(lastSentKey)
         if (lastSent) {
           const lastSentTime = new Date(lastSent)
           const msSinceLast = now.getTime() - lastSentTime.getTime()
@@ -452,7 +412,7 @@ export async function GET(request: Request) {
         if (result.success) {
           emailsSent++
           // Record last-sent timestamp (expire after 24h)
-          await redisCommand(['SET', lastSentKey, now.toISOString(), 'EX', '86400'])
+          await kvSet(lastSentKey, now.toISOString(), 86400)
           console.log(`[send-alerts] Sent to ${targetEmail}: ${matchingPicks.length} picks`)
         } else {
           errors.push(`${email}: ${result.error}`)

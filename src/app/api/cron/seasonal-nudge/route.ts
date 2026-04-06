@@ -3,6 +3,8 @@ import { isEmailConfigured, sendEmail } from '@/lib/email'
 import { seasonalNudgeEmail } from '@/lib/email-templates'
 import { getAlertSubscriberIds } from '@/lib/edge-alerts'
 import { db } from '@/db'
+import { kvGet, kvDel, kvExpire, kvSadd, kvSmembers, isDbConfigured } from '@/lib/pg-kv'
+
 
 const SPORT_DISPLAY_NAMES: Record<string, string> = {
   'basketball_nba': 'NBA',
@@ -20,45 +22,6 @@ const SPORT_DISPLAY_NAMES: Record<string, string> = {
   'soccer_uefa_champs_league': 'Champions League',
 }
 
-function getRedisConfig() {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
-  return { url, token, useRedis: !!(url && token) }
-}
-
-async function redisCommand(command: string[]): Promise<unknown> {
-  const { url, token } = getRedisConfig()
-  if (!url || !token) {
-    throw new Error('Redis not configured')
-  }
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(command),
-    cache: 'no-store',
-  })
-
-  if (response.status === 429) {
-    console.warn(`[SeasonalNudge] Redis rate-limited on ${command[0]} — returning null`)
-    return null
-  }
-
-  const data = await response.json()
-  if (data.error) {
-    const msg = String(data.error).toLowerCase()
-    if (msg.includes('rate') || msg.includes('limit') || msg.includes('too many') || msg.includes('max daily')) {
-      console.warn(`[SeasonalNudge] Upstash limit hit on ${command[0]}: ${data.error}`)
-      return null
-    }
-    throw new Error(data.error)
-  }
-  return data.result
-}
-
 function getWeekKey(weeksAgo: number = 0): string {
   const now = new Date()
   const target = new Date(now.getTime() - weeksAgo * 7 * 24 * 60 * 60 * 1000)
@@ -69,12 +32,11 @@ function getWeekKey(weeksAgo: number = 0): string {
 }
 
 async function getActiveSportsFromCache(): Promise<Record<string, number>> {
-  const { useRedis } = getRedisConfig()
-  if (!useRedis) return {}
+  if (!isDbConfigured()) return {}
 
   try {
     const cacheKey = 'betanalytics:cached_espn_odds'
-    const raw = await redisCommand(['GET', cacheKey]) as string | null
+    const raw = await kvGet(cacheKey)
     if (!raw) return {}
 
     const data = JSON.parse(raw)
@@ -95,16 +57,15 @@ async function getActiveSportsFromCache(): Promise<Record<string, number>> {
 }
 
 async function storeThisWeekSports(sportNames: string[]): Promise<void> {
-  const { useRedis } = getRedisConfig()
-  if (!useRedis || sportNames.length === 0) return
+  if (!isDbConfigured() || sportNames.length === 0) return
 
   try {
     const key = getWeekKey(0)
-    await redisCommand(['DEL', key])
+    await kvDel(key)
     if (sportNames.length > 0) {
-        await redisCommand(['SADD', key, ...sportNames])
+        await kvSadd(key, ...sportNames)
         // Note: SADD doesn't support EX, so EXPIRE is still needed here
-        await redisCommand(['EXPIRE', key, `${30 * 24 * 60 * 60}`])
+        await kvExpire(key, 30 * 24 * 60 * 60)
     }
   } catch (error) {
     console.error('[SeasonalNudge] Error storing sports:', error)
@@ -112,12 +73,11 @@ async function storeThisWeekSports(sportNames: string[]): Promise<void> {
 }
 
 async function getLastWeekSports(): Promise<string[]> {
-  const { useRedis } = getRedisConfig()
-  if (!useRedis) return []
+  if (!isDbConfigured()) return []
 
   try {
     const key = getWeekKey(1)
-    const members = await redisCommand(['SMEMBERS', key]) as string[]
+    const members = await kvSmembers(key)
     return members || []
   } catch (error) {
     console.error('[SeasonalNudge] Error reading last week sports:', error)

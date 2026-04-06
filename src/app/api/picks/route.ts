@@ -22,6 +22,8 @@ import { getTrackRecord, getAllPicks, type StoredPick } from '@/lib/pick-trackin
 import { getRecentRecommendations, calculateTrackingStats, enforceDailyCaps } from '@/lib/recommendation-tracking'
 import { getCachedBestBet, type RankedBet } from '@/lib/bet-ranking'
 import { dedupeAndEnforceCaps, dedupeToMap, FREEZE_WINDOW_MS, MAX_LOCKS, MAX_STRONG, type PickLike } from '@/lib/enforce-picks'
+import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
+
 
 // ============================================
 // HYBRID PICK PINNING — Fresh until 1hr before game, then locked forever
@@ -45,32 +47,15 @@ interface PinnedPick {
 // logic that let low-score games steal slots from high-score games.
 const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks-v2:'
 
-async function getPinRedis() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  if (!url || !token) return null
-  return { url, token }
-}
-
 /**
- * Load today's pinned tier assignments from Redis.
+ * Load today's pinned tier assignments from the database.
  */
 async function loadPinnedPicks(dateKey: string): Promise<PinnedPick[]> {
-  const redis = await getPinRedis()
-  if (!redis) return []
+  if (!isDbConfigured()) return []
   try {
-    const res = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['GET', `${PINNED_PICKS_PREFIX}${dateKey}`]),
-      cache: 'no-store'
-    })
-    const data = await res.json()
-    if (!data.result) return []
-    let parsed = data.result
+    const raw = await kvGet(`${PINNED_PICKS_PREFIX}${dateKey}`)
+    if (!raw) return []
+    let parsed = raw
     if (typeof parsed === 'string') parsed = JSON.parse(parsed)
     if (typeof parsed === 'string') parsed = JSON.parse(parsed)
     return Array.isArray(parsed) ? parsed : []
@@ -81,23 +66,13 @@ async function loadPinnedPicks(dateKey: string): Promise<PinnedPick[]> {
 }
 
 /**
- * Persist today's tier assignments to Redis.
- * TTL is set to expire at 2 AM ET (same as the best bet cache).
+ * Persist today's tier assignments to the database.
+ * TTL is set to expire after 36 hours (same as the best bet cache).
  */
 async function savePinnedPicks(dateKey: string, pins: PinnedPick[]): Promise<void> {
-  const redis = await getPinRedis()
-  if (!redis) return
+  if (!isDbConfigured()) return
   try {
-    // Use SET with EX option (1 command instead of separate SET + EXPIRE = saves 1 Redis command)
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SET', `${PINNED_PICKS_PREFIX}${dateKey}`, JSON.stringify(pins), 'EX', 36 * 60 * 60]),
-      cache: 'no-store'
-    })
+    await kvSet(`${PINNED_PICKS_PREFIX}${dateKey}`, JSON.stringify(pins), 36 * 60 * 60)
   } catch (err) {
     console.error('[API /picks] Error saving pinned picks:', err)
   }

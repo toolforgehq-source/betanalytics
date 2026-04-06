@@ -10,42 +10,13 @@
 
 import { NextResponse } from 'next/server'
 import { auth } from '@/auth'
+import { kvGet, kvSet, kvSadd, kvSrem } from '@/lib/pg-kv'
+
 
 export const dynamic = 'force-dynamic'
 
 // Upstash Redis REST API helper (same pattern as src/db/index.ts)
-async function redisCommand(command: string[]): Promise<unknown> {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
-  if (!url || !token) return null
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(command),
-    cache: 'no-store',
-  })
-
-  if (response.status === 429) {
-    console.warn('[alerts redis] Rate-limited — returning null')
-    return null
-  }
-
-  const data = await response.json()
-  if (data.error) {
-    const msg = String(data.error).toLowerCase()
-    if (msg.includes('rate') || msg.includes('limit') || msg.includes('too many') || msg.includes('max daily')) {
-      console.warn(`[alerts redis] Upstash limit hit: ${data.error}`)
-      return null
-    }
-    console.error('[alerts redis] Error:', data.error)
-    return null
-  }
-  return data.result
-}
 
 // In-memory fallback for local development
 const memoryAlertPrefs: Map<string, string> = new Map()
@@ -67,15 +38,15 @@ export async function POST(req: Request) {
     const value = JSON.stringify(preferences)
 
     // Try Upstash Redis, fall back to memory
-    const redisResult = await redisCommand(['SET', key, value])
+    const redisResult = await kvSet(key, value)
     if (redisResult === null) {
       memoryAlertPrefs.set(key, value)
     } else {
       // Track this user in a set so the cron job can scan all subscribers
       if (preferences.emailEnabled) {
-        await redisCommand(['SADD', 'alert_subscribers', session.user.email.toLowerCase()])
+        await kvSadd('alert_subscribers', session.user.email.toLowerCase())
       } else {
-        await redisCommand(['SREM', 'alert_subscribers', session.user.email.toLowerCase()])
+        await kvSrem('alert_subscribers', session.user.email.toLowerCase())
       }
     }
 
@@ -103,7 +74,7 @@ export async function GET() {
     const key = `alert_prefs:${session.user.email.toLowerCase()}`
 
     // Try Upstash Redis first
-    const stored = await redisCommand(['GET', key]) as string | null
+    const stored = await kvGet(key)
     if (stored) {
       return NextResponse.json({
         success: true,

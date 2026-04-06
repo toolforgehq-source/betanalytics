@@ -13,7 +13,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
     "@auth/core": "^0.34.3",
+    "@neondatabase/serverless": "^1.0.2",
     "bcryptjs": "^3.0.3",
+    "drizzle-orm": "^0.45.2",
     "lucide-react": "^0.562.0",
     "next": "14.2.35",
     "next-auth": "5.0.0-beta.30",
@@ -29,6 +31,7 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@types/uuid": "^11.0.0",
+    "drizzle-kit": "^0.31.10",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",
     "postcss": "^8",

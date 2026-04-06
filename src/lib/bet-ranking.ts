@@ -39,6 +39,7 @@ import type { WeatherData } from './weather'
 import { type LineMovement } from './line-movement'
 import { normalizeTeamName as normalizeScheduleTeamName, type TeamScheduleData } from './team-schedule'
 import { getCalibratedProbability } from './calibration'
+import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
 export interface RankedBet {
   gameId: string
@@ -4244,44 +4245,15 @@ function getSecondsUntil2amET(): number {
 const BEST_BET_CACHE_VERSION = 3  // v3: spread quality bonus + spread/Elo penalties
 
 /**
- * Get Redis client for caching
- */
-async function getRedisClient() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('Redis not configured for best bet caching')
-    return null
-  }
-  
-  return { url, token }
-}
-
-/**
- * Cache the best bet result in Redis
+ * Cache the best bet result in Postgres
  */
 export async function cacheBestBet(result: BestBetResult): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
-    await fetch(`${redis.url}/set/${BEST_BET_CACHE_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify({ ...result, _cacheVersion: BEST_BET_CACHE_VERSION }))
-    })
-    
     // Set TTL to expire at 2 AM ET — picks stay visible for the full day.
-    // This prevents the cache from expiring mid-evening and losing all daily picks.
     const ttlSeconds = getSecondsUntil2amET()
-    await fetch(`${redis.url}/expire/${BEST_BET_CACHE_KEY}/${ttlSeconds}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    await kvSet(BEST_BET_CACHE_KEY, JSON.stringify({ ...result, _cacheVersion: BEST_BET_CACHE_VERSION }), ttlSeconds)
     console.log(`[cacheBestBet] TTL set to ${ttlSeconds}s (expires at ~2 AM ET)`)
     
     // Track the recommendation for performance monitoring
@@ -4296,7 +4268,7 @@ export async function cacheBestBet(result: BestBetResult): Promise<void> {
 }
 
 /**
- * Get cached best bet from Redis.
+ * Get cached best bet from Postgres.
  * Cached in-memory for 2 minutes — the cron only updates this hourly,
  * so a short TTL avoids redundant fetches across page views within the same
  * serverless instance lifetime.
@@ -4304,22 +4276,13 @@ export async function cacheBestBet(result: BestBetResult): Promise<void> {
 export async function getCachedBestBet(): Promise<BestBetResult | null> {
   const { cachedRead } = await import('@/lib/redis-cache')
   return cachedRead('bestBet:cached', 120, async () => {
-    const redis = await getRedisClient()
-    if (!redis) return null
+    if (!isDbConfigured()) return null
     
     try {
-      const response = await fetch(`${redis.url}/get/${BEST_BET_CACHE_KEY}`, {
-        headers: { Authorization: `Bearer ${redis.token}` }
-      })
+      const result = await kvGet(BEST_BET_CACHE_KEY)
+      if (!result) return null
       
-      if (!response.ok) return null
-      
-      const data = await response.json()
-      if (!data.result) return null
-      
-      // Handle double-stringify: cacheBestBet uses JSON.stringify(JSON.stringify(result))
-      // So we need to parse twice if the result is still a string after first parse
-      let parsed = JSON.parse(data.result)
+      let parsed = JSON.parse(result)
       if (typeof parsed === 'string') {
         parsed = JSON.parse(parsed)
       }
@@ -5117,23 +5080,10 @@ const SPORT_BETS_CACHE_KEY = 'betanalytics:sport-bets'
  * Cache parlay result
  */
 export async function cacheParlay(parlay: ParlayResult): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
-    await fetch(`${redis.url}/set/${PARLAY_CACHE_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(parlay))
-    })
-    
-    await fetch(`${redis.url}/expire/${PARLAY_CACHE_KEY}/${4 * 60 * 60}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    await kvSet(PARLAY_CACHE_KEY, JSON.stringify(parlay), 4 * 60 * 60)
     
     // Track parlays for performance monitoring
     if (parlay.safeParlay && parlay.safeParlay.length > 0) {
@@ -5151,20 +5101,13 @@ export async function cacheParlay(parlay: ParlayResult): Promise<void> {
  * Get cached parlay
  */
 export async function getCachedParlay(): Promise<ParlayResult | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const response = await fetch(`${redis.url}/get/${PARLAY_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    const result = await kvGet(PARLAY_CACHE_KEY)
+    if (!result) return null
     
-    if (!response.ok) return null
-    const data = await response.json()
-    if (!data.result) return null
-    
-    // Handle double-stringify: cacheParlay uses JSON.stringify(JSON.stringify(parlay))
-    let parsed = JSON.parse(data.result)
+    let parsed = JSON.parse(result)
     if (typeof parsed === 'string') {
       parsed = JSON.parse(parsed)
     }
@@ -5179,23 +5122,10 @@ export async function getCachedParlay(): Promise<ParlayResult | null> {
  * Cache sport-specific bets
  */
 export async function cacheSportBets(sportBets: SportBestBets): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
-    await fetch(`${redis.url}/set/${SPORT_BETS_CACHE_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(sportBets))
-    })
-    
-    await fetch(`${redis.url}/expire/${SPORT_BETS_CACHE_KEY}/${4 * 60 * 60}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    await kvSet(SPORT_BETS_CACHE_KEY, JSON.stringify(sportBets), 4 * 60 * 60)
     
     // Track sport-specific bets for performance monitoring
     for (const [sportName, bet] of Object.entries(sportBets)) {
@@ -5212,20 +5142,13 @@ export async function cacheSportBets(sportBets: SportBestBets): Promise<void> {
  * Get cached sport-specific bets
  */
 export async function getCachedSportBets(): Promise<SportBestBets | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const response = await fetch(`${redis.url}/get/${SPORT_BETS_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    const result = await kvGet(SPORT_BETS_CACHE_KEY)
+    if (!result) return null
     
-    if (!response.ok) return null
-    const data = await response.json()
-    if (!data.result) return null
-    
-    // Handle double-stringify: cacheSportBets uses JSON.stringify(JSON.stringify(sportBets))
-    let parsed = JSON.parse(data.result)
+    let parsed = JSON.parse(result)
     if (typeof parsed === 'string') {
       parsed = JSON.parse(parsed)
     }
@@ -5971,23 +5894,10 @@ const BEST_PROP_CACHE_KEY = 'betanalytics:best-prop'
  * Cache best prop result
  */
 export async function cacheBestProp(result: BestPropResult): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
-    await fetch(`${redis.url}/set/${BEST_PROP_CACHE_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(result))
-    })
-    
-    await fetch(`${redis.url}/expire/${BEST_PROP_CACHE_KEY}/${4 * 60 * 60}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    await kvSet(BEST_PROP_CACHE_KEY, JSON.stringify(result), 4 * 60 * 60)
     
     // Track prop bet for performance monitoring
     if (result.bestProp) {
@@ -6002,20 +5912,13 @@ export async function cacheBestProp(result: BestPropResult): Promise<void> {
  * Get cached best prop
  */
 export async function getCachedBestProp(): Promise<BestPropResult | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const response = await fetch(`${redis.url}/get/${BEST_PROP_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    const result = await kvGet(BEST_PROP_CACHE_KEY)
+    if (!result) return null
     
-    if (!response.ok) return null
-    const data = await response.json()
-    if (!data.result) return null
-    
-    // Handle double-stringify: cacheBestProp uses JSON.stringify(JSON.stringify(result))
-    let parsed = JSON.parse(data.result)
+    let parsed = JSON.parse(result)
     if (typeof parsed === 'string') {
       parsed = JSON.parse(parsed)
     }
@@ -6033,24 +5936,10 @@ const MODEL_FIRST_PROPS_CACHE_KEY = 'betanalytics:model-first-props'
  * Cache model-first props result (for parlays)
  */
 export async function cacheModelFirstProps(result: BestPropResult): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
-    await fetch(`${redis.url}/set/${MODEL_FIRST_PROPS_CACHE_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(result))
-    })
-    
-    await fetch(`${redis.url}/expire/${MODEL_FIRST_PROPS_CACHE_KEY}/${4 * 60 * 60}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
+    await kvSet(MODEL_FIRST_PROPS_CACHE_KEY, JSON.stringify(result), 4 * 60 * 60)
     console.log(`[cacheModelFirstProps] Cached ${result.allRankedProps.length} model-first props for parlays`)
   } catch (error) {
     console.error('[cacheModelFirstProps] Error:', error)
@@ -6061,20 +5950,13 @@ export async function cacheModelFirstProps(result: BestPropResult): Promise<void
  * Get cached model-first props (for parlays)
  */
 export async function getCachedModelFirstProps(): Promise<BestPropResult | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const response = await fetch(`${redis.url}/get/${MODEL_FIRST_PROPS_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    const result = await kvGet(MODEL_FIRST_PROPS_CACHE_KEY)
+    if (!result) return null
     
-    if (!response.ok) return null
-    const data = await response.json()
-    if (!data.result) return null
-    
-    // Handle double-stringify: cacheModelFirstProps uses JSON.stringify(JSON.stringify(result))
-    let parsed = JSON.parse(data.result)
+    let parsed = JSON.parse(result)
     if (typeof parsed === 'string') {
       parsed = JSON.parse(parsed)
     }

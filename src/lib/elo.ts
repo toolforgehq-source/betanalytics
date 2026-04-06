@@ -1,3 +1,5 @@
+import { kvGet, kvSet, kvDel, isDbConfigured } from '@/lib/pg-kv'
+
 /**
  * Elo Rating System for Sports Betting
  * 
@@ -7,7 +9,7 @@
  * Key features:
  * - Team ratings start at 1500 and adjust based on game results
  * - Home advantage is factored in (~100 points for most sports)
- * - Ratings persist in Redis and update daily via cron job
+ * - Ratings persist in Postgres and update daily via cron job
  * - Provides win probability independent of sportsbook odds
  */
 
@@ -733,43 +735,16 @@ export function updateRatingsAfterGame(
 const ELO_RATINGS_KEY = 'elo_ratings'
 const ELO_PROCESSED_GAMES_KEY = 'elo_processed_games'
 
-async function getRedisClient() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('[Elo] Redis not configured')
-    return null
-  }
-  
-  return { url, token }
-}
-
 /**
- * Get all Elo ratings from Redis
+ * Get all Elo ratings from Postgres
  */
 export async function getEloRatings(): Promise<EloRatings | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    // Use Upstash REST API format: POST with command array
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['GET', ELO_RATINGS_KEY]),
-      cache: 'no-store'  // Prevent Next.js from caching/deduping this request
-    })
-    
-    if (!response.ok) return null
-    
-    const data = await response.json()
-    if (!data.result) return null
-    
-    return JSON.parse(data.result) as EloRatings
+    const result = await kvGet(ELO_RATINGS_KEY)
+    if (!result) return null
+    return JSON.parse(result) as EloRatings
   } catch (error) {
     console.error('[Elo] Error getting ratings:', error)
     return null
@@ -777,45 +752,22 @@ export async function getEloRatings(): Promise<EloRatings | null> {
 }
 
 /**
- * Save Elo ratings to Redis
+ * Save Elo ratings to Postgres
  */
 export async function saveEloRatings(ratings: EloRatings): Promise<boolean> {
-  const redis = await getRedisClient()
-  if (!redis) {
-    console.warn('[Elo] Redis not configured, cannot save ratings')
+  if (!isDbConfigured()) {
+    console.warn('[Elo] Database not configured, cannot save ratings')
     return false
   }
   
   try {
-    // Ensure ratings object has proper structure
     const safeRatings: EloRatings = {
       ratings: ratings.ratings || {},
       lastUpdated: ratings.lastUpdated || new Date().toISOString(),
       gamesProcessed: ratings.gamesProcessed || 0
     }
     
-    // Use Upstash REST API format: POST with command array
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SET', ELO_RATINGS_KEY, JSON.stringify(safeRatings)])
-    })
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error(`[Elo] Failed to save ratings: ${response.status} - ${errorText}`)
-      return false
-    }
-    
-    const data = await response.json()
-    if (data.error) {
-      console.error(`[Elo] Redis error: ${data.error}`)
-      return false
-    }
-    
+    await kvSet(ELO_RATINGS_KEY, JSON.stringify(safeRatings))
     console.log(`[Elo] Saved ratings for ${Object.keys(safeRatings.ratings).length} teams`)
     return true
   } catch (error) {
@@ -828,27 +780,12 @@ export async function saveEloRatings(ratings: EloRatings): Promise<boolean> {
  * Get set of already processed game IDs
  */
 export async function getProcessedGameIds(): Promise<Set<string>> {
-  const redis = await getRedisClient()
-  if (!redis) return new Set()
+  if (!isDbConfigured()) return new Set()
   
   try {
-    // Use Upstash REST API format: POST with command array
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['GET', ELO_PROCESSED_GAMES_KEY]),
-      cache: 'no-store'  // Prevent Next.js from caching/deduping this request
-    })
-    
-    if (!response.ok) return new Set()
-    
-    const data = await response.json()
-    if (!data.result) return new Set()
-    
-    const gameIds = JSON.parse(data.result) as string[]
+    const result = await kvGet(ELO_PROCESSED_GAMES_KEY)
+    if (!result) return new Set()
+    const gameIds = JSON.parse(result) as string[]
     return new Set(gameIds)
   } catch (error) {
     console.error('[Elo] Error getting processed games:', error)
@@ -857,58 +794,30 @@ export async function getProcessedGameIds(): Promise<Set<string>> {
 }
 
 /**
- * Save processed game IDs to Redis
+ * Save processed game IDs to Postgres
  */
 export async function saveProcessedGameIds(gameIds: Set<string>): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
     const gameIdsArray = Array.from(gameIds)
-    // Use Upstash REST API format: POST with command array
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SET', ELO_PROCESSED_GAMES_KEY, JSON.stringify(gameIdsArray)])
-    })
+    await kvSet(ELO_PROCESSED_GAMES_KEY, JSON.stringify(gameIdsArray))
   } catch (error) {
     console.error('[Elo] Error saving processed games:', error)
   }
 }
 
 /**
- * Clear all Elo data from Redis (ratings + processed game IDs)
+ * Clear all Elo data (ratings + processed game IDs)
  * Used for full reset before re-backfilling from scratch
  */
 export async function clearEloData(): Promise<boolean> {
-  const redis = await getRedisClient()
-  if (!redis) return false
+  if (!isDbConfigured()) return false
   
   try {
-    // Delete ratings
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['DEL', ELO_RATINGS_KEY])
-    })
-    
-    // Delete processed game IDs
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['DEL', ELO_PROCESSED_GAMES_KEY])
-    })
-    
-    console.log('[Elo] Cleared all Elo data from Redis')
+    await kvDel(ELO_RATINGS_KEY)
+    await kvDel(ELO_PROCESSED_GAMES_KEY)
+    console.log('[Elo] Cleared all Elo data')
     return true
   } catch (error) {
     console.error('[Elo] Error clearing Elo data:', error)

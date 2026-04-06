@@ -34,8 +34,7 @@ export async function GET(request: Request) {
       oddsApiKeyLength: process.env.ODDS_API_KEY?.length || 0,
       oddsApiKeyFirst4: process.env.ODDS_API_KEY?.substring(0, 4) || 'N/A',
       oddsApiKeyLast4: process.env.ODDS_API_KEY?.substring(process.env.ODDS_API_KEY.length - 4) || 'N/A',
-      hasKvUrl: !!process.env.KV_REST_API_URL,
-      hasKvToken: !!process.env.KV_REST_API_TOKEN,
+      hasDbUrl: !!process.env.DATABASE_URL,
     }
     
     // Direct API test for each sport

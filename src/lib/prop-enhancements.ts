@@ -10,6 +10,7 @@
 
 import { getCachedESPNOdds, type ESPNOdds } from './espn'
 import { getCachedESPNData, type ESPNInjury } from './espn'
+import { kvGet, kvSet, kvHset, kvHget, kvHgetall, isDbConfigured } from '@/lib/pg-kv'
 
 // ============================================
 // TYPES
@@ -155,84 +156,6 @@ const POSITION_USAGE_IMPACT: Record<string, Record<string, number>> = {
 // Redis key for prop CLV tracking
 const PROP_CLV_KEY = 'prop_clv_records'
 
-// ============================================
-// REDIS HELPERS
-// ============================================
-
-interface RedisClient {
-  url: string
-  token: string
-}
-
-function getRedisClient(): RedisClient | null {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('[PropEnhancements] Redis not configured')
-    return null
-  }
-  
-  return { url, token }
-}
-
-async function redisHSet(redis: RedisClient, key: string, field: string, value: string): Promise<boolean> {
-  try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['HSET', key, field, value])
-    })
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-async function redisHGet(redis: RedisClient, key: string, field: string): Promise<string | null> {
-  try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['HGET', key, field])
-    })
-    if (!response.ok) return null
-    const data = await response.json()
-    return data.result || null
-  } catch {
-    return null
-  }
-}
-
-async function redisHGetAll(redis: RedisClient, key: string): Promise<Record<string, string> | null> {
-  try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['HGETALL', key])
-    })
-    if (!response.ok) return null
-    const data = await response.json()
-    if (!data.result || !Array.isArray(data.result)) return null
-    
-    const result: Record<string, string> = {}
-    for (let i = 0; i < data.result.length; i += 2) {
-      result[data.result[i]] = data.result[i + 1]
-    }
-    return result
-  } catch {
-    return null
-  }
-}
 
 // ============================================
 // 1. PACE/GAME ENVIRONMENT ADJUSTMENT
@@ -649,8 +572,7 @@ export async function getUsageAdjustment(
 export async function storePropCLVRecord(
   record: Omit<PropCLVRecord, 'id' | 'closingLine' | 'closingOdds' | 'closingTimestamp' | 'lineCLV' | 'actualResult' | 'outcome'>
 ): Promise<PropCLVRecord | null> {
-  const redis = getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   const id = `${record.playerName}_${record.statType}_${record.line}_${Date.now()}`
   
@@ -666,11 +588,7 @@ export async function storePropCLVRecord(
   }
   
   try {
-    const success = await redisHSet(redis, PROP_CLV_KEY, id, JSON.stringify(fullRecord))
-    if (!success) {
-      console.error('[PropCLV] Failed to store record')
-      return null
-    }
+    await kvHset(PROP_CLV_KEY, id, JSON.stringify(fullRecord))
     console.log(`[PropCLV] Stored: ${record.playerName} ${record.statType} ${record.direction} ${record.line}`)
     return fullRecord
   } catch (error) {
@@ -687,11 +605,10 @@ export async function updatePropClosingLine(
   closingLine: number,
   closingOdds: number
 ): Promise<PropCLVRecord | null> {
-  const redis = getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const recordData = await redisHGet(redis, PROP_CLV_KEY, recordId)
+    const recordData = await kvHget(PROP_CLV_KEY, recordId)
     if (!recordData) return null
     
     const record: PropCLVRecord = JSON.parse(recordData)
@@ -714,7 +631,7 @@ export async function updatePropClosingLine(
       lineCLV
     }
     
-    await redisHSet(redis, PROP_CLV_KEY, recordId, JSON.stringify(updatedRecord))
+    await kvHset(PROP_CLV_KEY, recordId, JSON.stringify(updatedRecord))
     console.log(`[PropCLV] Updated closing: ${record.playerName} ${record.line} → ${closingLine} (CLV: ${lineCLV > 0 ? '+' : ''}${lineCLV})`)
     
     return updatedRecord
@@ -731,11 +648,10 @@ export async function updatePropOutcome(
   recordId: string,
   actualResult: number
 ): Promise<PropCLVRecord | null> {
-  const redis = getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const recordData = await redisHGet(redis, PROP_CLV_KEY, recordId)
+    const recordData = await kvHget(PROP_CLV_KEY, recordId)
     if (!recordData) return null
     
     const record: PropCLVRecord = JSON.parse(recordData)
@@ -756,7 +672,7 @@ export async function updatePropOutcome(
       outcome
     }
     
-    await redisHSet(redis, PROP_CLV_KEY, recordId, JSON.stringify(updatedRecord))
+    await kvHset(PROP_CLV_KEY, recordId, JSON.stringify(updatedRecord))
     return updatedRecord
   } catch (error) {
     console.error('[PropCLV] Error updating outcome:', error)
@@ -768,11 +684,10 @@ export async function updatePropOutcome(
  * Get all prop CLV records
  */
 export async function getAllPropCLVRecords(): Promise<PropCLVRecord[]> {
-  const redis = getRedisClient()
-  if (!redis) return []
+  if (!isDbConfigured()) return []
   
   try {
-    const allRecords = await redisHGetAll(redis, PROP_CLV_KEY)
+    const allRecords = await kvHgetall(PROP_CLV_KEY)
     if (!allRecords) return []
     
     return Object.values(allRecords).map(r => JSON.parse(r) as PropCLVRecord)
@@ -944,8 +859,7 @@ export interface PropLineMovement {
 export async function storePropLineSnapshots(
   props: Array<{ playerName: string; market: string; line: number; overOdds: number; underOdds: number; bookmaker: string }>
 ): Promise<void> {
-  const redis = getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
 
   const timestamp = new Date().toISOString()
   const snapshots: PropLineSnapshot[] = props.map(p => ({
@@ -954,21 +868,10 @@ export async function storePropLineSnapshots(
   }))
 
   try {
-    const existingResponse = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['GET', PROP_SNAPSHOTS_KEY])
-    })
-
     let allSnapshots: PropLineSnapshot[] = []
-    if (existingResponse.ok) {
-      const data = await existingResponse.json()
-      if (data.result) {
-        try { allSnapshots = JSON.parse(data.result) } catch { /* empty */ }
-      }
+    const existing = await kvGet(PROP_SNAPSHOTS_KEY)
+    if (existing) {
+      try { allSnapshots = JSON.parse(existing) } catch { /* empty */ }
     }
 
     allSnapshots.push(...snapshots)
@@ -976,14 +879,7 @@ export async function storePropLineSnapshots(
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
     allSnapshots = allSnapshots.filter(s => s.timestamp > cutoff)
 
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SET', PROP_SNAPSHOTS_KEY, JSON.stringify(allSnapshots), 'EX', '172800'])
-    })
+    await kvSet(PROP_SNAPSHOTS_KEY, JSON.stringify(allSnapshots), 172800)
 
     console.log(`[PropLineMovement] Stored ${snapshots.length} prop snapshots`)
   } catch (error) {
@@ -997,25 +893,14 @@ export async function storePropLineSnapshots(
  */
 export async function getAllLineMovements(): Promise<Map<string, PropLineMovement[]>> {
   const result = new Map<string, PropLineMovement[]>()
-  const redis = getRedisClient()
-  if (!redis) return result
+  if (!isDbConfigured()) return result
 
   try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['GET', PROP_SNAPSHOTS_KEY])
-    })
-
-    if (!response.ok) return result
-    const data = await response.json()
-    if (!data.result) return result
+    const raw = await kvGet(PROP_SNAPSHOTS_KEY)
+    if (!raw) return result
 
     let allSnapshots: PropLineSnapshot[]
-    try { allSnapshots = JSON.parse(data.result) } catch { return result }
+    try { allSnapshots = JSON.parse(raw) } catch { return result }
 
     // Group snapshots by player+market
     const byPlayerMarket = new Map<string, PropLineSnapshot[]>()
@@ -1124,25 +1009,14 @@ export async function getPropLineMovement(
   playerName: string,
   market?: string
 ): Promise<PropLineMovement[]> {
-  const redis = getRedisClient()
-  if (!redis) return []
+  if (!isDbConfigured()) return []
 
   try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['GET', PROP_SNAPSHOTS_KEY])
-    })
-
-    if (!response.ok) return []
-    const data = await response.json()
-    if (!data.result) return []
+    const raw = await kvGet(PROP_SNAPSHOTS_KEY)
+    if (!raw) return []
 
     let allSnapshots: PropLineSnapshot[]
-    try { allSnapshots = JSON.parse(data.result) } catch { return [] }
+    try { allSnapshots = JSON.parse(raw) } catch { return [] }
 
     const normalizedName = playerName.toLowerCase()
     const playerSnapshots = allSnapshots.filter(s =>

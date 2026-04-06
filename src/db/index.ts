@@ -1,7 +1,11 @@
-// Database with Upstash Redis for persistence
+// Database with Neon Postgres for persistence (via pg-kv key-value store)
 // Falls back to in-memory storage for local development
 
 import { v4 as uuidv4 } from 'uuid'
+import {
+  kvGet, kvSet,
+  kvLpush, kvLrange, isDbConfigured
+} from '@/lib/pg-kv'
 
 export interface User {
   id: string
@@ -64,47 +68,7 @@ export interface Message {
   timestamp: string
 }
 
-// Upstash Redis REST API helper
-const getRedisConfig = () => {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
-  return { url, token, useRedis: !!(url && token) }
-}
 
-async function redisCommand(command: string[]): Promise<unknown> {
-  const { url, token } = getRedisConfig()
-  if (!url || !token) {
-    throw new Error('Redis not configured')
-  }
-  
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(command),
-    cache: 'no-store',
-  })
-  
-  // Graceful degradation on rate-limit: return null instead of crashing
-  if (response.status === 429) {
-    console.warn(`[Redis] Rate-limited on ${command[0]} — returning null`)
-    return null
-  }
-  
-  const data = await response.json()
-  if (data.error) {
-    // Detect Upstash daily-limit error messages and fail open
-    const msg = String(data.error).toLowerCase()
-    if (msg.includes('rate') || msg.includes('limit') || msg.includes('too many') || msg.includes('max daily')) {
-      console.warn(`[Redis] Upstash limit hit on ${command[0]}: ${data.error}`)
-      return null
-    }
-    throw new Error(data.error)
-  }
-  return data.result
-}
 
 // In-memory fallback storage for local development
 const memoryUsers: Map<string, User> = new Map()
@@ -124,10 +88,9 @@ export const db = {
         ...data,
       }
       
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        await redisCommand(['SET', `user:${user.id}`, JSON.stringify(user)])
-        await redisCommand(['SET', `user_email:${user.email.toLowerCase()}`, user.id])
+      if (isDbConfigured()) {
+        await kvSet(`user:${user.id}`, JSON.stringify(user))
+        await kvSet(`user_email:${user.email.toLowerCase()}`, user.id)
       } else {
         memoryUsers.set(user.id, user)
       }
@@ -136,11 +99,10 @@ export const db = {
     },
     
     findByEmail: async (email: string): Promise<User | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const userId = await redisCommand(['GET', `user_email:${email.toLowerCase()}`]) as string | null
+      if (isDbConfigured()) {
+        const userId = await kvGet(`user_email:${email.toLowerCase()}`)
         if (!userId) return undefined
-        const userData = await redisCommand(['GET', `user:${userId}`]) as string | null
+        const userData = await kvGet(`user:${userId}`)
         if (!userData) return undefined
         return JSON.parse(userData) as User
       } else {
@@ -149,9 +111,8 @@ export const db = {
     },
     
     findById: async (id: string): Promise<User | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const userData = await redisCommand(['GET', `user:${id}`]) as string | null
+      if (isDbConfigured()) {
+        const userData = await kvGet(`user:${id}`)
         if (!userData) return undefined
         return JSON.parse(userData) as User
       } else {
@@ -160,12 +121,11 @@ export const db = {
     },
     
     update: async (id: string, data: Partial<User>): Promise<User | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
+      if (isDbConfigured()) {
         const existing = await db.users.findById(id)
         if (!existing) return undefined
         const updated = { ...existing, ...data }
-        await redisCommand(['SET', `user:${id}`, JSON.stringify(updated)])
+        await kvSet(`user:${id}`, JSON.stringify(updated))
         return updated
       } else {
         const user = memoryUsers.get(id)
@@ -186,15 +146,14 @@ export const db = {
         ...data,
       }
       
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        await redisCommand(['SET', `subscription:${subscription.id}`, JSON.stringify(subscription)])
-        await redisCommand(['SET', `sub_user:${subscription.userId}`, subscription.id])
+      if (isDbConfigured()) {
+        await kvSet(`subscription:${subscription.id}`, JSON.stringify(subscription))
+        await kvSet(`sub_user:${subscription.userId}`, subscription.id)
         if (subscription.stripeSubscriptionId) {
-          await redisCommand(['SET', `sub_stripe:${subscription.stripeSubscriptionId}`, subscription.id])
+          await kvSet(`sub_stripe:${subscription.stripeSubscriptionId}`, subscription.id)
         }
         if (subscription.stripeCustomerId) {
-          await redisCommand(['SET', `sub_customer:${subscription.stripeCustomerId}`, subscription.id])
+          await kvSet(`sub_customer:${subscription.stripeCustomerId}`, subscription.id)
         }
       } else {
         memorySubscriptions.set(subscription.id, subscription)
@@ -204,11 +163,10 @@ export const db = {
     },
     
     findByUserId: async (userId: string): Promise<Subscription | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const subId = await redisCommand(['GET', `sub_user:${userId}`]) as string | null
+      if (isDbConfigured()) {
+        const subId = await kvGet(`sub_user:${userId}`)
         if (!subId) return undefined
-        const subData = await redisCommand(['GET', `subscription:${subId}`]) as string | null
+        const subData = await kvGet(`subscription:${subId}`)
         if (!subData) return undefined
         return JSON.parse(subData) as Subscription
       } else {
@@ -217,11 +175,10 @@ export const db = {
     },
     
     findByStripeSubscriptionId: async (stripeSubscriptionId: string): Promise<Subscription | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const subId = await redisCommand(['GET', `sub_stripe:${stripeSubscriptionId}`]) as string | null
+      if (isDbConfigured()) {
+        const subId = await kvGet(`sub_stripe:${stripeSubscriptionId}`)
         if (!subId) return undefined
-        const subData = await redisCommand(['GET', `subscription:${subId}`]) as string | null
+        const subData = await kvGet(`subscription:${subId}`)
         if (!subData) return undefined
         return JSON.parse(subData) as Subscription
       } else {
@@ -230,11 +187,10 @@ export const db = {
     },
     
     findByStripeCustomerId: async (stripeCustomerId: string): Promise<Subscription | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const subId = await redisCommand(['GET', `sub_customer:${stripeCustomerId}`]) as string | null
+      if (isDbConfigured()) {
+        const subId = await kvGet(`sub_customer:${stripeCustomerId}`)
         if (!subId) return undefined
-        const subData = await redisCommand(['GET', `subscription:${subId}`]) as string | null
+        const subData = await kvGet(`subscription:${subId}`)
         if (!subData) return undefined
         return JSON.parse(subData) as Subscription
       } else {
@@ -243,13 +199,12 @@ export const db = {
     },
     
     update: async (id: string, data: Partial<Subscription>): Promise<Subscription | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const subData = await redisCommand(['GET', `subscription:${id}`]) as string | null
+      if (isDbConfigured()) {
+        const subData = await kvGet(`subscription:${id}`)
         if (!subData) return undefined
         const existing = JSON.parse(subData) as Subscription
         const updated = { ...existing, ...data, updatedAt: new Date().toISOString() }
-        await redisCommand(['SET', `subscription:${id}`, JSON.stringify(updated)])
+        await kvSet(`subscription:${id}`, JSON.stringify(updated))
         return updated
       } else {
         const subscription = memorySubscriptions.get(id)
@@ -275,11 +230,10 @@ export const db = {
         ...data,
       }
 
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        await redisCommand(['SET', `referral:${referral.id}`, JSON.stringify(referral)])
-        await redisCommand(['SET', `referral_code:${referral.code.toLowerCase()}`, referral.id])
-        await redisCommand(['LPUSH', 'referral_list', referral.id])
+      if (isDbConfigured()) {
+        await kvSet(`referral:${referral.id}`, JSON.stringify(referral))
+        await kvSet(`referral_code:${referral.code.toLowerCase()}`, referral.id)
+        await kvLpush('referral_list', referral.id)
       } else {
         memoryReferrals.set(referral.id, referral)
       }
@@ -288,11 +242,10 @@ export const db = {
     },
 
     findByCode: async (code: string): Promise<Referral | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const referralId = await redisCommand(['GET', `referral_code:${code.toLowerCase()}`]) as string | null
+      if (isDbConfigured()) {
+        const referralId = await kvGet(`referral_code:${code.toLowerCase()}`)
         if (!referralId) return undefined
-        const data = await redisCommand(['GET', `referral:${referralId}`]) as string | null
+        const data = await kvGet(`referral:${referralId}`)
         if (!data) return undefined
         return JSON.parse(data) as Referral
       } else {
@@ -301,9 +254,8 @@ export const db = {
     },
 
     findById: async (id: string): Promise<Referral | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const data = await redisCommand(['GET', `referral:${id}`]) as string | null
+      if (isDbConfigured()) {
+        const data = await kvGet(`referral:${id}`)
         if (!data) return undefined
         return JSON.parse(data) as Referral
       } else {
@@ -312,13 +264,12 @@ export const db = {
     },
 
     listAll: async (): Promise<Referral[]> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const ids = await redisCommand(['LRANGE', 'referral_list', '0', '-1']) as string[]
+      if (isDbConfigured()) {
+        const ids = await kvLrange('referral_list', 0, -1)
         if (!ids || ids.length === 0) return []
         const referrals: Referral[] = []
         for (const id of ids) {
-          const data = await redisCommand(['GET', `referral:${id}`]) as string | null
+          const data = await kvGet(`referral:${id}`)
           if (data) {
             referrals.push(JSON.parse(data) as Referral)
           }
@@ -331,12 +282,11 @@ export const db = {
     },
 
     update: async (id: string, data: Partial<Referral>): Promise<Referral | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
+      if (isDbConfigured()) {
         const existing = await db.referrals.findById(id)
         if (!existing) return undefined
         const updated = { ...existing, ...data }
-        await redisCommand(['SET', `referral:${id}`, JSON.stringify(updated)])
+        await kvSet(`referral:${id}`, JSON.stringify(updated))
         return updated
       } else {
         const referral = memoryReferrals.get(id)
@@ -356,11 +306,10 @@ export const db = {
         ...data,
       }
 
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        await redisCommand(['SET', `ref_conversion:${conversion.id}`, JSON.stringify(conversion)])
-        await redisCommand(['SET', `ref_conv_user:${conversion.userId}`, conversion.id])
-        await redisCommand(['LPUSH', `ref_conversions:${conversion.referralId}`, conversion.id])
+      if (isDbConfigured()) {
+        await kvSet(`ref_conversion:${conversion.id}`, JSON.stringify(conversion))
+        await kvSet(`ref_conv_user:${conversion.userId}`, conversion.id)
+        await kvLpush(`ref_conversions:${conversion.referralId}`, conversion.id)
       } else {
         memoryReferralConversions.set(conversion.id, conversion)
       }
@@ -369,11 +318,10 @@ export const db = {
     },
 
     findByUserId: async (userId: string): Promise<ReferralConversion | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const convId = await redisCommand(['GET', `ref_conv_user:${userId}`]) as string | null
+      if (isDbConfigured()) {
+        const convId = await kvGet(`ref_conv_user:${userId}`)
         if (!convId) return undefined
-        const data = await redisCommand(['GET', `ref_conversion:${convId}`]) as string | null
+        const data = await kvGet(`ref_conversion:${convId}`)
         if (!data) return undefined
         return JSON.parse(data) as ReferralConversion
       } else {
@@ -382,13 +330,12 @@ export const db = {
     },
 
     findByReferralId: async (referralId: string): Promise<ReferralConversion[]> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const ids = await redisCommand(['LRANGE', `ref_conversions:${referralId}`, '0', '-1']) as string[]
+      if (isDbConfigured()) {
+        const ids = await kvLrange(`ref_conversions:${referralId}`, 0, -1)
         if (!ids || ids.length === 0) return []
         const conversions: ReferralConversion[] = []
         for (const id of ids) {
-          const data = await redisCommand(['GET', `ref_conversion:${id}`]) as string | null
+          const data = await kvGet(`ref_conversion:${id}`)
           if (data) {
             conversions.push(JSON.parse(data) as ReferralConversion)
           }
@@ -402,13 +349,12 @@ export const db = {
     },
 
     update: async (id: string, data: Partial<ReferralConversion>): Promise<ReferralConversion | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const existingData = await redisCommand(['GET', `ref_conversion:${id}`]) as string | null
+      if (isDbConfigured()) {
+        const existingData = await kvGet(`ref_conversion:${id}`)
         if (!existingData) return undefined
         const existing = JSON.parse(existingData) as ReferralConversion
         const updated = { ...existing, ...data }
-        await redisCommand(['SET', `ref_conversion:${id}`, JSON.stringify(updated)])
+        await kvSet(`ref_conversion:${id}`, JSON.stringify(updated))
         return updated
       } else {
         const conversion = memoryReferralConversions.get(id)
@@ -435,10 +381,9 @@ export const db = {
         ...data,
       }
       
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        await redisCommand(['SET', `conversation:${conversation.id}`, JSON.stringify(conversation)])
-        await redisCommand(['LPUSH', `user_conversations:${conversation.userId}`, conversation.id])
+      if (isDbConfigured()) {
+        await kvSet(`conversation:${conversation.id}`, JSON.stringify(conversation))
+        await kvLpush(`user_conversations:${conversation.userId}`, conversation.id)
       } else {
         memoryConversations.set(conversation.id, conversation)
       }
@@ -447,13 +392,12 @@ export const db = {
     },
     
     findByUserId: async (userId: string): Promise<Conversation[]> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const convIds = await redisCommand(['LRANGE', `user_conversations:${userId}`, '0', '-1']) as string[]
+      if (isDbConfigured()) {
+        const convIds = await kvLrange(`user_conversations:${userId}`, 0, -1)
         if (!convIds || convIds.length === 0) return []
         const conversations: Conversation[] = []
         for (const id of convIds) {
-          const convData = await redisCommand(['GET', `conversation:${id}`]) as string | null
+          const convData = await kvGet(`conversation:${id}`)
           if (convData) {
             conversations.push(JSON.parse(convData) as Conversation)
           }
@@ -467,9 +411,8 @@ export const db = {
     },
     
     findById: async (id: string): Promise<Conversation | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const convData = await redisCommand(['GET', `conversation:${id}`]) as string | null
+      if (isDbConfigured()) {
+        const convData = await kvGet(`conversation:${id}`)
         if (!convData) return undefined
         return JSON.parse(convData) as Conversation
       } else {
@@ -478,13 +421,12 @@ export const db = {
     },
     
     update: async (id: string, data: Partial<Conversation>): Promise<Conversation | undefined> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const convData = await redisCommand(['GET', `conversation:${id}`]) as string | null
+      if (isDbConfigured()) {
+        const convData = await kvGet(`conversation:${id}`)
         if (!convData) return undefined
         const existing = JSON.parse(convData) as Conversation
         const updated = { ...existing, ...data, updatedAt: new Date().toISOString() }
-        await redisCommand(['SET', `conversation:${id}`, JSON.stringify(updated)])
+        await kvSet(`conversation:${id}`, JSON.stringify(updated))
         return updated
       } else {
         const conversation = memoryConversations.get(id)
@@ -504,10 +446,9 @@ export const db = {
         ...data,
       }
       
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        await redisCommand(['SET', `message:${message.id}`, JSON.stringify(message)])
-        await redisCommand(['RPUSH', `conversation_messages:${message.conversationId}`, message.id])
+      if (isDbConfigured()) {
+        await kvSet(`message:${message.id}`, JSON.stringify(message))
+        await kvLpush(`conversation_messages:${message.conversationId}`, message.id)
       } else {
         memoryMessages.set(message.id, message)
       }
@@ -516,13 +457,12 @@ export const db = {
     },
     
     findByConversationId: async (conversationId: string): Promise<Message[]> => {
-      const { useRedis } = getRedisConfig()
-      if (useRedis) {
-        const msgIds = await redisCommand(['LRANGE', `conversation_messages:${conversationId}`, '0', '-1']) as string[]
+      if (isDbConfigured()) {
+        const msgIds = await kvLrange(`conversation_messages:${conversationId}`, 0, -1)
         if (!msgIds || msgIds.length === 0) return []
         const messages: Message[] = []
         for (const id of msgIds) {
-          const msgData = await redisCommand(['GET', `message:${id}`]) as string | null
+          const msgData = await kvGet(`message:${id}`)
           if (msgData) {
             messages.push(JSON.parse(msgData) as Message)
           }

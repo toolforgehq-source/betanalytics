@@ -11,6 +11,7 @@
  */
 
 import type { Game } from './odds'
+import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
 // Redis cache keys for line movement
 const SNAPSHOTS_KEY = 'betanalytics:line_movement:snapshots'
@@ -76,27 +77,11 @@ export interface LineMovement {
 }
 
 /**
- * Get Redis client for caching
- */
-async function getRedisClient() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('[LineMovement] Redis not configured')
-    return null
-  }
-  
-  return { url, token }
-}
-
-/**
  * Store a snapshot of current odds
  * Called by cron job 6x daily
  */
 export async function storeOddsSnapshot(games: Game[]): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   const timestamp = new Date().toISOString()
   const snapshots: OddsSnapshot[] = []
@@ -145,16 +130,10 @@ export async function storeOddsSnapshot(games: Game[]): Promise<void> {
   
   try {
     // Get existing snapshots
-    const existingResponse = await fetch(`${redis.url}/get/${SNAPSHOTS_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
     let allSnapshots: OddsSnapshot[] = []
-    if (existingResponse.ok) {
-      const data = await existingResponse.json()
-      if (data.result) {
-        allSnapshots = JSON.parse(data.result)
-      }
+    const existing = await kvGet(SNAPSHOTS_KEY)
+    if (existing) {
+      allSnapshots = JSON.parse(existing)
     }
     
     // Add new snapshots
@@ -164,24 +143,11 @@ export async function storeOddsSnapshot(games: Game[]): Promise<void> {
     const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
     allSnapshots = allSnapshots.filter(s => s.timestamp > cutoff)
     
-    // Save back to Redis
-    await fetch(`${redis.url}/set/${SNAPSHOTS_KEY}`, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(allSnapshots))
-    })
-    
-    // Set expiry (72 hours)
-    await fetch(`${redis.url}/expire/${SNAPSHOTS_KEY}/${72 * 60 * 60}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    // Save back to Postgres
+    await kvSet(SNAPSHOTS_KEY, JSON.stringify(allSnapshots), 72 * 60 * 60)
     
     // Also store opening lines (first snapshot we see for each game)
-    await storeOpeningLines(snapshots, redis)
+    await storeOpeningLines(snapshots)
     
     console.log(`[LineMovement] Stored ${snapshots.length} snapshots`)
   } catch (error) {
@@ -192,22 +158,13 @@ export async function storeOddsSnapshot(games: Game[]): Promise<void> {
 /**
  * Store opening lines for games we haven't seen before
  */
-async function storeOpeningLines(
-  snapshots: OddsSnapshot[], 
-  redis: { url: string; token: string }
-): Promise<void> {
+async function storeOpeningLines(snapshots: OddsSnapshot[]): Promise<void> {
   try {
     // Get existing opening lines
-    const existingResponse = await fetch(`${redis.url}/get/${OPENING_LINES_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
     let openingLines: Record<string, OddsSnapshot> = {}
-    if (existingResponse.ok) {
-      const data = await existingResponse.json()
-      if (data.result) {
-        openingLines = JSON.parse(data.result)
-      }
+    const existing = await kvGet(OPENING_LINES_KEY)
+    if (existing) {
+      openingLines = JSON.parse(existing)
     }
     
     // Add opening lines for new games
@@ -225,21 +182,8 @@ async function storeOpeningLines(
       }
     }
     
-    // Save back to Redis
-    await fetch(`${redis.url}/set/${OPENING_LINES_KEY}`, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(openingLines))
-    })
-    
-    // Set expiry (7 days)
-    await fetch(`${redis.url}/expire/${OPENING_LINES_KEY}/${7 * 24 * 60 * 60}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    // Save back to Postgres
+    await kvSet(OPENING_LINES_KEY, JSON.stringify(openingLines), 7 * 24 * 60 * 60)
   } catch (error) {
     console.error('[LineMovement] Error storing opening lines:', error)
   }
@@ -249,21 +193,14 @@ async function storeOpeningLines(
  * Get line movement data for current games
  */
 export async function getLineMovement(currentGames: Game[]): Promise<LineMovement[]> {
-  const redis = await getRedisClient()
-  if (!redis) return []
+  if (!isDbConfigured()) return []
   
   try {
     // Get opening lines
-    const openingResponse = await fetch(`${redis.url}/get/${OPENING_LINES_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
     let openingLines: Record<string, OddsSnapshot> = {}
-    if (openingResponse.ok) {
-      const data = await openingResponse.json()
-      if (data.result) {
-        openingLines = JSON.parse(data.result)
-      }
+    const openingData = await kvGet(OPENING_LINES_KEY)
+    if (openingData) {
+      openingLines = JSON.parse(openingData)
     }
     
     const movements: LineMovement[] = []
