@@ -107,5 +107,21 @@ export async function GET(req: NextRequest) {
     configured: isDbConfigured()
   }
 
+  // Test 5: Diagnostic — test getRecentRecommendations with various limits
+  // to find the threshold where kvMget starts failing
+  try {
+    const limits = [5, 50, 100, 0] // 0 = fetch ALL
+    const diagResults: Record<string, number> = {}
+    for (const limit of limits) {
+      const start = Date.now()
+      const recos = await getRecentRecommendations(limit)
+      diagResults[`limit_${limit}`] = recos.length
+      diagResults[`limit_${limit}_ms`] = Date.now() - start
+    }
+    results.recoLimitDiag = diagResults
+  } catch (error) {
+    results.recoLimitDiag = { error: String(error) }
+  }
+
   return NextResponse.json(results)
 }

@@ -351,18 +351,22 @@ export async function kvMget(...keys: string[]): Promise<(string | null)[]> {
   // Batch large queries to avoid hitting Neon's HTTP query size limits.
   // With 700+ keys, a single ANY(...) clause can exceed the max query size
   // for the serverless HTTP driver, causing silent failures.
-  const BATCH_SIZE = 100
+  const BATCH_SIZE = 50
   const map = new Map<string, string>()
 
   for (let i = 0; i < keys.length; i += BATCH_SIZE) {
     const batch = keys.slice(i, i + BATCH_SIZE)
-    const rows = await sql`
-      SELECT key, value FROM kv_strings
-      WHERE key = ANY(${batch})
-      AND (expires_at IS NULL OR expires_at > NOW())
-    `
-    for (const row of rows) {
-      map.set(row.key as string, row.value as string)
+    try {
+      const rows = await sql`
+        SELECT key, value FROM kv_strings
+        WHERE key = ANY(${batch})
+        AND (expires_at IS NULL OR expires_at > NOW())
+      `
+      for (const row of rows) {
+        map.set(row.key as string, row.value as string)
+      }
+    } catch (err) {
+      console.error(`[pg-kv] kvMget batch ${i}-${i + batch.length} failed:`, err)
     }
   }
 
