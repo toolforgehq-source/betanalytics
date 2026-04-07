@@ -22,8 +22,7 @@ export async function GET(request: Request) {
     const envCheck = {
       hasOddsApiKey: !!process.env.ODDS_API_KEY,
       oddsApiKeyLength: process.env.ODDS_API_KEY?.length || 0,
-      hasKvUrl: !!process.env.KV_REST_API_URL,
-      hasKvToken: !!process.env.KV_REST_API_TOKEN,
+      hasDbUrl: !!process.env.DATABASE_URL,
     }
     
     // Check cached props
@@ -115,7 +114,7 @@ export async function GET(request: Request) {
       
       diagnosis: {
         apiKeyConfigured: envCheck.hasOddsApiKey,
-        kvConfigured: envCheck.hasKvUrl && envCheck.hasKvToken,
+        dbConfigured: envCheck.hasDbUrl,
         cacheHasData: (finalCachedProps?.length || 0) > 0,
         freshFetchWorking: freshNbaProps.length > 0,
         issue: !envCheck.hasOddsApiKey

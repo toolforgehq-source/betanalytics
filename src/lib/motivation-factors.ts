@@ -11,100 +11,7 @@
  * These factors are combined with other situational factors to adjust probabilities.
  */
 
-// Redis client (using REST API like other modules)
-interface RedisClient {
-  url: string
-  token: string
-}
-
-function getRedisClient(): RedisClient | null {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) return null
-  return { url, token }
-}
-
-// Helper functions for Redis operations
-async function redisHSet(redis: RedisClient, key: string, field: string, value: string): Promise<boolean> {
-  try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['HSET', key, field, value])
-    })
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-async function redisHGet(redis: RedisClient, key: string, field: string): Promise<string | null> {
-  try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['HGET', key, field])
-    })
-    if (!response.ok) return null
-    const data = await response.json()
-    return data.result || null
-  } catch {
-    return null
-  }
-}
-
-async function redisHGetAll(redis: RedisClient, key: string): Promise<Record<string, string> | null> {
-  try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['HGETALL', key])
-    })
-    if (!response.ok) return null
-    const data = await response.json()
-    if (!data.result || !Array.isArray(data.result)) return null
-    
-    // HGETALL returns [field1, value1, field2, value2, ...]
-    const result: Record<string, string> = {}
-    for (let i = 0; i < data.result.length; i += 2) {
-      result[data.result[i]] = data.result[i + 1]
-    }
-    return result
-  } catch {
-    return null
-  }
-}
-
-async function redisHSetMultiple(redis: RedisClient, key: string, data: Record<string, string>): Promise<boolean> {
-  try {
-    // Build HSET command with multiple field-value pairs
-    const args = ['HSET', key]
-    for (const [field, value] of Object.entries(data)) {
-      args.push(field, value)
-    }
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(args)
-    })
-    return response.ok
-  } catch {
-    return false
-  }
-}
+import { kvHset, kvHget, kvHgetall, isDbConfigured } from '@/lib/pg-kv'
 
 // ============================================
 // TYPES
@@ -496,16 +403,13 @@ const PLAYOFF_STANDINGS_KEY = 'motivation:playoff_standings'
  * Store playoff standings (to be called by a cron job)
  */
 export async function storePlayoffStandings(standings: PlayoffStanding[]): Promise<void> {
-  const redis = getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
-    const data: Record<string, string> = {}
     for (const standing of standings) {
       const key = `${standing.league}_${normalizeTeamName(standing.teamName)}`
-      data[key] = JSON.stringify(standing)
+      await kvHset(PLAYOFF_STANDINGS_KEY, key, JSON.stringify(standing))
     }
-    await redisHSetMultiple(redis, PLAYOFF_STANDINGS_KEY, data)
     console.log(`[Motivation] Stored ${standings.length} playoff standings`)
   } catch (error) {
     console.error('[Motivation] Error storing standings:', error)
@@ -519,12 +423,11 @@ export async function getPlayoffStanding(
   teamName: string,
   league: string
 ): Promise<PlayoffStanding | null> {
-  const redis = getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
     const key = `${league}_${normalizeTeamName(teamName)}`
-    const data = await redisHGet(redis, PLAYOFF_STANDINGS_KEY, key)
+    const data = await kvHget(PLAYOFF_STANDINGS_KEY, key)
     if (!data) return null
     return JSON.parse(data) as PlayoffStanding
   } catch (error) {
@@ -553,12 +456,11 @@ const RECENT_MATCHUPS_KEY = 'motivation:recent_matchups'
  * Store a recent matchup result
  */
 export async function storeRecentMatchup(matchup: RecentMatchup): Promise<void> {
-  const redis = getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
     const key = `${matchup.league}_${normalizeTeamName(matchup.team1)}_${normalizeTeamName(matchup.team2)}_${matchup.date}`
-    await redisHSet(redis, RECENT_MATCHUPS_KEY, key, JSON.stringify(matchup))
+    await kvHset(RECENT_MATCHUPS_KEY, key, JSON.stringify(matchup))
   } catch (error) {
     console.error('[Motivation] Error storing matchup:', error)
   }
@@ -573,11 +475,10 @@ export async function checkRecentLoss(
   league: string,
   daysBack: number = 60
 ): Promise<{ hasRecentLoss: boolean; context: string | null }> {
-  const redis = getRedisClient()
-  if (!redis) return { hasRecentLoss: false, context: null }
+  if (!isDbConfigured()) return { hasRecentLoss: false, context: null }
   
   try {
-    const allMatchups = await redisHGetAll(redis, RECENT_MATCHUPS_KEY)
+    const allMatchups = await kvHgetall(RECENT_MATCHUPS_KEY)
     if (!allMatchups) return { hasRecentLoss: false, context: null }
     
     const cutoffDate = new Date()

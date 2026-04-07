@@ -2,7 +2,7 @@
  * In-memory TTL cache for Redis reads.
  *
  * On Vercel serverless each instance lives for a few minutes, so even a
- * short TTL (60-300 s) dramatically cuts Upstash command usage without
+ * short TTL (60-300 s) dramatically cuts database query usage without
  * serving truly stale data.
  *
  * Usage:
@@ -79,7 +79,7 @@ export function invalidatePrefix(prefix: string) {
 }
 
 /**
- * Check if Upstash returned a rate-limit error.
+ * Check if database returned a rate-limit error.
  * Returns true if the response indicates we've been throttled.
  */
 export function isRateLimitError(response: Response): boolean {

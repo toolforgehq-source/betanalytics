@@ -11,73 +11,37 @@
  * ESPN API is FREE and doesn't require authentication.
  */
 
+import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
+
 const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2/sports'
 
-// Redis cache key for ESPN odds
+// Cache key for ESPN odds
 const ESPN_ODDS_CACHE_KEY = 'espn_odds_cache'
 
 /**
- * Get Redis client for caching
- */
-async function getRedisClient() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('[ESPN] Redis not configured for ESPN odds caching')
-    return null
-  }
-  
-  return { url, token }
-}
-
-/**
- * Cache ESPN odds to Redis
+ * Cache ESPN odds to Postgres
  */
 export async function cacheESPNOdds(oddsData: ESPNOddsData): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
-    await fetch(`${redis.url}/set/${ESPN_ODDS_CACHE_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(oddsData))
-    })
-    
-    // Set 2-hour expiry (ESPN odds don't change as frequently)
-    await fetch(`${redis.url}/expire/${ESPN_ODDS_CACHE_KEY}/${2 * 60 * 60}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
-    console.log(`[ESPN] Cached ${oddsData.games.length} games to Redis`)
+    await kvSet(ESPN_ODDS_CACHE_KEY, JSON.stringify(oddsData), 2 * 60 * 60)
+    console.log(`[ESPN] Cached ${oddsData.games.length} games`)
   } catch (error) {
     console.error('[ESPN] Error caching ESPN odds:', error)
   }
 }
 
 /**
- * Get cached ESPN odds from Redis
+ * Get cached ESPN odds from Postgres
  */
 async function getRedisESPNOdds(): Promise<ESPNOddsData | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const response = await fetch(`${redis.url}/get/${ESPN_ODDS_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
-    if (!response.ok) return null
-    
-    const data = await response.json()
-    if (!data.result) return null
-    
-    return JSON.parse(data.result) as ESPNOddsData
+    const result = await kvGet(ESPN_ODDS_CACHE_KEY)
+    if (!result) return null
+    return JSON.parse(result) as ESPNOddsData
   } catch (error) {
     console.error('[ESPN] Error getting cached ESPN odds:', error)
     return null

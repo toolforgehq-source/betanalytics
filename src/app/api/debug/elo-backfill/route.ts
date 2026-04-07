@@ -223,7 +223,7 @@ export async function GET(request: Request) {
     const stats = await getEloStats()
     
     // Check if Redis env vars are configured
-    const hasRedisConfig = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN)
+    const hasRedisConfig = !!process.env.DATABASE_URL
     
     const duration = Date.now() - startTime
     

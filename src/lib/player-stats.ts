@@ -14,6 +14,7 @@
  */
 
 import { getPaceAdjustment, getUsageAdjustment } from './prop-enhancements'
+import { kvGet, kvSet, kvDel, isDbConfigured } from '@/lib/pg-kv'
 
 // ============================================
 // TYPES
@@ -209,39 +210,13 @@ const ESPN_PLAYER_SPORTS = [
 // REDIS HELPERS
 // ============================================
 
-async function getRedisClient() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('[PlayerStats] Redis not configured')
-    return null
-  }
-  
-  return { url, token }
-}
-
 export async function getPlayerStatsData(): Promise<PlayerStatsData | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['GET', PLAYER_STATS_KEY]),
-      cache: 'no-store'
-    })
-    
-    if (!response.ok) return null
-    
-    const data = await response.json()
-    if (!data.result) return null
-    
-    return JSON.parse(data.result) as PlayerStatsData
+    const result = await kvGet(PLAYER_STATS_KEY)
+    if (!result) return null
+    return JSON.parse(result) as PlayerStatsData
   } catch (error) {
     console.error('[PlayerStats] Error getting player stats:', error)
     return null
@@ -249,9 +224,8 @@ export async function getPlayerStatsData(): Promise<PlayerStatsData | null> {
 }
 
 export async function savePlayerStatsData(statsData: PlayerStatsData): Promise<boolean> {
-  const redis = await getRedisClient()
-  if (!redis) {
-    console.warn('[PlayerStats] Redis not configured, cannot save')
+  if (!isDbConfigured()) {
+    console.warn('[PlayerStats] Database not configured, cannot save')
     return false
   }
   
@@ -263,27 +237,7 @@ export async function savePlayerStatsData(statsData: PlayerStatsData): Promise<b
       gamesProcessed: statsData.gamesProcessed || 0
     }
     
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SET', PLAYER_STATS_KEY, JSON.stringify(safeData)])
-    })
-    
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error(`[PlayerStats] Failed to save: ${response.status} - ${errorText}`)
-      return false
-    }
-    
-    const data = await response.json()
-    if (data.error) {
-      console.error(`[PlayerStats] Redis error: ${data.error}`)
-      return false
-    }
-    
+    await kvSet(PLAYER_STATS_KEY, JSON.stringify(safeData))
     console.log(`[PlayerStats] Saved stats for ${Object.keys(safeData.players).length} players`)
     return true
   } catch (error) {
@@ -293,26 +247,12 @@ export async function savePlayerStatsData(statsData: PlayerStatsData): Promise<b
 }
 
 async function getProcessedPlayerGameIds(): Promise<Set<string>> {
-  const redis = await getRedisClient()
-  if (!redis) return new Set()
+  if (!isDbConfigured()) return new Set()
   
   try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['GET', PLAYER_PROCESSED_GAMES_KEY]),
-      cache: 'no-store'
-    })
-    
-    if (!response.ok) return new Set()
-    
-    const data = await response.json()
-    if (!data.result) return new Set()
-    
-    const gameIds = JSON.parse(data.result) as string[]
+    const result = await kvGet(PLAYER_PROCESSED_GAMES_KEY)
+    if (!result) return new Set()
+    const gameIds = JSON.parse(result) as string[]
     return new Set(gameIds)
   } catch (error) {
     console.error('[PlayerStats] Error getting processed games:', error)
@@ -321,19 +261,11 @@ async function getProcessedPlayerGameIds(): Promise<Set<string>> {
 }
 
 async function saveProcessedPlayerGameIds(gameIds: Set<string>): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
     const gameIdsArray = Array.from(gameIds)
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SET', PLAYER_PROCESSED_GAMES_KEY, JSON.stringify(gameIdsArray)])
-    })
+    await kvSet(PLAYER_PROCESSED_GAMES_KEY, JSON.stringify(gameIdsArray))
   } catch (error) {
     console.error('[PlayerStats] Error saving processed games:', error)
   }
@@ -344,18 +276,10 @@ async function saveProcessedPlayerGameIds(gameIds: Set<string>): Promise<void> {
  * Useful for backfilling or fixing data issues
  */
 export async function clearProcessedGames(): Promise<boolean> {
-  const redis = await getRedisClient()
-  if (!redis) return false
+  if (!isDbConfigured()) return false
   
   try {
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['DEL', PLAYER_PROCESSED_GAMES_KEY])
-    })
+    await kvDel(PLAYER_PROCESSED_GAMES_KEY)
     console.log('[PlayerStats] Cleared processed games list')
     return true
   } catch (error) {

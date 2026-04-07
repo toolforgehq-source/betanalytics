@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { requireDebugAuth } from "@/lib/debug-auth"
+import { kvDel, isDbConfigured } from '@/lib/pg-kv'
 
 export const dynamic = "force-dynamic"
 
@@ -10,12 +11,9 @@ export async function POST(request: Request) {
   const authError = requireDebugAuth(request)
   if (authError) return authError
 
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
+  if (!isDbConfigured()) {
     return NextResponse.json({
-      error: 'Redis not configured',
+      error: 'Database not configured (DATABASE_URL missing)',
       timestamp: new Date().toISOString(),
     }, { status: 500 })
   }
@@ -23,19 +21,14 @@ export async function POST(request: Request) {
   try {
     // Delete both cache keys: odds data AND best bet recommendation
     const keysToDelete = [ODDS_CACHE_KEY, BEST_BET_CACHE_KEY]
-    const results: Record<string, number> = {}
+    const results: Record<string, string> = {}
     
     for (const key of keysToDelete) {
-      const response = await fetch(`${url}/del/${key}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      })
-      
-      if (response.ok) {
-        const data = await response.json()
-        results[key] = data.result
-      } else {
-        results[key] = -1 // failed
+      try {
+        await kvDel(key)
+        results[key] = 'deleted'
+      } catch {
+        results[key] = 'failed'
       }
     }
     

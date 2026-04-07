@@ -12,6 +12,7 @@
  */
 
 import { cachedRead, invalidate } from '@/lib/redis-cache'
+import { kvGet, kvSet, kvDel, isDbConfigured } from '@/lib/pg-kv'
 
 export interface StoredPick {
   id: string                    // Unique pick ID
@@ -96,20 +97,6 @@ function getTodayET(): string {
   return etNow.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
 }
 
-/**
- * Get Redis client for caching
- */
-async function getRedisClient() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('Redis not configured for pick tracking')
-    return null
-  }
-  
-  return { url, token }
-}
 
 /**
  * Generate a unique pick ID
@@ -137,8 +124,7 @@ function calculateUnitsWon(odds: number, units: number, result: 'won' | 'lost' |
  * Store a new pick
  */
 export async function storePick(pick: Omit<StoredPick, 'id' | 'createdAt' | 'status' | 'units'>): Promise<StoredPick | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   const newPick: StoredPick = {
     ...pick,
@@ -155,22 +141,8 @@ export async function storePick(pick: Omit<StoredPick, 'id' | 'createdAt' | 'sta
     // Add new pick
     existingPicks.push(newPick)
     
-    // Store back to Redis
-    const writeResponse = await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(existingPicks))
-    })
-    
-    if (!writeResponse.ok) {
-      const errBody = await writeResponse.json().catch(() => ({}))
-      console.error(`[storePick] REDIS WRITE FAILED (${writeResponse.status}):`, JSON.stringify(errBody))
-      console.error('[storePick] Pick NOT stored — check Upstash request limits')
-      return null
-    }
+    // Store back to Postgres
+    await kvSet(PICKS_CACHE_KEY, JSON.stringify(existingPicks))
     
     invalidate('picks:all') // Bust the in-memory cache after write
     console.log(`[storePick] Stored pick: ${newPick.id} - ${newPick.team}`)
@@ -188,38 +160,13 @@ export async function storePick(pick: Omit<StoredPick, 'id' | 'createdAt' | 'sta
  */
 export async function getAllPicks(): Promise<StoredPick[]> {
   return cachedRead('picks:all', 120, async () => {
-    const redis = await getRedisClient()
-    if (!redis) return []
+    if (!isDbConfigured()) return []
     
     try {
-      const response = await fetch(`${redis.url}/get/${PICKS_CACHE_KEY}`, {
-        headers: { Authorization: `Bearer ${redis.token}` }
-      })
+      const result = await kvGet(PICKS_CACHE_KEY)
+      if (!result) return []
       
-      if (!response.ok) return []
-      
-      const data = await response.json()
-      if (!data.result) return []
-      
-      // Handle potentially double-encoded JSON from Redis
-      let parsed = data.result
-      if (typeof parsed === 'string') {
-        try {
-          parsed = JSON.parse(parsed)
-        } catch {
-          console.error('[getAllPicks] Failed to parse picks data')
-          return []
-        }
-      }
-      // If still a string after first parse, try once more (double-encoded)
-      if (typeof parsed === 'string') {
-        try {
-          parsed = JSON.parse(parsed)
-        } catch {
-          console.error('[getAllPicks] Failed to parse double-encoded picks data')
-          return []
-        }
-      }
+      const parsed = JSON.parse(result)
       return Array.isArray(parsed) ? parsed : []
     } catch (error) {
       console.error('[getAllPicks] Error getting picks:', error)
@@ -236,8 +183,7 @@ export async function gradePick(
   result: 'won' | 'lost' | 'push' | 'cancelled',
   actualResult?: string
 ): Promise<boolean> {
-  const redis = await getRedisClient()
-  if (!redis) return false
+  if (!isDbConfigured()) return false
   
   try {
     const picks = await getAllPicks()
@@ -258,21 +204,7 @@ export async function gradePick(
     }
     
     // Store updated picks
-    const writeResponse = await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(picks))
-    })
-    
-    if (!writeResponse.ok) {
-      const errBody = await writeResponse.json().catch(() => ({}))
-      console.error(`[gradePick] REDIS WRITE FAILED (${writeResponse.status}):`, JSON.stringify(errBody))
-      console.error(`[gradePick] Grade for ${pickId} NOT persisted — check Upstash request limits`)
-      return false
-    }
+    await kvSet(PICKS_CACHE_KEY, JSON.stringify(picks))
     
     invalidate('picks:all') // Bust the in-memory cache after write
     
@@ -325,8 +257,7 @@ function calculateTrackRecordForPeriod(picks: StoredPick[], days: number | null)
  * Calculate and store track record
  */
 async function calculateAndStoreTrackRecord(picks: StoredPick[]): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   const trackRecord = {
     '7d': calculateTrackRecordForPeriod(picks, 7),
@@ -336,15 +267,7 @@ async function calculateAndStoreTrackRecord(picks: StoredPick[]): Promise<void> 
   }
   
   try {
-    await fetch(`${redis.url}/set/${TRACK_RECORD_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(trackRecord))
-    })
-    
+    await kvSet(TRACK_RECORD_KEY, JSON.stringify(trackRecord))
     console.log(`[calculateAndStoreTrackRecord] Updated track record: ${trackRecord['30d'].wins}-${trackRecord['30d'].losses}`)
   } catch (error) {
     console.error('[calculateAndStoreTrackRecord] Error storing track record:', error)
@@ -357,37 +280,13 @@ async function calculateAndStoreTrackRecord(picks: StoredPick[]): Promise<void> 
  */
 export async function getTrackRecord(): Promise<PickTrackingData['trackRecord'] | null> {
   return cachedRead('picks:trackRecord', 300, async () => {
-    const redis = await getRedisClient()
-    if (!redis) return null
+    if (!isDbConfigured()) return null
     
     try {
-      const response = await fetch(`${redis.url}/get/${TRACK_RECORD_KEY}`, {
-        headers: { Authorization: `Bearer ${redis.token}` }
-      })
+      const result = await kvGet(TRACK_RECORD_KEY)
+      if (!result) return null
       
-      if (!response.ok) return null
-      
-      const data = await response.json()
-      if (!data.result) return null
-      
-      // Handle potentially double-encoded JSON from Redis
-      let parsed = data.result
-      if (typeof parsed === 'string') {
-        try {
-          parsed = JSON.parse(parsed)
-        } catch {
-          console.error('[getTrackRecord] Failed to parse track record data')
-          return null
-        }
-      }
-      if (typeof parsed === 'string') {
-        try {
-          parsed = JSON.parse(parsed)
-        } catch {
-          console.error('[getTrackRecord] Failed to parse double-encoded track record data')
-          return null
-        }
-      }
+      const parsed = JSON.parse(result)
       return parsed && typeof parsed === 'object' ? parsed : null
     } catch (error) {
       console.error('[getTrackRecord] Error getting track record:', error)
@@ -449,24 +348,14 @@ No picks recorded yet. Track record will build as picks are made and graded.
  * Clear all picks and track record data (for resetting records to zero)
  */
 export async function clearAllPicks(): Promise<{ deleted: number }> {
-  const redis = await getRedisClient()
-  if (!redis) return { deleted: 0 }
+  if (!isDbConfigured()) return { deleted: 0 }
   
   try {
     const allPicks = await getAllPicks()
     const count = allPicks.length
     
-    // Delete picks data
-    await fetch(`${redis.url}/del/${PICKS_CACHE_KEY}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
-    // Delete track record data
-    await fetch(`${redis.url}/del/${TRACK_RECORD_KEY}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    await kvDel(PICKS_CACHE_KEY)
+    await kvDel(TRACK_RECORD_KEY)
     
     console.log(`[clearAllPicks] Cleared ${count} picks and track record`)
     return { deleted: count }
@@ -515,8 +404,7 @@ export async function lockInAndCleanupPicks(
 ): Promise<{ lockedIn: number; cancelled: number; deduped: number }> {
   const result = { lockedIn: 0, cancelled: 0, deduped: 0 }
   
-  const redis = await getRedisClient()
-  if (!redis) return result
+  if (!isDbConfigured()) return result
   
   const picks = await getAllPicks()
   if (picks.length === 0) return result
@@ -628,26 +516,12 @@ export async function lockInAndCleanupPicks(
     }
   }
   
-  // Write updated picks back to Redis if anything changed
+  // Write updated picks back to Postgres if anything changed
   if (modified) {
     try {
-      const writeResponse = await fetch(`${redis.url}/set/${PICKS_CACHE_KEY}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${redis.token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(JSON.stringify(picks))
-      })
-      
-      if (!writeResponse.ok) {
-        const errBody = await writeResponse.json().catch(() => ({}))
-        console.error(`[Picks] REDIS WRITE FAILED (${writeResponse.status}):`, JSON.stringify(errBody))
-        console.error('[Picks] Lock-in/cleanup NOT persisted — check Upstash request limits')
-      } else {
-        // Recalculate track record after cleanup
-        await calculateAndStoreTrackRecord(picks)
-      }
+      await kvSet(PICKS_CACHE_KEY, JSON.stringify(picks))
+      // Recalculate track record after cleanup
+      await calculateAndStoreTrackRecord(picks)
     } catch (error) {
       console.error('[Picks] Error writing cleanup results:', error)
     }

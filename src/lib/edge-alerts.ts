@@ -2,58 +2,19 @@ import { sendEmail, isEmailConfigured } from './email'
 import { bigEdgeAlertEmail } from './email-templates'
 import { db } from '@/db'
 import type { RankedBet } from './bet-ranking'
+import { kvSet, kvExists, kvSadd, kvSrem, kvSmembers, kvSismember, isDbConfigured } from '@/lib/pg-kv'
 
 const EDGE_THRESHOLD = 10
 
 const ALERT_SUBSCRIBERS_KEY = 'edge_alert_subscribers'
 const ALERT_SENT_PREFIX = 'edge_alert_sent:'
 
-function getRedisConfig() {
-  const url = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN
-  return { url, token, useRedis: !!(url && token) }
-}
-
-async function redisCommand(command: string[]): Promise<unknown> {
-  const { url, token } = getRedisConfig()
-  if (!url || !token) {
-    throw new Error('Redis not configured')
-  }
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(command),
-    cache: 'no-store',
-  })
-
-  if (response.status === 429) {
-    console.warn(`[EdgeAlerts] Redis rate-limited on ${command[0]} — returning null`)
-    return null
-  }
-
-  const data = await response.json()
-  if (data.error) {
-    const msg = String(data.error).toLowerCase()
-    if (msg.includes('rate') || msg.includes('limit') || msg.includes('too many') || msg.includes('max daily')) {
-      console.warn(`[EdgeAlerts] Upstash limit hit on ${command[0]}: ${data.error}`)
-      return null
-    }
-    throw new Error(data.error)
-  }
-  return data.result
-}
-
 export async function isUserSubscribedToAlerts(userId: string): Promise<boolean> {
-  const { useRedis } = getRedisConfig()
-  if (!useRedis) return false
+  if (!isDbConfigured()) return false
 
   try {
-    const result = await redisCommand(['SISMEMBER', ALERT_SUBSCRIBERS_KEY, userId])
-    return result === 1
+    const result = await kvSismember(ALERT_SUBSCRIBERS_KEY, userId)
+    return result
   } catch (error) {
     console.error('[EdgeAlerts] Error checking subscription:', error)
     return false
@@ -61,11 +22,10 @@ export async function isUserSubscribedToAlerts(userId: string): Promise<boolean>
 }
 
 export async function subscribeToAlerts(userId: string): Promise<boolean> {
-  const { useRedis } = getRedisConfig()
-  if (!useRedis) return false
+  if (!isDbConfigured()) return false
 
   try {
-    await redisCommand(['SADD', ALERT_SUBSCRIBERS_KEY, userId])
+    await kvSadd(ALERT_SUBSCRIBERS_KEY, userId)
     console.log(`[EdgeAlerts] User ${userId} subscribed to alerts`)
     return true
   } catch (error) {
@@ -75,11 +35,10 @@ export async function subscribeToAlerts(userId: string): Promise<boolean> {
 }
 
 export async function unsubscribeFromAlerts(userId: string): Promise<boolean> {
-  const { useRedis } = getRedisConfig()
-  if (!useRedis) return false
+  if (!isDbConfigured()) return false
 
   try {
-    await redisCommand(['SREM', ALERT_SUBSCRIBERS_KEY, userId])
+    await kvSrem(ALERT_SUBSCRIBERS_KEY, userId)
     console.log(`[EdgeAlerts] User ${userId} unsubscribed from alerts`)
     return true
   } catch (error) {
@@ -89,11 +48,10 @@ export async function unsubscribeFromAlerts(userId: string): Promise<boolean> {
 }
 
 export async function getAlertSubscriberIds(): Promise<string[]> {
-  const { useRedis } = getRedisConfig()
-  if (!useRedis) return []
+  if (!isDbConfigured()) return []
 
   try {
-    const members = await redisCommand(['SMEMBERS', ALERT_SUBSCRIBERS_KEY]) as string[]
+    const members = await kvSmembers(ALERT_SUBSCRIBERS_KEY)
     return members || []
   } catch (error) {
     console.error('[EdgeAlerts] Error getting subscribers:', error)
@@ -106,13 +64,12 @@ function getTodayDateKey(): string {
 }
 
 async function hasAlertBeenSentToday(): Promise<boolean> {
-  const { useRedis } = getRedisConfig()
-  if (!useRedis) return false
+  if (!isDbConfigured()) return false
 
   try {
     const key = `${ALERT_SENT_PREFIX}${getTodayDateKey()}`
-    const result = await redisCommand(['EXISTS', key])
-    return result === 1
+    const result = await kvExists(key)
+    return result
   } catch (error) {
     console.error('[EdgeAlerts] Error checking sent status:', error)
     return false
@@ -120,13 +77,12 @@ async function hasAlertBeenSentToday(): Promise<boolean> {
 }
 
 async function markAlertSentToday(): Promise<void> {
-  const { useRedis } = getRedisConfig()
-  if (!useRedis) return
+  if (!isDbConfigured()) return
 
   try {
     const key = `${ALERT_SENT_PREFIX}${getTodayDateKey()}`
     // Use SET with EX option (1 command instead of separate SET + EXPIRE = 2 commands)
-    await redisCommand(['SET', key, '1', 'EX', `${24 * 60 * 60}`])
+    await kvSet(key, '1', 24 * 60 * 60)
   } catch (error) {
     console.error('[EdgeAlerts] Error marking sent:', error)
   }

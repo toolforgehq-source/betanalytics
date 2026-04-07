@@ -12,78 +12,7 @@
  * point projections than their season average suggests.
  */
 
-// Redis client (using REST API like other modules)
-interface RedisClient {
-  url: string
-  token: string
-}
-
-function getRedisClient(): RedisClient | null {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) return null
-  return { url, token }
-}
-
-// Helper functions for Redis operations
-async function redisHSet(redis: RedisClient, key: string, field: string, value: string): Promise<boolean> {
-  try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['HSET', key, field, value])
-    })
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
-async function redisHGet(redis: RedisClient, key: string, field: string): Promise<string | null> {
-  try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['HGET', key, field])
-    })
-    if (!response.ok) return null
-    const data = await response.json()
-    return data.result || null
-  } catch {
-    return null
-  }
-}
-
-async function redisHGetAll(redis: RedisClient, key: string): Promise<Record<string, string> | null> {
-  try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['HGETALL', key])
-    })
-    if (!response.ok) return null
-    const data = await response.json()
-    // HGETALL returns array like [field1, value1, field2, value2, ...]
-    if (!data.result || !Array.isArray(data.result)) return null
-    const result: Record<string, string> = {}
-    for (let i = 0; i < data.result.length; i += 2) {
-      result[data.result[i]] = data.result[i + 1]
-    }
-    return result
-  } catch {
-    return null
-  }
-}
+import { kvHset, kvHget, kvHgetall, isDbConfigured } from '@/lib/pg-kv'
 
 // ============================================
 // TYPES
@@ -225,12 +154,11 @@ function normalizeTeamName(name: string): string {
  * Store a player's game performance
  */
 export async function storePlayerMatchupGame(game: PlayerMatchupGame): Promise<void> {
-  const redis = getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
     const key = `${game.playerId}_${game.opponent}_${game.date}`
-    await redisHSet(redis, PLAYER_MATCHUP_GAMES_KEY, key, JSON.stringify(game))
+    await kvHset(PLAYER_MATCHUP_GAMES_KEY, key, JSON.stringify(game))
   } catch (error) {
     console.error('[PlayerMatchup] Error storing game:', error)
   }
@@ -243,11 +171,10 @@ export async function getPlayerGamesVsOpponent(
   playerId: string,
   opponent: string
 ): Promise<PlayerMatchupGame[]> {
-  const redis = getRedisClient()
-  if (!redis) return []
+  if (!isDbConfigured()) return []
   
   try {
-    const allGames = await redisHGetAll(redis, PLAYER_MATCHUP_GAMES_KEY)
+    const allGames = await kvHgetall(PLAYER_MATCHUP_GAMES_KEY)
     if (!allGames) return []
     
     const normOpp = normalizeTeamName(opponent)
@@ -357,12 +284,11 @@ export async function calculatePlayerVsTeamStats(
  * Store player vs team stats
  */
 export async function storePlayerVsTeamStats(stats: PlayerVsTeamStats): Promise<void> {
-  const redis = getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
     const key = `${stats.playerId}_${normalizeTeamName(stats.opponent)}`
-    await redisHSet(redis, PLAYER_VS_TEAM_STATS_KEY, key, JSON.stringify(stats))
+    await kvHset(PLAYER_VS_TEAM_STATS_KEY, key, JSON.stringify(stats))
     console.log(`[PlayerMatchup] Stored ${stats.playerName} vs ${stats.opponent} stats`)
   } catch (error) {
     console.error('[PlayerMatchup] Error storing stats:', error)
@@ -376,12 +302,11 @@ export async function getPlayerVsTeamStats(
   playerId: string,
   opponent: string
 ): Promise<PlayerVsTeamStats | null> {
-  const redis = getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
     const key = `${playerId}_${normalizeTeamName(opponent)}`
-    const data = await redisHGet(redis, PLAYER_VS_TEAM_STATS_KEY, key)
+    const data = await kvHget(PLAYER_VS_TEAM_STATS_KEY, key)
     if (!data) return null
     return JSON.parse(data) as PlayerVsTeamStats
   } catch (error) {
@@ -394,12 +319,11 @@ export async function getPlayerVsTeamStats(
  * Store team defensive rating
  */
 export async function storeTeamDefensiveRating(rating: TeamDefensiveRating): Promise<void> {
-  const redis = getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
     const key = `${rating.league}_${normalizeTeamName(rating.teamName)}_${rating.season}`
-    await redisHSet(redis, TEAM_DEFENSIVE_RATINGS_KEY, key, JSON.stringify(rating))
+    await kvHset(TEAM_DEFENSIVE_RATINGS_KEY, key, JSON.stringify(rating))
   } catch (error) {
     console.error('[PlayerMatchup] Error storing defensive rating:', error)
   }
@@ -413,14 +337,13 @@ export async function getTeamDefensiveRating(
   league: string,
   season?: string
 ): Promise<TeamDefensiveRating | null> {
-  const redis = getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   const currentSeason = season || getCurrentSeason(league)
   
   try {
     const key = `${league}_${normalizeTeamName(teamName)}_${currentSeason}`
-    const data = await redisHGet(redis, TEAM_DEFENSIVE_RATINGS_KEY, key)
+    const data = await kvHget(TEAM_DEFENSIVE_RATINGS_KEY, key)
     if (!data) return null
     return JSON.parse(data) as TeamDefensiveRating
   } catch (error) {

@@ -1,8 +1,10 @@
+import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
+
 /**
- * The Odds API Integration with Redis Caching
+ * The Odds API Integration with Postgres Caching
  * 
  * Fetches real betting odds from The Odds API for 25+ sports
- * and caches them in Redis to stay under API rate limits.
+ * and caches them in Postgres to stay under API rate limits.
  * 
  * COMPREHENSIVE MULTI-SPORT COVERAGE:
  * - Tier 1: NBA, NFL, NHL, NCAAB, NCAAF, MLB (daily US sports)
@@ -207,46 +209,19 @@ interface OddsApiOutcome {
 }
 
 /**
- * Get Redis client for caching
- */
-async function getRedisClient() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('Redis not configured, caching disabled')
-    return null
-  }
-  
-  return { url, token }
-}
-
-/**
- * Get cached odds data from Redis
+ * Get cached odds data from Postgres
  */
 async function getCachedOdds(): Promise<OddsData | null> {
-  const redis = await getRedisClient()
-  if (!redis) {
-    console.log('[getCachedOdds] Redis not configured')
+  if (!isDbConfigured()) {
+    console.log('[getCachedOdds] Database not configured')
     return null
   }
   
   try {
-    console.log(`[getCachedOdds] Fetching from Redis: ${redis.url}/get/${ODDS_CACHE_KEY}`)
-    const response = await fetch(`${redis.url}/get/${ODDS_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    const result = await kvGet(ODDS_CACHE_KEY)
+    if (!result) return null
     
-    if (!response.ok) {
-      console.log(`[getCachedOdds] Redis response not OK: ${response.status}`)
-      return null
-    }
-    
-    const data = await response.json()
-    console.log(`[getCachedOdds] Redis response has result: ${!!data.result}, type: ${typeof data.result}`)
-    if (!data.result) return null
-    
-    const parsed = JSON.parse(data.result) as OddsData
+    const parsed = JSON.parse(result) as OddsData
     console.log(`[getCachedOdds] Parsed ${parsed.games?.length || 0} games from cache`)
     return parsed
   } catch (error) {
@@ -256,54 +231,29 @@ async function getCachedOdds(): Promise<OddsData | null> {
 }
 
 /**
- * Save odds data to Redis cache
+ * Save odds data to Postgres cache
  */
 async function setCachedOdds(oddsData: OddsData): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
-    await fetch(`${redis.url}/set/${ODDS_CACHE_KEY}`, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(oddsData))
-    })
-    
-    // Set expiry
-    await fetch(`${redis.url}/expire/${ODDS_CACHE_KEY}/${CACHE_EXPIRY_SECONDS}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
+    await kvSet(ODDS_CACHE_KEY, JSON.stringify(oddsData), CACHE_EXPIRY_SECONDS)
   } catch (error) {
     console.error('Error caching odds:', error)
   }
 }
 
 /**
- * Get cached player props from Redis
+ * Get cached player props from Postgres
  */
 export async function getCachedPlayerProps(): Promise<GamePlayerProps[] | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const response = await fetch(`${redis.url}/get/${PROPS_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` },
-      cache: 'no-store',
-    })
+    const result = await kvGet(PROPS_CACHE_KEY)
+    if (!result) return null
     
-    if (!response.ok) return null
-    
-    const data = await response.json()
-    if (!data.result) return null
-    
-    // Handle double-stringified data from setCachedPlayerProps
-    // The write uses JSON.stringify(JSON.stringify(cacheData)), so we need to parse twice
-    const outer = JSON.parse(data.result)
-    const propsData = typeof outer === 'string' ? JSON.parse(outer) : outer
+    const propsData = JSON.parse(result)
     
     // Validate the parsed data structure
     if (!propsData || !Array.isArray(propsData.props)) {
@@ -334,13 +284,12 @@ export async function getCachedPlayerProps(): Promise<GamePlayerProps[] | null> 
 }
 
 /**
- * Save player props to Redis cache
+ * Save player props to Postgres cache
  * Note: Props payloads can be very large, so we store a trimmed version
  */
 export async function setCachedPlayerProps(props: GamePlayerProps[]): Promise<boolean> {
-  const redis = await getRedisClient()
-  if (!redis) {
-    console.log('[setCachedPlayerProps] Redis not configured')
+  if (!isDbConfigured()) {
+    console.log('[setCachedPlayerProps] Database not configured')
     return false
   }
   
@@ -359,34 +308,11 @@ export async function setCachedPlayerProps(props: GamePlayerProps[]): Promise<bo
       lastUpdated: new Date().toISOString()
     }
     
-    const payload = JSON.stringify(JSON.stringify(cacheData))
-    const payloadSizeKB = Math.round(payload.length / 1024)
+    const serialized = JSON.stringify(cacheData)
+    const payloadSizeKB = Math.round(serialized.length / 1024)
     console.log(`[setCachedPlayerProps] Payload size: ${payloadSizeKB}KB for ${props.length} games`)
     
-    const setResponse = await fetch(`${redis.url}/set/${PROPS_CACHE_KEY}`, {
-      method: 'POST',
-      headers: { 
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: payload
-    })
-    
-    if (!setResponse.ok) {
-      const errorText = await setResponse.text()
-      console.error(`[setCachedPlayerProps] Redis SET failed: ${setResponse.status} - ${errorText}`)
-      return false
-    }
-    
-    // Set expiry
-    const expireResponse = await fetch(`${redis.url}/expire/${PROPS_CACHE_KEY}/${PROPS_CACHE_EXPIRY_SECONDS}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
-    if (!expireResponse.ok) {
-      console.error(`[setCachedPlayerProps] Redis EXPIRE failed: ${expireResponse.status}`)
-    }
+    await kvSet(PROPS_CACHE_KEY, serialized, PROPS_CACHE_EXPIRY_SECONDS)
     
     console.log(`[setCachedPlayerProps] Successfully cached ${trimmedProps.length} games (${payloadSizeKB}KB)`)
     return true

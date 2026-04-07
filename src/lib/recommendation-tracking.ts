@@ -124,20 +124,10 @@ const TRACKING_INDEX_KEY = 'reco:v1:index:createdAt'
 const TRACKING_PENDING_KEY = 'reco:v1:index:pending'
 
 // ============================================
-// REDIS HELPERS
+// DATABASE HELPERS
 // ============================================
 
-async function getRedisClient() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('[Tracking] Redis not configured')
-    return null
-  }
-  
-  return { url, token }
-}
+import { kvGet, kvSet, kvDel, kvExists, kvSadd, kvSrem, kvSmembers, kvSdelAll, kvZadd, kvZrange, kvZrevrange, kvZdelAll, kvMget, isDbConfigured } from '@/lib/pg-kv'
 
 /**
  * Get today's "betting day" date string in ET timezone.
@@ -265,8 +255,7 @@ function generateRecommendationId(
  * Log a recommendation to the tracking system
  */
 export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id' | 'createdAt' | 'status'>): Promise<string | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   const now = new Date()
   const id = generateRecommendationId(
@@ -279,12 +268,8 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
   
   // Check if already exists — if so, UPSERT (update odds/line) unless locked in
   try {
-    const existsResponse = await fetch(`${redis.url}/exists/${TRACKING_KEY_PREFIX}${id}`, {
-      headers: { Authorization: `Bearer ${redis.token}` },
-      cache: 'no-store'
-    })
-    const existsData = await existsResponse.json()
-    if (existsData.result === 1) {
+    const exists = await kvExists(`${TRACKING_KEY_PREFIX}${id}`)
+    if (exists) {
       // Recommendation exists — check if we should update or skip
       const existing = await getRecommendation(id)
       if (existing) {
@@ -333,37 +318,13 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
   
   try {
     // Store the recommendation
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SET', `${TRACKING_KEY_PREFIX}${id}`, JSON.stringify(fullReco)]),
-      cache: 'no-store'
-    })
+    await kvSet(`${TRACKING_KEY_PREFIX}${id}`, JSON.stringify(fullReco))
     
     // Add to time index (sorted set with timestamp as score)
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['ZADD', TRACKING_INDEX_KEY, now.getTime(), id]),
-      cache: 'no-store'
-    })
+    await kvZadd(TRACKING_INDEX_KEY, now.getTime(), id)
     
     // Add to pending set
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SADD', TRACKING_PENDING_KEY, id]),
-      cache: 'no-store'
-    })
+    await kvSadd(TRACKING_PENDING_KEY, id)
     
     console.log(`[Tracking] Logged recommendation: ${id} - ${reco.selection}`)
     return id
@@ -377,25 +338,14 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
  * Get a recommendation by ID
  */
 export async function getRecommendation(id: string): Promise<TrackedRecommendation | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['GET', `${TRACKING_KEY_PREFIX}${id}`]),
-      cache: 'no-store'
-    })
+    const result = await kvGet(`${TRACKING_KEY_PREFIX}${id}`)
+    if (!result) return null
     
-    const data = await response.json()
-    if (!data.result) return null
-    
-    // Handle potentially double-encoded JSON from Redis
-    let parsed = data.result
+    // Handle potentially double-encoded JSON
+    let parsed: unknown = result
     if (typeof parsed === 'string') {
       try {
         parsed = JSON.parse(parsed)
@@ -423,9 +373,8 @@ export async function getRecommendation(id: string): Promise<TrackedRecommendati
  * Update a recommendation (e.g., when settling)
  */
 export async function updateRecommendation(id: string, updates: Partial<TrackedRecommendation>): Promise<boolean> {
-  const redis = await getRedisClient()
-  if (!redis) {
-    console.error('[Tracking] updateRecommendation: Redis not configured')
+  if (!isDbConfigured()) {
+    console.error('[Tracking] updateRecommendation: Database not configured')
     return false
   }
   
@@ -439,64 +388,18 @@ export async function updateRecommendation(id: string, updates: Partial<TrackedR
   const serialized = JSON.stringify(updated)
   
   try {
-    // Write updated recommendation to Redis
-    const setResponse = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SET', `${TRACKING_KEY_PREFIX}${id}`, serialized]),
-      cache: 'no-store'
-    })
-    
-    if (!setResponse.ok) {
-      const errorText = await setResponse.text()
-      console.error(`[Tracking] Redis SET failed for ${id}: HTTP ${setResponse.status} - ${errorText}`)
-      return false
-    }
-    
-    const setResult = await setResponse.json()
-    if (setResult.error) {
-      console.error(`[Tracking] Redis SET error for ${id}:`, setResult.error)
-      return false
-    }
+    // Write updated recommendation
+    await kvSet(`${TRACKING_KEY_PREFIX}${id}`, serialized)
     
     // If settled, remove from pending set
     if (updates.status && updates.status !== 'pending') {
-      const sremResponse = await fetch(redis.url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${redis.token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(['SREM', TRACKING_PENDING_KEY, id]),
-        cache: 'no-store'
-      })
-      
-      if (!sremResponse.ok) {
-        const errorText = await sremResponse.text()
-        console.error(`[Tracking] Redis SREM failed for ${id}: HTTP ${sremResponse.status} - ${errorText}`)
-      }
+      await kvSrem(TRACKING_PENDING_KEY, id)
     }
     
     // If status is being set back to pending (e.g., resurrecting a voided recommendation),
     // re-add to the pending set since voiding removed it.
     if (updates.status === 'pending') {
-      const saddResponse = await fetch(redis.url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${redis.token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(['SADD', TRACKING_PENDING_KEY, id]),
-        cache: 'no-store'
-      })
-      
-      if (!saddResponse.ok) {
-        const errorText = await saddResponse.text()
-        console.error(`[Tracking] Redis SADD failed for ${id}: HTTP ${saddResponse.status} - ${errorText}`)
-      }
+      await kvSadd(TRACKING_PENDING_KEY, id)
     }
     
     return true
@@ -508,58 +411,25 @@ export async function updateRecommendation(id: string, updates: Partial<TrackedR
 
 /**
  * Get all pending recommendations.
- * Uses MGET to batch-fetch all pending IDs in a single Redis command
- * instead of N individual GETs (saves N-1 commands per call).
+ * Uses MGET to batch-fetch all pending IDs in a single query.
  */
 export async function getPendingRecommendations(): Promise<TrackedRecommendation[]> {
-  const redis = await getRedisClient()
-  if (!redis) return []
+  if (!isDbConfigured()) return []
   
   try {
     // Get all pending IDs
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['SMEMBERS', TRACKING_PENDING_KEY]),
-      cache: 'no-store'
-    })
+    const pendingIds = await kvSmembers(TRACKING_PENDING_KEY)
+    if (pendingIds.length === 0) return []
     
-    if (response.status === 429) {
-      console.warn('[Tracking] Redis rate-limited on SMEMBERS — returning empty')
-      return []
-    }
-    
-    const data = await response.json()
-    if (!data.result || !Array.isArray(data.result) || data.result.length === 0) return []
-    
-    // Batch fetch all pending recommendations using MGET (1 command instead of N)
-    const keys = data.result.map((id: string) => `${TRACKING_KEY_PREFIX}${id}`)
-    const mgetResponse = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['MGET', ...keys]),
-      cache: 'no-store'
-    })
-    
-    if (mgetResponse.status === 429) {
-      console.warn('[Tracking] Redis rate-limited on MGET — returning empty')
-      return []
-    }
-    
-    const mgetData = await mgetResponse.json()
-    if (!mgetData.result || !Array.isArray(mgetData.result)) return []
+    // Batch fetch all pending recommendations using MGET
+    const keys = pendingIds.map((id: string) => `${TRACKING_KEY_PREFIX}${id}`)
+    const results = await kvMget(...keys)
     
     const recommendations: TrackedRecommendation[] = []
-    for (const raw of mgetData.result) {
+    for (const raw of results) {
       if (!raw) continue
       try {
-        let parsed = raw
+        let parsed: unknown = raw
         if (typeof parsed === 'string') parsed = JSON.parse(parsed)
         if (typeof parsed === 'string') parsed = JSON.parse(parsed)
         if (parsed && typeof parsed === 'object') {
@@ -585,48 +455,24 @@ export async function getPendingRecommendations(): Promise<TrackedRecommendation
  * @param limit Number of recommendations to fetch. Pass 0 to fetch ALL recommendations (no limit).
  */
 export async function getRecentRecommendations(limit: number = 100): Promise<TrackedRecommendation[]> {
-  const redis = await getRedisClient()
-  if (!redis) return []
+  if (!isDbConfigured()) return []
   
   try {
     // Get recent IDs from sorted set (newest first)
     // When limit is 0, fetch ALL entries (ZREVRANGE 0 -1)
     const endIndex = limit > 0 ? limit - 1 : -1
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['ZREVRANGE', TRACKING_INDEX_KEY, 0, endIndex]),
-      cache: 'no-store'
-    })
-    
-    const data = await response.json()
-    if (!data.result || !Array.isArray(data.result) || data.result.length === 0) return []
+    const ids = await kvZrevrange(TRACKING_INDEX_KEY, 0, endIndex)
+    if (ids.length === 0) return []
     
     // Batch fetch all recommendations using MGET for efficiency.
-    // Previously this fetched one-by-one (N+1 Redis calls), which was too slow
-    // for large histories and forced low limits (~200) that only covered ~5 days.
-    const keys = data.result.map((id: string) => `${TRACKING_KEY_PREFIX}${id}`)
-    const mgetResponse = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['MGET', ...keys]),
-      cache: 'no-store'
-    })
-    
-    const mgetData = await mgetResponse.json()
-    if (!mgetData.result || !Array.isArray(mgetData.result)) return []
+    const keys = ids.map((id: string) => `${TRACKING_KEY_PREFIX}${id}`)
+    const results = await kvMget(...keys)
     
     const recommendations: TrackedRecommendation[] = []
-    for (const raw of mgetData.result) {
+    for (const raw of results) {
       if (!raw) continue
       try {
-        let parsed = raw
+        let parsed: unknown = raw
         if (typeof parsed === 'string') parsed = JSON.parse(parsed)
         if (typeof parsed === 'string') parsed = JSON.parse(parsed) // Handle double-encoded
         if (parsed && typeof parsed === 'object') {
@@ -648,61 +494,25 @@ export async function getRecentRecommendations(limit: number = 100): Promise<Tra
  * Clear all recommendation tracking data (fresh start)
  */
 export async function clearAllRecommendations(): Promise<{ deleted: number }> {
-  const redis = await getRedisClient()
-  if (!redis) return { deleted: 0 }
+  if (!isDbConfigured()) return { deleted: 0 }
   
   try {
     // Get all IDs from the index
-    const response = await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['ZRANGE', TRACKING_INDEX_KEY, 0, -1]),
-      cache: 'no-store'
-    })
-    
-    const data = await response.json()
-    const ids: string[] = Array.isArray(data.result) ? data.result : []
+    const ids = await kvZrange(TRACKING_INDEX_KEY, 0, -1)
     
     let deleted = 0
     
     // Delete each recommendation key
     for (const id of ids) {
-      await fetch(redis.url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${redis.token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(['DEL', `${TRACKING_KEY_PREFIX}${id}`]),
-        cache: 'no-store'
-      })
+      await kvDel(`${TRACKING_KEY_PREFIX}${id}`)
       deleted++
     }
     
     // Clear the index
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['DEL', TRACKING_INDEX_KEY]),
-      cache: 'no-store'
-    })
+    await kvZdelAll(TRACKING_INDEX_KEY)
     
     // Clear the pending set
-    await fetch(redis.url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(['DEL', TRACKING_PENDING_KEY]),
-      cache: 'no-store'
-    })
+    await kvSdelAll(TRACKING_PENDING_KEY)
     
     console.log(`[Tracking] Cleared ${deleted} recommendations`)
     return { deleted }

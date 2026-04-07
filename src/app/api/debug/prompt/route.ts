@@ -134,8 +134,7 @@ export async function GET(request: Request) {
   const envCheck = {
     hasOddsApiKey: !!process.env.ODDS_API_KEY,
     oddsApiKeyLength: process.env.ODDS_API_KEY?.length || 0,
-    hasKvUrl: !!process.env.KV_REST_API_URL,
-    hasKvToken: !!process.env.KV_REST_API_TOKEN,
+    hasDbUrl: !!process.env.DATABASE_URL,
   }
   console.log('[DEBUG/PROMPT] Environment check:', JSON.stringify(envCheck))
   

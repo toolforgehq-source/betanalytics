@@ -1,3 +1,5 @@
+import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
+
 /**
  * Team Schedule Tracking Module
  * 
@@ -7,7 +9,7 @@
  * 2. Calculate rest advantage between teams
  * 3. Apply appropriate probability adjustments
  * 
- * Data is fetched from ESPN's scoreboard API and cached in Redis.
+ * Data is fetched from ESPN's scoreboard API and cached in Postgres.
  */
 
 const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2/sports'
@@ -74,20 +76,6 @@ function formatDateForESPN(date: Date): string {
   return `${year}${month}${day}`
 }
 
-/**
- * Get Redis client for caching
- */
-async function getRedisClient() {
-  const url = process.env.KV_REST_API_URL
-  const token = process.env.KV_REST_API_TOKEN
-  
-  if (!url || !token) {
-    console.warn('[TeamSchedule] Redis not configured')
-    return null
-  }
-  
-  return { url, token }
-}
 
 // ============================================
 // ESPN DATA FETCHING
@@ -257,28 +245,13 @@ export function buildTeamScheduleData(completedGames: CompletedGame[]): TeamSche
 // ============================================
 
 /**
- * Cache team schedule data to Redis
+ * Cache team schedule data to Postgres
  */
 export async function cacheTeamScheduleData(data: TeamScheduleData): Promise<void> {
-  const redis = await getRedisClient()
-  if (!redis) return
+  if (!isDbConfigured()) return
   
   try {
-    await fetch(`${redis.url}/set/${TEAM_SCHEDULE_CACHE_KEY}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${redis.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(JSON.stringify(data))
-    })
-    
-    // Set 24-hour expiry (schedule data is updated daily)
-    await fetch(`${redis.url}/expire/${TEAM_SCHEDULE_CACHE_KEY}/${24 * 60 * 60}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
+    await kvSet(TEAM_SCHEDULE_CACHE_KEY, JSON.stringify(data), 24 * 60 * 60)
     console.log(`[TeamSchedule] Cached schedule data for ${Object.keys(data.teams).length} teams`)
   } catch (error) {
     console.error('[TeamSchedule] Error caching schedule data:', error)
@@ -286,23 +259,15 @@ export async function cacheTeamScheduleData(data: TeamScheduleData): Promise<voi
 }
 
 /**
- * Get cached team schedule data from Redis
+ * Get cached team schedule data from Postgres
  */
 export async function getCachedTeamScheduleData(): Promise<TeamScheduleData | null> {
-  const redis = await getRedisClient()
-  if (!redis) return null
+  if (!isDbConfigured()) return null
   
   try {
-    const response = await fetch(`${redis.url}/get/${TEAM_SCHEDULE_CACHE_KEY}`, {
-      headers: { Authorization: `Bearer ${redis.token}` }
-    })
-    
-    if (!response.ok) return null
-    
-    const data = await response.json()
-    if (!data.result) return null
-    
-    return JSON.parse(data.result) as TeamScheduleData
+    const result = await kvGet(TEAM_SCHEDULE_CACHE_KEY)
+    if (!result) return null
+    return JSON.parse(result) as TeamScheduleData
   } catch (error) {
     console.error('[TeamSchedule] Error getting cached schedule data:', error)
     return null
@@ -396,7 +361,7 @@ export async function updateTeamScheduleData(): Promise<TeamScheduleData> {
   // Build schedule data
   const scheduleData = buildTeamScheduleData(completedGames)
   
-  // Cache to Redis
+  // Cache to Postgres
   await cacheTeamScheduleData(scheduleData)
   
   console.log(`[TeamSchedule] Update complete: ${Object.keys(scheduleData.teams).length} teams tracked`)
