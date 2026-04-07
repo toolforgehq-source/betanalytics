@@ -251,6 +251,13 @@ export async function kvLrange(key: string, start: number, stop: number): Promis
   await ensureTables()
 
   if (stop === -1) {
+    if (start === 0) {
+      const rows = await sql`
+        SELECT value FROM kv_lists WHERE key = ${key}
+        ORDER BY id DESC
+      `
+      return rows.map(r => r.value as string)
+    }
     const rows = await sql`
       SELECT value FROM kv_lists WHERE key = ${key}
       ORDER BY id DESC OFFSET ${start}
@@ -259,6 +266,13 @@ export async function kvLrange(key: string, start: number, stop: number): Promis
   }
 
   const limit = stop - start + 1
+  if (start === 0) {
+    const rows = await sql`
+      SELECT value FROM kv_lists WHERE key = ${key}
+      ORDER BY id DESC LIMIT ${limit}
+    `
+    return rows.map(r => r.value as string)
+  }
   const rows = await sql`
     SELECT value FROM kv_lists WHERE key = ${key}
     ORDER BY id DESC OFFSET ${start} LIMIT ${limit}
@@ -295,6 +309,13 @@ export async function kvZrange(key: string, start: number, stop: number): Promis
   await ensureTables()
 
   if (stop === -1) {
+    if (start === 0) {
+      const rows = await sql`
+        SELECT member FROM kv_sorted_sets WHERE key = ${key}
+        ORDER BY score ASC
+      `
+      return rows.map(r => r.member as string)
+    }
     const rows = await sql`
       SELECT member FROM kv_sorted_sets WHERE key = ${key}
       ORDER BY score ASC OFFSET ${start}
@@ -303,6 +324,13 @@ export async function kvZrange(key: string, start: number, stop: number): Promis
   }
 
   const limit = stop - start + 1
+  if (start === 0) {
+    const rows = await sql`
+      SELECT member FROM kv_sorted_sets WHERE key = ${key}
+      ORDER BY score ASC LIMIT ${limit}
+    `
+    return rows.map(r => r.member as string)
+  }
   const rows = await sql`
     SELECT member FROM kv_sorted_sets WHERE key = ${key}
     ORDER BY score ASC OFFSET ${start} LIMIT ${limit}
@@ -316,6 +344,16 @@ export async function kvZrevrange(key: string, start: number, stop: number): Pro
   await ensureTables()
 
   if (stop === -1) {
+    // Fetch all members from offset `start` onward (no LIMIT).
+    // When start=0, omit OFFSET entirely — passing 0 as a parameterized
+    // OFFSET value can produce empty results on Neon's serverless HTTP driver.
+    if (start === 0) {
+      const rows = await sql`
+        SELECT member FROM kv_sorted_sets WHERE key = ${key}
+        ORDER BY score DESC
+      `
+      return rows.map(r => r.member as string)
+    }
     const rows = await sql`
       SELECT member FROM kv_sorted_sets WHERE key = ${key}
       ORDER BY score DESC OFFSET ${start}
@@ -324,6 +362,13 @@ export async function kvZrevrange(key: string, start: number, stop: number): Pro
   }
 
   const limit = stop - start + 1
+  if (start === 0) {
+    const rows = await sql`
+      SELECT member FROM kv_sorted_sets WHERE key = ${key}
+      ORDER BY score DESC LIMIT ${limit}
+    `
+    return rows.map(r => r.member as string)
+  }
   const rows = await sql`
     SELECT member FROM kv_sorted_sets WHERE key = ${key}
     ORDER BY score DESC OFFSET ${start} LIMIT ${limit}
