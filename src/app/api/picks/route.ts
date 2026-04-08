@@ -41,11 +41,14 @@ interface PinnedPick {
   betType: string
   tier: 'lock' | 'strong'
   pinnedAt: string
+  // v3: Store display data so pinned picks survive even when fresh data disappears
+  // (e.g., ESPN removes in-progress games from the odds feed)
+  snapshot?: PickLike
 }
 
-// v2: Bumped to invalidate bad pins created by the old freeze-window-priority
-// logic that let low-score games steal slots from high-score games.
-const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks-v2:'
+// v3: Bumped to store snapshot data on pins so locked-in picks are never dropped
+// when ESPN removes in-progress games from the odds feed.
+const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks-v3:'
 
 /**
  * Load today's pinned tier assignments from the database.
@@ -126,13 +129,30 @@ function resolveHybridPicks(
       freshPick.confidenceTier = pin.tier
       freshPick.frozen = true
       resolvedPicks.push(freshPick)
+      // Update snapshot on the pin so future requests have the latest data
+      pin.snapshot = { ...freshPick }
       validPins.push(pin)
       usedGameIds.add(String(pin.gameId))
       pinnedKeys.add(key)
       if (pin.tier === 'lock') lockCount++
       else strongCount++
+    } else if (pin.snapshot) {
+      // Fresh data is gone (ESPN removed in-progress game from odds feed),
+      // but we have a snapshot from when the pick was pinned. Use it.
+      // This is the critical fix: locked-in picks must NEVER be dropped.
+      const snapshotPick: PickLike = { ...pin.snapshot }
+      snapshotPick.confidenceTier = pin.tier
+      snapshotPick.frozen = true
+      snapshotPick.gameStarted = true // game must have started if data disappeared
+      resolvedPicks.push(snapshotPick)
+      validPins.push(pin)
+      usedGameIds.add(String(pin.gameId))
+      pinnedKeys.add(key)
+      if (pin.tier === 'lock') lockCount++
+      else strongCount++
+      console.log(`[API /picks] Pinned pick ${key} no longer in fresh data — using snapshot (game likely in progress)`)
     } else {
-      console.log(`[API /picks] Pinned pick ${key} no longer in data — slot released`)
+      console.log(`[API /picks] Pinned pick ${key} no longer in data and no snapshot — slot released`)
     }
   }
 
@@ -179,7 +199,8 @@ function resolveHybridPicks(
         team: String(pick.team || ''),
         betType: String(pick.betType || ''),
         tier: pick.confidenceTier as 'lock' | 'strong',
-        pinnedAt: new Date().toISOString()
+        pinnedAt: new Date().toISOString(),
+        snapshot: { ...pick }
       })
       pinnedKeys.add(key)
       changed = true
