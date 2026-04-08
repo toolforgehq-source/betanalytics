@@ -20,7 +20,8 @@ import {
   clearEloData
 } from '@/lib/elo'
 
-export const runtime = 'edge'
+// Use Node.js runtime (not Edge) so backfill requests can use the full 300s timeout.
+// Edge runtime caps at ~25s on Vercel, which is too short for multi-day backfills.
 export const maxDuration = 300 // 5 minutes for backfill
 
 /**
