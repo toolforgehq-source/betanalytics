@@ -96,11 +96,50 @@ export async function kvSet(key: string, value: string, expiresInSeconds?: numbe
     ? new Date(Date.now() + expiresInSeconds * 1000).toISOString()
     : null
 
-  await sql`
-    INSERT INTO kv_strings (key, value, expires_at)
-    VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
-    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at
-  `
+  const valueSizeKB = Math.round(value.length / 1024)
+
+  // For large values (>100KB), use a two-step approach: DELETE then INSERT.
+  // Neon's serverless HTTP driver can silently fail on large ON CONFLICT DO UPDATE
+  // operations where the value parameter exceeds internal buffer limits.
+  if (value.length > 100_000) {
+    console.log(`[pg-kv] kvSet: large value for key=${key} (${valueSizeKB}KB), using delete+insert`)
+    await sql`DELETE FROM kv_strings WHERE key = ${key}`
+    await sql`
+      INSERT INTO kv_strings (key, value, expires_at)
+      VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
+    `
+  } else {
+    await sql`
+      INSERT INTO kv_strings (key, value, expires_at)
+      VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at
+    `
+  }
+
+  // Verify the write persisted for keys that have had persistence issues
+  if (key.includes('picks') || key.includes('best-bet') || key.includes('track-record')) {
+    const verifyRows = await sql`
+      SELECT LENGTH(value) as len FROM kv_strings
+      WHERE key = ${key}
+      AND (expires_at IS NULL OR expires_at > NOW())
+    `
+    const storedLen = verifyRows[0]?.len as number | undefined
+    if (storedLen === undefined) {
+      console.error(`[pg-kv] kvSet VERIFICATION FAILED: key=${key} not found after write! (wrote ${valueSizeKB}KB)`)
+      // Retry with fresh connection
+      const retrySql = neon(process.env.DATABASE_URL!)
+      await retrySql`DELETE FROM kv_strings WHERE key = ${key}`
+      await retrySql`
+        INSERT INTO kv_strings (key, value, expires_at)
+        VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
+      `
+      console.log(`[pg-kv] kvSet RETRY: wrote ${valueSizeKB}KB to key=${key} with fresh connection`)
+    } else if (Math.abs(storedLen - value.length) > 10) {
+      console.warn(`[pg-kv] kvSet SIZE MISMATCH: key=${key} wrote ${value.length} bytes but stored ${storedLen} bytes`)
+    } else {
+      console.log(`[pg-kv] kvSet VERIFIED: key=${key} (${valueSizeKB}KB)`)
+    }
+  }
 }
 
 export async function kvDel(key: string): Promise<void> {
