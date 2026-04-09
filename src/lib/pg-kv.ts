@@ -97,17 +97,31 @@ export async function kvSet(key: string, value: string, expiresInSeconds?: numbe
     : null
 
   const valueSizeKB = Math.round(value.length / 1024)
+  const isCriticalKey = key.includes('picks') || key.includes('best-bet') || key.includes('track-record')
 
-  // For large values (>100KB), use a two-step approach: DELETE then INSERT.
-  // Neon's serverless HTTP driver can silently fail on large ON CONFLICT DO UPDATE
-  // operations where the value parameter exceeds internal buffer limits.
-  if (value.length > 100_000) {
-    console.log(`[pg-kv] kvSet: large value for key=${key} (${valueSizeKB}KB), using delete+insert`)
-    await sql`DELETE FROM kv_strings WHERE key = ${key}`
-    await sql`
-      INSERT INTO kv_strings (key, value, expires_at)
-      VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
-    `
+  // For critical keys (picks, best-bet, track-record), use an atomic
+  // DELETE+INSERT transaction instead of ON CONFLICT DO UPDATE.
+  // The ON CONFLICT upsert has been observed to silently fail on Neon's
+  // serverless HTTP driver — writes appear to succeed but don't persist.
+  // Using sql.transaction() sends both queries in a single HTTP request
+  // as an atomic non-interactive transaction, avoiding the issue.
+  if (isCriticalKey) {
+    console.log(`[pg-kv] kvSet: critical key=${key} (${valueSizeKB}KB), using atomic delete+insert`)
+    try {
+      await sql.transaction([
+        sql`DELETE FROM kv_strings WHERE key = ${key}`,
+        sql`INSERT INTO kv_strings (key, value, expires_at)
+            VALUES (${key}, ${value}, ${expiresAt}::timestamptz)`
+      ])
+    } catch (txError) {
+      // If transaction fails, fall back to standard upsert
+      console.warn(`[pg-kv] kvSet: transaction failed for key=${key}, falling back to upsert:`, txError)
+      await sql`
+        INSERT INTO kv_strings (key, value, expires_at)
+        VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at
+      `
+    }
   } else {
     await sql`
       INSERT INTO kv_strings (key, value, expires_at)
@@ -116,8 +130,8 @@ export async function kvSet(key: string, value: string, expiresInSeconds?: numbe
     `
   }
 
-  // Verify the write persisted for keys that have had persistence issues
-  if (key.includes('picks') || key.includes('best-bet') || key.includes('track-record')) {
+  // Verify the write persisted for critical keys
+  if (isCriticalKey) {
     const verifyRows = await sql`
       SELECT LENGTH(value) as len FROM kv_strings
       WHERE key = ${key}
@@ -126,14 +140,17 @@ export async function kvSet(key: string, value: string, expiresInSeconds?: numbe
     const storedLen = verifyRows[0]?.len as number | undefined
     if (storedLen === undefined) {
       console.error(`[pg-kv] kvSet VERIFICATION FAILED: key=${key} not found after write! (wrote ${valueSizeKB}KB)`)
-      // Retry with fresh connection
-      const retrySql = neon(process.env.DATABASE_URL!)
-      await retrySql`DELETE FROM kv_strings WHERE key = ${key}`
-      await retrySql`
-        INSERT INTO kv_strings (key, value, expires_at)
-        VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
-      `
-      console.log(`[pg-kv] kvSet RETRY: wrote ${valueSizeKB}KB to key=${key} with fresh connection`)
+      // Last resort: retry with a completely fresh Neon connection
+      const dbUrl = process.env.DATABASE_URL
+      if (dbUrl) {
+        const retrySql = neon(dbUrl)
+        await retrySql`DELETE FROM kv_strings WHERE key = ${key}`
+        await retrySql`
+          INSERT INTO kv_strings (key, value, expires_at)
+          VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
+        `
+        console.log(`[pg-kv] kvSet RETRY: wrote ${valueSizeKB}KB to key=${key} with fresh connection`)
+      }
     } else if (Math.abs(storedLen - value.length) > 10) {
       console.warn(`[pg-kv] kvSet SIZE MISMATCH: key=${key} wrote ${value.length} bytes but stored ${storedLen} bytes`)
     } else {

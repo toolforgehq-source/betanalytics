@@ -7,7 +7,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireDebugAuth } from '@/lib/debug-auth'
 import { getRecommendation, updateRecommendation, getRecentRecommendations } from '@/lib/recommendation-tracking'
 import { kvGet, kvSet, kvDel, isDbConfigured } from '@/lib/pg-kv'
-import { getAllPicks, getTrackRecord } from '@/lib/pick-tracking'
 
 export const dynamic = 'force-dynamic'
 
