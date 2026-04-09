@@ -426,6 +426,7 @@ export async function GET(request: Request) {
             pickType: 'best_bet',
             team: bet.team,
             betType: bet.betType,
+            line: bet.line,
             odds: bet.bestPrice,
             consensusProbability: bet.consensusProbability,
             impliedProbability: bet.impliedProbability,

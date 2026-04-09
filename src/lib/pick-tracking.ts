@@ -796,10 +796,19 @@ export async function autoGradePicks(): Promise<{
       gradeResult = gradeMoneylinePick(pick, gameResult.homeScore, gameResult.awayScore)
       actualResult = scoreDisplay
     } else if (pick.betType === 'spread') {
+      if (pick.line === undefined || pick.line === null) {
+        // Spread pick missing line — cannot grade accurately, skip instead of defaulting to push
+        result.details.push(`Skipping spread pick ${pick.id} for ${pick.team} — missing line`)
+        continue
+      }
       gradeResult = gradeSpreadPick(pick, gameResult.homeScore, gameResult.awayScore)
       const margin = gameResult.homeScore - gameResult.awayScore
       actualResult = `${scoreDisplay} (margin: ${margin > 0 ? '+' : ''}${margin}, line: ${pick.line})`
     } else if (pick.betType === 'total') {
+      if (pick.line === undefined || pick.line === null) {
+        result.details.push(`Skipping total pick ${pick.id} for ${pick.team} — missing line`)
+        continue
+      }
       gradeResult = gradeTotalPick(pick, gameResult.homeScore, gameResult.awayScore)
       const total = gameResult.homeScore + gameResult.awayScore
       actualResult = `${scoreDisplay} (total: ${total}, line: ${pick.line})`
@@ -820,5 +829,134 @@ export async function autoGradePicks(): Promise<{
     }
   }
   
+  return result
+}
+
+/**
+ * Re-grade picks that were incorrectly marked as "push" due to missing line data.
+ * This is a repair function that:
+ * 1. Finds all picks graded as "push" where the line was undefined
+ * 2. Tries to recover the line from the corresponding recommendation record
+ * 3. Re-grades them with the correct line using ESPN scores
+ */
+export async function regradeIncorrectPushes(): Promise<{
+  repaired: number
+  lineRecovered: number
+  errors: number
+  details: string[]
+}> {
+  const result = {
+    repaired: 0,
+    lineRecovered: 0,
+    errors: 0,
+    details: [] as string[]
+  }
+
+  if (!isDbConfigured()) return result
+
+  const picks = await getAllPicks()
+  const incorrectPushes = picks.filter(p =>
+    p.status === 'push' &&
+    (p.betType === 'spread' || p.betType === 'total') &&
+    (p.line === undefined || p.line === null) &&
+    p.actualResult?.includes('line: undefined')
+  )
+
+  if (incorrectPushes.length === 0) {
+    result.details.push('No incorrectly pushed picks found')
+    return result
+  }
+
+  result.details.push(`Found ${incorrectPushes.length} picks incorrectly graded as push due to missing line`)
+
+  // Try to recover lines from recommendation tracking system
+  const { getRecentRecommendations } = await import('@/lib/recommendation-tracking')
+  const recos = await getRecentRecommendations(0)
+
+  // Build a lookup map: gameId:team:betType → recommendation
+  const recoMap = new Map<string, { line?: number }>()
+  for (const r of recos) {
+    if (r.line !== undefined && r.line !== null) {
+      // Extract team name from selection (e.g., "Rangers +1.5" → "Rangers")
+      const teamFromSelection = r.selection.replace(/\s*[+-]?\d+\.?\d*\s*$/, '').trim()
+      recoMap.set(`${r.gameId}:${teamFromSelection}:${r.betType}`, { line: r.line })
+      // Also store with full selection for broader matching
+      recoMap.set(`${r.gameId}:${r.betType}`, { line: r.line })
+    }
+  }
+
+  const gameResultCache = new Map<string, ESPNGameResult | null>()
+
+  for (const pick of incorrectPushes) {
+    // Try to recover line from recommendation
+    const exactMatch = recoMap.get(`${pick.gameId}:${pick.team}:${pick.betType}`)
+    const broadMatch = recoMap.get(`${pick.gameId}:${pick.betType}`)
+    const recoveredLine = exactMatch?.line ?? broadMatch?.line
+
+    if (recoveredLine === undefined || recoveredLine === null) {
+      result.details.push(`Could not recover line for ${pick.team} (${pick.gameId}) — no matching recommendation`)
+      continue
+    }
+
+    // Don't patch line onto pick yet — only do so after confirming ESPN result is available.
+    // Otherwise, persisting the line without re-grading makes the pick unfindable on future runs.
+    const pickIndex = picks.findIndex(p => p.id === pick.id)
+    if (pickIndex === -1) continue
+
+    // Re-fetch ESPN result BEFORE patching the line
+    let gameResult = gameResultCache.get(pick.gameId)
+    if (gameResult === undefined) {
+      gameResult = await fetchESPNGameResult(pick.sport, pick.gameId)
+      gameResultCache.set(pick.gameId, gameResult)
+    }
+
+    if (!gameResult || !gameResult.completed) {
+      result.details.push(`No ESPN result for ${pick.team} (${pick.gameId}) — line recovered but cannot re-grade yet`)
+      continue
+    }
+
+    // Now safe to patch the line — we know we can complete the re-grade
+    picks[pickIndex].line = recoveredLine
+    result.lineRecovered++
+
+    // Re-grade with recovered line
+    let gradeResult: 'won' | 'lost' | 'push'
+    let actualResult: string
+    const scoreDisplay = `${gameResult.awayTeam} ${gameResult.awayScore} - ${gameResult.homeTeam} ${gameResult.homeScore}`
+
+    if (pick.betType === 'spread') {
+      gradeResult = gradeSpreadPick(picks[pickIndex], gameResult.homeScore, gameResult.awayScore)
+      const margin = gameResult.homeScore - gameResult.awayScore
+      actualResult = `${scoreDisplay} (margin: ${margin > 0 ? '+' : ''}${margin}, line: ${recoveredLine})`
+    } else {
+      gradeResult = gradeTotalPick(picks[pickIndex], gameResult.homeScore, gameResult.awayScore)
+      const total = gameResult.homeScore + gameResult.awayScore
+      actualResult = `${scoreDisplay} (total: ${total}, line: ${recoveredLine})`
+    }
+
+    // Update the pick in the array
+    picks[pickIndex].status = gradeResult
+    picks[pickIndex].gradedAt = new Date().toISOString()
+    picks[pickIndex].actualResult = actualResult
+    picks[pickIndex].unitsWon = calculateUnitsWon(picks[pickIndex].odds, picks[pickIndex].units, gradeResult)
+
+    result.repaired++
+    result.details.push(`Re-graded ${pick.team}: push → ${gradeResult.toUpperCase()} (line: ${recoveredLine}, ${actualResult})`)
+  }
+
+  // Write all changes back at once (lineRecovered now only increments after ESPN confirms)
+  if (result.repaired > 0) {
+    try {
+      await kvSet(PICKS_CACHE_KEY, JSON.stringify(picks))
+      invalidate('picks:all')
+      await calculateAndStoreTrackRecord(picks)
+      result.details.push(`Saved ${result.repaired} re-graded picks and updated track record`)
+    } catch (error) {
+      console.error('[regradeIncorrectPushes] Error writing repairs:', error)
+      result.errors++
+      result.details.push('Failed to save re-graded picks to database')
+    }
+  }
+
   return result
 }

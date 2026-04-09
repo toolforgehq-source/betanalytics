@@ -257,7 +257,11 @@ export async function GET() {
     const todayStr = bettingDay.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
     
     const todaysPicks = allPicks.filter((p: StoredPick) => {
-      const pickDate = new Date(p.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
+      // Use gameTime (commence time) to determine which betting day this pick belongs to,
+      // falling back to createdAt. Previously only used createdAt, which caused picks
+      // created late at night for tomorrow's games to be filtered out of "today."
+      const referenceDate = p.gameTime || p.createdAt
+      const pickDate = new Date(referenceDate).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
       return pickDate === todayStr
     })
 
