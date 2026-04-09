@@ -898,13 +898,12 @@ export async function regradeIncorrectPushes(): Promise<{
       continue
     }
 
-    // Patch the line onto the pick
+    // Don't patch line onto pick yet — only do so after confirming ESPN result is available.
+    // Otherwise, persisting the line without re-grading makes the pick unfindable on future runs.
     const pickIndex = picks.findIndex(p => p.id === pick.id)
     if (pickIndex === -1) continue
-    picks[pickIndex].line = recoveredLine
-    result.lineRecovered++
 
-    // Re-fetch ESPN result
+    // Re-fetch ESPN result BEFORE patching the line
     let gameResult = gameResultCache.get(pick.gameId)
     if (gameResult === undefined) {
       gameResult = await fetchESPNGameResult(pick.sport, pick.gameId)
@@ -912,9 +911,13 @@ export async function regradeIncorrectPushes(): Promise<{
     }
 
     if (!gameResult || !gameResult.completed) {
-      result.details.push(`No ESPN result for ${pick.team} (${pick.gameId}) — line recovered but cannot re-grade`)
+      result.details.push(`No ESPN result for ${pick.team} (${pick.gameId}) — line recovered but cannot re-grade yet`)
       continue
     }
+
+    // Now safe to patch the line — we know we can complete the re-grade
+    picks[pickIndex].line = recoveredLine
+    result.lineRecovered++
 
     // Re-grade with recovered line
     let gradeResult: 'won' | 'lost' | 'push'
@@ -941,8 +944,8 @@ export async function regradeIncorrectPushes(): Promise<{
     result.details.push(`Re-graded ${pick.team}: push → ${gradeResult.toUpperCase()} (line: ${recoveredLine}, ${actualResult})`)
   }
 
-  // Write all changes back at once
-  if (result.repaired > 0 || result.lineRecovered > 0) {
+  // Write all changes back at once (lineRecovered now only increments after ESPN confirms)
+  if (result.repaired > 0) {
     try {
       await kvSet(PICKS_CACHE_KEY, JSON.stringify(picks))
       invalidate('picks:all')

@@ -10,11 +10,15 @@
 
 import { NextResponse } from 'next/server'
 import { regradeIncorrectPushes } from '@/lib/pick-tracking'
+import { requireDebugAuth } from '@/lib/debug-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-export async function GET() {
+export async function GET(request: Request) {
+  const authError = requireDebugAuth(request)
+  if (authError) return authError
+
   try {
     console.log('[regrade-pushes] Starting repair of incorrectly pushed picks...')
     const result = await regradeIncorrectPushes()
