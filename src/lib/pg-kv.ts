@@ -96,67 +96,16 @@ export async function kvSet(key: string, value: string, expiresInSeconds?: numbe
     ? new Date(Date.now() + expiresInSeconds * 1000).toISOString()
     : null
 
-  const valueSizeKB = Math.round(value.length / 1024)
-  const isCriticalKey = key.includes('picks') || key.includes('best-bet') || key.includes('track-record')
-
-  // For critical keys (picks, best-bet, track-record), use an atomic
-  // DELETE+INSERT transaction instead of ON CONFLICT DO UPDATE.
-  // The ON CONFLICT upsert has been observed to silently fail on Neon's
-  // serverless HTTP driver — writes appear to succeed but don't persist.
-  // Using sql.transaction() sends both queries in a single HTTP request
-  // as an atomic non-interactive transaction, avoiding the issue.
-  if (isCriticalKey) {
-    console.log(`[pg-kv] kvSet: critical key=${key} (${valueSizeKB}KB), using atomic delete+insert`)
-    try {
-      await sql.transaction([
-        sql`DELETE FROM kv_strings WHERE key = ${key}`,
-        sql`INSERT INTO kv_strings (key, value, expires_at)
-            VALUES (${key}, ${value}, ${expiresAt}::timestamptz)`
-      ])
-    } catch (txError) {
-      // If transaction fails, fall back to standard upsert
-      console.warn(`[pg-kv] kvSet: transaction failed for key=${key}, falling back to upsert:`, txError)
-      await sql`
-        INSERT INTO kv_strings (key, value, expires_at)
-        VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at
-      `
-    }
-  } else {
-    await sql`
-      INSERT INTO kv_strings (key, value, expires_at)
-      VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
-      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at
-    `
-  }
-
-  // Verify the write persisted for critical keys
-  if (isCriticalKey) {
-    const verifyRows = await sql`
-      SELECT LENGTH(value) as len FROM kv_strings
-      WHERE key = ${key}
-      AND (expires_at IS NULL OR expires_at > NOW())
-    `
-    const storedLen = verifyRows[0]?.len as number | undefined
-    if (storedLen === undefined) {
-      console.error(`[pg-kv] kvSet VERIFICATION FAILED: key=${key} not found after write! (wrote ${valueSizeKB}KB)`)
-      // Last resort: retry with a completely fresh Neon connection
-      const dbUrl = process.env.DATABASE_URL
-      if (dbUrl) {
-        const retrySql = neon(dbUrl)
-        await retrySql`DELETE FROM kv_strings WHERE key = ${key}`
-        await retrySql`
-          INSERT INTO kv_strings (key, value, expires_at)
-          VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
-        `
-        console.log(`[pg-kv] kvSet RETRY: wrote ${valueSizeKB}KB to key=${key} with fresh connection`)
-      }
-    } else if (Math.abs(storedLen - value.length) > 10) {
-      console.warn(`[pg-kv] kvSet SIZE MISMATCH: key=${key} wrote ${value.length} bytes but stored ${storedLen} bytes`)
-    } else {
-      console.log(`[pg-kv] kvSet VERIFIED: key=${key} (${valueSizeKB}KB)`)
-    }
-  }
+  // IMPORTANT: ON CONFLICT DO UPDATE silently fails on Neon's serverless
+  // HTTP driver (@neondatabase/serverless 1.x) — the query returns success
+  // but doesn't actually update the existing row. Confirmed via raw SQL
+  // diagnostic (rawOverwriteUpsert.updatePersisted === false).
+  // All writes use DELETE + INSERT instead.
+  await sql`DELETE FROM kv_strings WHERE key = ${key}`
+  await sql`
+    INSERT INTO kv_strings (key, value, expires_at)
+    VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
+  `
 }
 
 export async function kvDel(key: string): Promise<void> {
@@ -185,8 +134,20 @@ export async function kvExpire(key: string, seconds: number): Promise<void> {
   if (!sql) return
   await ensureTables()
 
+  // Plain UPDATE also silently fails on Neon HTTP driver.
+  // Read current value, delete, and re-insert with new expiry.
+  const rows = await sql`
+    SELECT value FROM kv_strings WHERE key = ${key}
+    AND (expires_at IS NULL OR expires_at > NOW())
+  `
+  if (rows.length === 0) return
+  const currentValue = rows[0].value as string
   const expiresAt = new Date(Date.now() + seconds * 1000).toISOString()
-  await sql`UPDATE kv_strings SET expires_at = ${expiresAt}::timestamptz WHERE key = ${key}`
+  await sql`DELETE FROM kv_strings WHERE key = ${key}`
+  await sql`
+    INSERT INTO kv_strings (key, value, expires_at)
+    VALUES (${key}, ${currentValue}, ${expiresAt}::timestamptz)
+  `
 }
 
 // ============================================
@@ -199,6 +160,8 @@ export async function kvSadd(key: string, ...members: string[]): Promise<void> {
   await ensureTables()
 
   for (const member of members) {
+    // ON CONFLICT DO NOTHING is safe — it's not an UPDATE, just a no-op on
+    // duplicate. Only ON CONFLICT DO UPDATE is broken on Neon HTTP driver.
     await sql`
       INSERT INTO kv_sets (key, member) VALUES (${key}, ${member})
       ON CONFLICT (key, member) DO NOTHING
@@ -251,9 +214,11 @@ export async function kvHset(key: string, field: string, value: string): Promise
   if (!sql) return
   await ensureTables()
 
+  // ON CONFLICT DO UPDATE silently fails on Neon HTTP driver.
+  // Use DELETE + INSERT instead.
+  await sql`DELETE FROM kv_hashes WHERE key = ${key} AND field = ${field}`
   await sql`
     INSERT INTO kv_hashes (key, field, value) VALUES (${key}, ${field}, ${value})
-    ON CONFLICT (key, field) DO UPDATE SET value = EXCLUDED.value
   `
 }
 
@@ -353,9 +318,11 @@ export async function kvZadd(key: string, score: number, member: string): Promis
   if (!sql) return
   await ensureTables()
 
+  // ON CONFLICT DO UPDATE silently fails on Neon HTTP driver.
+  // Use DELETE + INSERT instead.
+  await sql`DELETE FROM kv_sorted_sets WHERE key = ${key} AND member = ${member}`
   await sql`
     INSERT INTO kv_sorted_sets (key, member, score) VALUES (${key}, ${member}, ${score})
-    ON CONFLICT (key, member) DO UPDATE SET score = EXCLUDED.score
   `
 }
 
