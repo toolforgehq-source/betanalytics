@@ -12,6 +12,7 @@ import {
   calculateProfit,
   type TrackedRecommendation 
 } from '@/lib/recommendation-tracking'
+import { regradeIncorrectPushes } from '@/lib/pick-tracking'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -657,12 +658,26 @@ export async function GET(request: Request) {
           // Determine settlement based on bet type
           let result: { status: 'won' | 'lost' | 'push' | 'void'; actualResult: string; profit: number } | null = null
           
-          if (reco.betType === 'spread' && reco.line !== undefined) {
-            result = settleSpreadBet(reco, gameResult)
-          } else if (reco.betType === 'total' && reco.line !== undefined) {
-            result = settleTotalBet(reco, gameResult)
+          if (reco.betType === 'spread') {
+            if (reco.line !== undefined && reco.line !== null) {
+              result = settleSpreadBet(reco, gameResult)
+            } else {
+              // Spread bet with missing line — cannot grade accurately.
+              // Previously this fell through to moneyline settlement, producing wrong results.
+              console.error(`[SettleBets] Spread bet ${reco.id} missing line — skipping (selection: ${reco.selection})`)
+              skipped++
+              continue
+            }
+          } else if (reco.betType === 'total') {
+            if (reco.line !== undefined && reco.line !== null) {
+              result = settleTotalBet(reco, gameResult)
+            } else {
+              console.error(`[SettleBets] Total bet ${reco.id} missing line — skipping (selection: ${reco.selection})`)
+              skipped++
+              continue
+            }
           } else {
-            // Default to moneyline settlement
+            // Moneyline settlement
             result = settleMoneylineBet(reco, gameResult)
           }
           
@@ -694,6 +709,19 @@ export async function GET(request: Request) {
     
     console.log(`[SettleBets] Complete: ${settled} settled, ${skipped} skipped, ${errors} errors`)
     
+    // After normal settlement, repair any picks that were incorrectly graded as "push"
+    // due to the missing line bug (storePick wasn't passing line field).
+    // This recovers lines from recommendations and re-grades with ESPN scores.
+    let regradeResult = { repaired: 0, lineRecovered: 0, errors: 0, details: [] as string[] }
+    try {
+      regradeResult = await regradeIncorrectPushes()
+      if (regradeResult.repaired > 0) {
+        console.log(`[SettleBets] Re-graded ${regradeResult.repaired} incorrectly pushed picks`)
+      }
+    } catch (err) {
+      console.error('[SettleBets] Re-grade repair failed:', err)
+    }
+    
     return NextResponse.json({
       success: true,
       pending: pending.length,
@@ -701,6 +729,7 @@ export async function GET(request: Request) {
       skipped,
       errors,
       results,
+      regrade: regradeResult.repaired > 0 ? regradeResult : undefined,
       durationMs: Date.now() - startTime
     })
     
