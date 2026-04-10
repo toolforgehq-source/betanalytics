@@ -446,7 +446,7 @@ export async function lockInAndCleanupPicks(
     
     if (gameStarted) {
       // Game has started and pick is still pending → candidate for lock-in.
-      // We collect these and enforce the 1 Lock + 3 Strong cap below.
+      // We collect these and enforce the 1 Lock + 2 Strong cap below.
       pendingLockIns.push(indices[0])
     } else if (!isActive) {
       // Game hasn't started and pick is no longer active → cancel
@@ -462,12 +462,12 @@ export async function lockInAndCleanupPicks(
   
   // ============================================
   // DAILY TIER CAP ENFORCEMENT ON LOCK-IN
-  // Only lock in max 1 Lock + 3 Strong = 4 picks per day.
+  // Only lock in max 1 Lock + 2 Strong = 3 picks per day.
   // Count already-locked picks from previous runs, then fill remaining slots
   // with the highest-scored pending lock-in candidates.
   // ============================================
   const MAX_DAILY_LOCKS = 1
-  const MAX_DAILY_STRONG = 3
+  const MAX_DAILY_STRONG = 2
   
   // Count picks already locked in from previous cron runs TODAY.
   // CRITICAL: Must scope to today's betting day (ET timezone, resets at 2 AM).
@@ -503,7 +503,7 @@ export async function lockInAndCleanupPicks(
         // Exceeds daily cap — cancel
         picks[idx].status = 'cancelled'
         picks[idx].gradedAt = new Date().toISOString()
-        picks[idx].actualResult = 'Exceeded daily tier cap (max 1 Lock + 3 Strong = 4 picks/day)'
+        picks[idx].actualResult = 'Exceeded daily tier cap (max 1 Lock + 2 Strong = 3 picks/day)'
         result.cancelled++
         modified = true
         console.log(`[Picks] Cancelled pick ${picks[idx].id} — exceeded daily tier cap (${totalSlotsUsed + i + 1} > ${MAX_DAILY_LOCKS + MAX_DAILY_STRONG})`)

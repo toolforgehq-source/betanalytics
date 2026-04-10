@@ -8,7 +8,7 @@
  * - Deduplication (gameId:team:betType, prefer higher score)
  * - Kelly Criterion filtering (only bets with meaningful Kelly fraction qualify)
  * - Score-based tier assignment (highest score = Lock, next best = Strong)
- * - Tier caps (max 1 Lock, max 3 Strong)
+ * - Tier caps (max 1 Lock, max 2 Strong)
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -16,7 +16,7 @@ export type PickLike = Record<string, any>
 
 // These caps MUST match the values in bet-ranking.ts computeBestBets()
 export const MAX_LOCKS = 1
-export const MAX_STRONG = 3
+export const MAX_STRONG = 2
 
 /**
  * Calculate Kelly Criterion fraction for a bet.

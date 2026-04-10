@@ -337,7 +337,7 @@ export async function GET(request: Request) {
     // in when games start, graded, and inflate the public record.
     // ============================================
     const MAX_STORED_LOCKS = 1
-    const MAX_STORED_STRONG = 3
+    const MAX_STORED_STRONG = 2
     mergedLockStrong.sort((a, b) => b.score - a.score)
     let storedLockCount = 0
     let storedStrongCount = 0
