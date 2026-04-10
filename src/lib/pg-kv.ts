@@ -97,16 +97,15 @@ export async function kvSet(key: string, value: string, expiresInSeconds?: numbe
     ? new Date(Date.now() + expiresInSeconds * 1000).toISOString()
     : null
 
-  // IMPORTANT: ON CONFLICT DO UPDATE silently fails on Neon's serverless
-  // HTTP driver (@neondatabase/serverless 1.x) — the query returns success
-  // but doesn't actually update the existing row. Confirmed via raw SQL
-  // diagnostic (rawOverwriteUpsert.updatePersisted === false).
-  // All writes use DELETE + INSERT instead.
-  await sql`DELETE FROM kv_strings WHERE key = ${key}`
-  await sql`
-    INSERT INTO kv_strings (key, value, expires_at)
-    VALUES (${key}, ${value}, ${expiresAt}::timestamptz)
-  `
+  // CRITICAL: Both ON CONFLICT DO UPDATE and separate DELETE + INSERT silently
+  // fail on Neon's serverless HTTP driver — queries return success but don't
+  // modify the database. sql.transaction() sends both queries as a single
+  // atomic HTTP request, which is the only pattern confirmed to persist.
+  await sql.transaction([
+    sql`DELETE FROM kv_strings WHERE key = ${key}`,
+    sql`INSERT INTO kv_strings (key, value, expires_at)
+        VALUES (${key}, ${value}, ${expiresAt}::timestamptz)`
+  ])
 }
 
 export async function kvDel(key: string): Promise<void> {
@@ -135,8 +134,8 @@ export async function kvExpire(key: string, seconds: number): Promise<void> {
   if (!sql) return
   await ensureTables()
 
-  // Plain UPDATE also silently fails on Neon HTTP driver.
-  // Read current value, delete, and re-insert with new expiry.
+  // Plain UPDATE silently fails on Neon HTTP driver.
+  // Read current value, then use transaction to delete + re-insert with new expiry.
   const rows = await sql`
     SELECT value FROM kv_strings WHERE key = ${key}
     AND (expires_at IS NULL OR expires_at > NOW())
@@ -144,11 +143,11 @@ export async function kvExpire(key: string, seconds: number): Promise<void> {
   if (rows.length === 0) return
   const currentValue = rows[0].value as string
   const expiresAt = new Date(Date.now() + seconds * 1000).toISOString()
-  await sql`DELETE FROM kv_strings WHERE key = ${key}`
-  await sql`
-    INSERT INTO kv_strings (key, value, expires_at)
-    VALUES (${key}, ${currentValue}, ${expiresAt}::timestamptz)
-  `
+  await sql.transaction([
+    sql`DELETE FROM kv_strings WHERE key = ${key}`,
+    sql`INSERT INTO kv_strings (key, value, expires_at)
+        VALUES (${key}, ${currentValue}, ${expiresAt}::timestamptz)`
+  ])
 }
 
 // ============================================
@@ -215,12 +214,12 @@ export async function kvHset(key: string, field: string, value: string): Promise
   if (!sql) return
   await ensureTables()
 
-  // ON CONFLICT DO UPDATE silently fails on Neon HTTP driver.
-  // Use DELETE + INSERT instead.
-  await sql`DELETE FROM kv_hashes WHERE key = ${key} AND field = ${field}`
-  await sql`
-    INSERT INTO kv_hashes (key, field, value) VALUES (${key}, ${field}, ${value})
-  `
+  // All writes use sql.transaction() — the only pattern confirmed to persist
+  // on Neon's serverless HTTP driver. Sends DELETE+INSERT as single HTTP request.
+  await sql.transaction([
+    sql`DELETE FROM kv_hashes WHERE key = ${key} AND field = ${field}`,
+    sql`INSERT INTO kv_hashes (key, field, value) VALUES (${key}, ${field}, ${value})`
+  ])
 }
 
 export async function kvHget(key: string, field: string): Promise<string | null> {
@@ -319,12 +318,12 @@ export async function kvZadd(key: string, score: number, member: string): Promis
   if (!sql) return
   await ensureTables()
 
-  // ON CONFLICT DO UPDATE silently fails on Neon HTTP driver.
-  // Use DELETE + INSERT instead.
-  await sql`DELETE FROM kv_sorted_sets WHERE key = ${key} AND member = ${member}`
-  await sql`
-    INSERT INTO kv_sorted_sets (key, member, score) VALUES (${key}, ${member}, ${score})
-  `
+  // All writes use sql.transaction() — the only pattern confirmed to persist
+  // on Neon's serverless HTTP driver. Sends DELETE+INSERT as single HTTP request.
+  await sql.transaction([
+    sql`DELETE FROM kv_sorted_sets WHERE key = ${key} AND member = ${member}`,
+    sql`INSERT INTO kv_sorted_sets (key, member, score) VALUES (${key}, ${member}, ${score})`
+  ])
 }
 
 export async function kvZrange(key: string, start: number, stop: number): Promise<string[]> {
