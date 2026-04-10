@@ -161,14 +161,14 @@ function getBettingDayET(date: Date): string {
 
 /**
  * Enforce daily caps on a list of recommendations.
- * For each betting day, keeps max 1 Lock + 3 Strong picks (the highest scored ones).
+ * For each betting day, keeps max 1 Lock + 2 Strong picks (the highest scored ones).
  * This fixes historical data where more than 4 picks per day were graded before the fix.
  * 
  * EXPORTED so the Performance page client can also use it.
  */
 export function enforceDailyCaps(recommendations: TrackedRecommendation[]): TrackedRecommendation[] {
   const MAX_DAILY_LOCKS = 1
-  const MAX_DAILY_STRONG = 3
+  const MAX_DAILY_STRONG = 2
 
   // CRITICAL: Filter out void picks FIRST. Voided picks were superseded before
   // game start — they never played and must NOT consume daily cap slots.
@@ -587,7 +587,7 @@ export async function lockInAndCleanupRecommendations(
     
     if (gameStarted) {
       // Game has started and pick is still pending → candidate for lock-in.
-      // We collect these and enforce the 1 Lock + 3 Strong cap below.
+      // We collect these and enforce the 1 Lock + 2 Strong cap below.
       pendingLockIns.push(primary)
     } else if (!isActive) {
       // Game hasn't started and pick is no longer in active list.
@@ -614,15 +614,15 @@ export async function lockInAndCleanupRecommendations(
   
   // ============================================
   // DAILY TIER CAP ENFORCEMENT ON LOCK-IN
-  // Only lock in max 1 Lock + 3 Strong = 4 best_bet recommendations per day.
+  // Only lock in max 1 Lock + 2 Strong = 3 best_bet recommendations per day.
   // Count already-locked recommendations, then fill remaining slots
   // with the highest-scored pending lock-in candidates.
   // ============================================
   const MAX_DAILY_LOCKS = 1
-  const MAX_DAILY_STRONG = 3
+  const MAX_DAILY_STRONG = 2
   
   // Count recommendations already locked in from previous cron runs TODAY,
-  // broken down by tier (1 Lock + 3 Strong separately, not total 4).
+  // broken down by tier (1 Lock + 2 Strong separately, not total 3).
   // CRITICAL: Must scope to today's betting day (ET timezone, resets at 2 AM).
   // Without date scoping, this would count ALL locked recommendations ever stored,
   // causing slots to be permanently exhausted and block all future lock-ins.
@@ -649,7 +649,7 @@ export async function lockInAndCleanupRecommendations(
     const otherLockIns = pendingLockIns.filter(r => r.source !== 'best_bet')
     
     // Separate lock-tier and strong-tier candidates.
-    // Each tier has its own cap: 1 lock + 3 strong per day.
+    // Each tier has its own cap: 1 lock + 2 strong per day.
     // Sort each by latest createdAt first (most recent = most recent Lock of the Day).
     const lockCandidates = bestBetLockIns.filter(r => r.confidenceTier === 'lock')
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
@@ -687,7 +687,7 @@ export async function lockInAndCleanupRecommendations(
         await updateRecommendation(reco.id, {
           status: 'void',
           settledAt: new Date().toISOString(),
-          actualResult: 'Exceeded daily strong cap (max 3 Strong per day)'
+          actualResult: 'Exceeded daily strong cap (max 2 Strong per day)'
         })
         result.voided++
         console.log(`[Tracking] Voided STRONG ${reco.id} — exceeded daily strong cap (${lockedStrongs + strongsFilled + 1} > ${MAX_DAILY_STRONG})`)
@@ -742,7 +742,7 @@ export async function calculateTrackingStats(
   
   // IMPORTANT: Only count best_bet picks with lock/strong tier in the official record.
   // Props, parlays, sport_bets, and value-tier picks should NOT inflate the public record.
-  // The record should reflect exactly the 1 Lock + 3 Strong picks that were locked in.
+  // The record should reflect exactly the 1 Lock + 2 Strong picks that were locked in.
   const filteredBySource = allRecommendations.filter(r =>
     r.source === 'best_bet' &&
     (r.confidenceTier === 'lock' || r.confidenceTier === 'strong')
@@ -750,7 +750,7 @@ export async function calculateTrackingStats(
   
   // CRITICAL: Enforce daily caps retroactively on historical data.
   // Before the fix was deployed, more than 4 picks per day leaked into the record.
-  // This ensures each day only counts max 1 Lock + 3 Strong (best by score).
+  // This ensures each day only counts max 1 Lock + 2 Strong (best by score).
   const recommendations = enforceDailyCaps(filteredBySource)
   
   const stats: TrackingStats = {

@@ -3047,11 +3047,11 @@ export async function computeBestBets(
   // sport penalties, and situational factors — no need for extra quality gates.
   //
   // LOCK OF THE DAY: #1 pick by score (max 1/day)
-  // STRONG PLAY: #2-4 picks by score (max 3/day)
+  // STRONG PLAY: #2-3 picks by score (max 2/day)
   // VALUE SPOT: everything else (internal only)
   
   const MAX_LOCKS = 1
-  const MAX_STRONG = 3
+  const MAX_STRONG = 2
   let lockCount = 0
   let strongCount = 0
   
