@@ -11,7 +11,6 @@
  * - Track ROI and units won/lost
  */
 
-import { cachedRead, invalidate } from '@/lib/redis-cache'
 import { kvGet, kvSet, kvDel, isDbConfigured } from '@/lib/pg-kv'
 
 export interface StoredPick {
@@ -144,7 +143,6 @@ export async function storePick(pick: Omit<StoredPick, 'id' | 'createdAt' | 'sta
     // Store back to Postgres
     await kvSet(PICKS_CACHE_KEY, JSON.stringify(existingPicks))
     
-    invalidate('picks:all') // Bust the in-memory cache after write
     console.log(`[storePick] Stored pick: ${newPick.id} - ${newPick.team}`)
     return newPick
   } catch (error) {
@@ -155,24 +153,24 @@ export async function storePick(pick: Omit<StoredPick, 'id' | 'createdAt' | 'sta
 
 /**
  * Get all stored picks.
- * Results are cached in-memory for 2 minutes to reduce Upstash command usage.
- * Write operations (storePick, gradePick) invalidate the cache.
+ * Always reads fresh from the database — no in-memory caching.
+ * The previous cachedRead() layer caused stale reads across Vercel serverless
+ * instances: writes persisted to Postgres but other instances served cached data
+ * for up to 2 minutes, breaking grading, settlement, and the performance page.
  */
 export async function getAllPicks(): Promise<StoredPick[]> {
-  return cachedRead('picks:all', 120, async () => {
-    if (!isDbConfigured()) return []
+  if (!isDbConfigured()) return []
+  
+  try {
+    const result = await kvGet(PICKS_CACHE_KEY)
+    if (!result) return []
     
-    try {
-      const result = await kvGet(PICKS_CACHE_KEY)
-      if (!result) return []
-      
-      const parsed = JSON.parse(result)
-      return Array.isArray(parsed) ? parsed : []
-    } catch (error) {
-      console.error('[getAllPicks] Error getting picks:', error)
-      return []
-    }
-  })
+    const parsed = JSON.parse(result)
+    return Array.isArray(parsed) ? parsed : []
+  } catch (error) {
+    console.error('[getAllPicks] Error getting picks:', error)
+    return []
+  }
 }
 
 /**
@@ -205,8 +203,6 @@ export async function gradePick(
     
     // Store updated picks
     await kvSet(PICKS_CACHE_KEY, JSON.stringify(picks))
-    
-    invalidate('picks:all') // Bust the in-memory cache after write
     
     // Recalculate track record
     await calculateAndStoreTrackRecord(picks)
@@ -275,24 +271,23 @@ async function calculateAndStoreTrackRecord(picks: StoredPick[]): Promise<void> 
 }
 
 /**
- * Get cached track record.
- * Cached in-memory for 5 minutes — track record changes only when picks are graded.
+ * Get track record.
+ * Always reads fresh from the database — no in-memory caching.
+ * See getAllPicks() comment for why cachedRead was removed.
  */
 export async function getTrackRecord(): Promise<PickTrackingData['trackRecord'] | null> {
-  return cachedRead('picks:trackRecord', 300, async () => {
-    if (!isDbConfigured()) return null
+  if (!isDbConfigured()) return null
+  
+  try {
+    const result = await kvGet(TRACK_RECORD_KEY)
+    if (!result) return null
     
-    try {
-      const result = await kvGet(TRACK_RECORD_KEY)
-      if (!result) return null
-      
-      const parsed = JSON.parse(result)
-      return parsed && typeof parsed === 'object' ? parsed : null
-    } catch (error) {
-      console.error('[getTrackRecord] Error getting track record:', error)
-      return null
-    }
-  })
+    const parsed = JSON.parse(result)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch (error) {
+    console.error('[getTrackRecord] Error getting track record:', error)
+    return null
+  }
 }
 
 /**
@@ -948,7 +943,6 @@ export async function regradeIncorrectPushes(): Promise<{
   if (result.repaired > 0) {
     try {
       await kvSet(PICKS_CACHE_KEY, JSON.stringify(picks))
-      invalidate('picks:all')
       await calculateAndStoreTrackRecord(picks)
       result.details.push(`Saved ${result.repaired} re-graded picks and updated track record`)
     } catch (error) {
