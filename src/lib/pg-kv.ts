@@ -18,12 +18,14 @@ let _initialized = false
 function getSql(): NeonQueryFunction<false, false> | null {
   const url = process.env.DATABASE_URL
   if (!url) return null
-  // CRITICAL: Always create a fresh neon() connection for each operation.
-  // Caching the connection instance causes writes (DELETE, INSERT, UPDATE)
-  // to silently fail on Neon's serverless HTTP driver — queries return
-  // success but don't actually modify the database. Fresh connections
-  // are stateless HTTP query functions with negligible creation overhead.
-  return neon(url)
+  // CRITICAL FIX: Next.js 14 App Router caches fetch() responses by default.
+  // The Neon serverless HTTP driver uses fetch() internally for every query.
+  // Without { cache: 'no-store' }, Next.js caches the HTTP response from Neon
+  // and returns stale data on subsequent reads — even with a fresh neon()
+  // connection. This caused kvGet() to return old data (e.g. 7 pushes)
+  // while direct SQL reads showed correct data (0 pushes).
+  // Passing fetchOptions disables Next.js fetch caching entirely.
+  return neon(url, { fetchOptions: { cache: 'no-store' } })
 }
 
 /** Returns true if DATABASE_URL is configured */
