@@ -115,8 +115,8 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
     ]
   }] : []
   
-  // Build totals array
-  const totals = espnOdds.overUnder !== null ? [{
+  // Build totals array (reject 0 or negative — a total line of 0 is invalid ESPN data)
+  const totals = (espnOdds.overUnder !== null && espnOdds.overUnder > 0) ? [{
     bookmaker: provider,
     market: 'totals',
     outcomes: [

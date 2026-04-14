@@ -257,7 +257,7 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
         home: pickcenter.homeTeamOdds.spreadOdds,
         away: pickcenter.awayTeamOdds.spreadOdds
       } : null,
-      overUnder: pickcenter.overUnder ?? null,
+      overUnder: (pickcenter.overUnder != null && pickcenter.overUnder > 0) ? pickcenter.overUnder : null,
       overUnderOdds: (pickcenter.overOdds != null && pickcenter.underOdds != null) ? {
         over: pickcenter.overOdds,
         under: pickcenter.underOdds
