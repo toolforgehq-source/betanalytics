@@ -1842,7 +1842,7 @@ export async function analyzeGame(
     
     for (const total of game.totals) {
       for (const outcome of total.outcomes) {
-        if (outcome.point !== undefined) {
+        if (outcome.point !== undefined && outcome.point > 0) {
           const line = outcome.point
           if (!totalLines.has(line)) totalLines.set(line, [])
           totalLines.get(line)!.push({ 
@@ -2580,7 +2580,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     
     for (const total of game.totals) {
       for (const outcome of total.outcomes) {
-        if (outcome.point !== undefined) {
+        if (outcome.point !== undefined && outcome.point > 0) {
           const line = outcome.point
           if (!totalLines.has(line)) totalLines.set(line, [])
           totalLines.get(line)!.push({ 
