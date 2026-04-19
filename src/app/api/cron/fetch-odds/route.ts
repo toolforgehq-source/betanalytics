@@ -105,23 +105,31 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds): Game {
   // - Negative value (e.g., -6.5) means home team is favorite
   // - Positive value (e.g., +6.5) means home team is underdog
   // We use the spread value directly without re-signing based on homeFavorite.
+  //
+  // SPREAD JUICE: We require real spreadOdds before emitting a spread market.
+  // Previously this defaulted to -110/-110 when ESPN didn't return juice
+  // (primarily MLB runlines), which silently corrupted every downstream Kelly
+  // and edge calculation. ESPN odds enrichment now pulls the real juice from
+  // the core odds endpoint; if it's still unavailable, we skip the spread
+  // market entirely rather than fabricate a line.
   const homeSpread = espnOdds.spread ?? 0
-  const spreads = espnOdds.spread !== null ? [{
+  const spreads = (espnOdds.spread !== null && espnOdds.spreadOdds) ? [{
     bookmaker: provider,
     market: 'spreads',
     outcomes: [
-      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: homeSpread },
-      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: -homeSpread }
+      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds.home, point: homeSpread },
+      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds.away, point: -homeSpread }
     ]
   }] : []
-  
-  // Build totals array (reject 0 or negative — a total line of 0 is invalid ESPN data)
-  const totals = (espnOdds.overUnder !== null && espnOdds.overUnder > 0) ? [{
+
+  // Build totals array (reject 0 or negative — a total line of 0 is invalid ESPN data).
+  // Skip entirely when juice is unavailable, for the same reason as spreads.
+  const totals = (espnOdds.overUnder !== null && espnOdds.overUnder > 0 && espnOdds.overUnderOdds) ? [{
     bookmaker: provider,
     market: 'totals',
     outcomes: [
-      { name: 'Over', price: espnOdds.overUnderOdds?.over || -110, point: espnOdds.overUnder },
-      { name: 'Under', price: espnOdds.overUnderOdds?.under || -110, point: espnOdds.overUnder }
+      { name: 'Over', price: espnOdds.overUnderOdds.over, point: espnOdds.overUnder },
+      { name: 'Under', price: espnOdds.overUnderOdds.under, point: espnOdds.overUnder }
     ]
   }] : []
   
