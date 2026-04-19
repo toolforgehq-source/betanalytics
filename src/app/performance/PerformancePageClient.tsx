@@ -13,6 +13,22 @@ interface TierStats {
   pushes: number
   total: number
   winRate: number
+  units: number   // Net units won/lost (1u = 1 unit wagered per pick)
+  roi: number     // (net units / decided picks) * 100, i.e. ROI per unit risked
+}
+
+/**
+ * Unit P/L for a single pick at the given american odds.
+ * Mirrors lib/pick-tracking:calculateUnitsWon. We flat-bet 1u per pick so
+ * losses are -1u regardless of price, wins pay out based on juice.
+ */
+function unitsWonFor(oddsValue: number | undefined, status: string): number {
+  if (!oddsValue) return 0
+  if (status === 'won') {
+    return oddsValue > 0 ? oddsValue / 100 : 100 / Math.abs(oddsValue)
+  }
+  if (status === 'lost') return -1
+  return 0
 }
 
 interface PerformanceData {
@@ -46,14 +62,24 @@ interface RecentPick {
   bettingDay?: string  // Computed betting day (ET, 2 AM reset) for display
 }
 
-function StatCard({ label, value, subtext, color }: { label: string; value: string; subtext?: string; color: string }) {
+function StatCard({ label, value, subtext, color, emphasize }: { label: string; value: string; subtext?: string; color: string; emphasize?: boolean }) {
   return (
-    <div className="bg-slate-900/40 border border-slate-800/50 rounded-xl p-4">
+    <div className={`bg-slate-900/40 border rounded-xl p-4 ${emphasize ? 'border-cyan-500/40' : 'border-slate-800/50'}`}>
       <div className="text-xs text-slate-500 mb-1">{label}</div>
-      <div className={`text-2xl font-bold ${color}`}>{value}</div>
+      <div className={`${emphasize ? 'text-3xl' : 'text-2xl'} font-bold ${color}`}>{value}</div>
       {subtext && <div className="text-xs text-slate-500 mt-0.5">{subtext}</div>}
     </div>
   )
+}
+
+function formatUnits(units: number): string {
+  const sign = units > 0 ? '+' : ''
+  return `${sign}${units.toFixed(2)}u`
+}
+
+function formatROI(roi: number): string {
+  const sign = roi > 0 ? '+' : ''
+  return `${sign}${roi.toFixed(1)}%`
 }
 
 function TierRow({ label, icon, stats, color }: { label: string; icon: React.ReactNode; stats: TierStats; color: string }) {
@@ -64,7 +90,13 @@ function TierRow({ label, icon, stats, color }: { label: string; icon: React.Rea
         <span className={`font-semibold ${color}`}>{label}</span>
       </div>
       <div className="flex items-center gap-6 text-sm">
-        <span className="text-slate-400">{stats.wins}W - {stats.losses}L{stats.pushes > 0 ? ` - ${stats.pushes}P` : ''}</span>
+        <span className="text-slate-400 hidden sm:inline">{stats.wins}W - {stats.losses}L{stats.pushes > 0 ? ` - ${stats.pushes}P` : ''}</span>
+        <span className={`font-semibold ${stats.units > 0 ? 'text-green-400' : stats.units < 0 ? 'text-red-400' : 'text-slate-400'}`}>
+          {stats.total > 0 ? formatUnits(stats.units) : '--'}
+        </span>
+        <span className={`font-semibold ${stats.roi > 0 ? 'text-green-400' : stats.roi < 0 ? 'text-red-400' : 'text-slate-400'}`}>
+          {stats.total > 0 ? formatROI(stats.roi) : '--'}
+        </span>
         <span className={`font-bold ${stats.winRate >= 60 ? 'text-green-400' : stats.winRate >= 50 ? 'text-blue-400' : 'text-red-400'}`}>
           {stats.total > 0 ? `${stats.winRate.toFixed(1)}%` : '--'}
         </span>
@@ -101,7 +133,12 @@ export default function PerformancePageClient() {
           const losses = picks.filter(p => p.status === 'lost').length
           const pushes = picks.filter(p => p.status === 'push').length
           const total = wins + losses
-          return { wins, losses, pushes, total, winRate: total > 0 ? (wins / total) * 100 : 0 }
+          // Net units = sum of unit P/L across every decided pick (wins + losses).
+          // Pushes contribute 0. ROI = units / decided picks expressed as a percent.
+          // Skip picks without recorded odds so a missing price can't corrupt ROI.
+          const units = picks.reduce((sum, p) => sum + unitsWonFor(p.odds ?? p.bestPrice, p.status), 0)
+          const roi = total > 0 ? (units / total) * 100 : 0
+          return { wins, losses, pushes, total, winRate: total > 0 ? (wins / total) * 100 : 0, units, roi }
         }
 
         // Only count best_bet picks with Lock/Strong tier in the official record.
@@ -263,25 +300,29 @@ export default function PerformancePageClient() {
 
         {!loading && hasData && data && (
           <>
-            {/* Overall Stats */}
+            {/* Overall Stats — ROI-first layout. Units and ROI lead because
+                  raw win-rate can flatter plus-money or minus-money skews.
+                  Units/ROI are what actually move your bankroll. */}
             <div className="grid md:grid-cols-4 gap-4 mb-10">
+              <StatCard
+                label="Net Units"
+                value={data.overall.total > 0 ? formatUnits(data.overall.units) : '--'}
+                subtext={data.overall.total > 0 ? `across ${data.overall.total} settled picks` : 'No settled picks yet'}
+                color={data.overall.units > 0 ? 'text-green-400' : data.overall.units < 0 ? 'text-red-400' : 'text-slate-400'}
+                emphasize
+              />
+              <StatCard
+                label="ROI"
+                value={data.overall.total > 0 ? formatROI(data.overall.roi) : '--'}
+                subtext="Per unit risked"
+                color={data.overall.roi > 0 ? 'text-green-400' : data.overall.roi < 0 ? 'text-red-400' : 'text-slate-400'}
+                emphasize
+              />
               <StatCard
                 label="Overall Win Rate"
                 value={`${data.overall.winRate.toFixed(1)}%`}
-                subtext={`${data.overall.wins}W - ${data.overall.losses}L`}
-                color={data.overall.winRate >= 55 ? 'text-green-400' : 'text-red-400'}
-              />
-              <StatCard
-                label="Lock Win Rate"
-                value={data.lock.total > 0 ? `${data.lock.winRate.toFixed(1)}%` : '--'}
-                subtext={data.lock.total > 0 ? `${data.lock.wins}W - ${data.lock.losses}L` : 'No settled locks yet'}
-                color="text-yellow-400"
-              />
-              <StatCard
-                label="Strong Win Rate"
-                value={data.strong.total > 0 ? `${data.strong.winRate.toFixed(1)}%` : '--'}
-                subtext={data.strong.total > 0 ? `${data.strong.wins}W - ${data.strong.losses}L` : 'No settled strong plays yet'}
-                color="text-blue-400"
+                subtext={`${data.overall.wins}W - ${data.overall.losses}L${data.overall.pushes > 0 ? ` - ${data.overall.pushes}P` : ''}`}
+                color={data.overall.winRate >= 55 ? 'text-green-400' : 'text-slate-200'}
               />
               <StatCard
                 label="Total Picks Tracked"
@@ -293,7 +334,10 @@ export default function PerformancePageClient() {
 
             {/* Tier Breakdown */}
             <div className="bg-slate-900/30 border border-slate-800/50 rounded-xl p-6 mb-10">
-              <h3 className="text-lg font-bold mb-4">Performance by Tier</h3>
+              <div className="flex items-baseline justify-between mb-4">
+                <h3 className="text-lg font-bold">Performance by Tier</h3>
+                <span className="hidden sm:inline text-xs uppercase tracking-wide text-slate-500">W-L / Units / ROI / Win %</span>
+              </div>
               <TierRow
                 label="Lock of the Day"
                 icon={<Lock className="w-4 h-4 text-yellow-400" />}
