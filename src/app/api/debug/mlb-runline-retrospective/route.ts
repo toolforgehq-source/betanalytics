@@ -2,15 +2,20 @@
  * MLB Runline Retrospective
  *
  * Re-prices every settled MLB spread pick in our history using the real
- * runline juice ESPN's core odds endpoint reports for that game, and
- * recomputes what the actual unit P/L would have been if the odds stored
- * at pick time had been correct instead of the silent -110/-110 fallback.
+ * runline juice ESPN's core odds endpoint reports for that game and reports
+ * three things:
  *
- * This does NOT re-rank picks or change what was historically surfaced —
- * it only restates ROI under correct juice. That's deliberately scoped:
- * we don't have snapshots of the full candidate pool per day, so a true
- * counter-factual rerun isn't possible. What we CAN honestly answer is
- * "given the exact picks we shipped, what was the real-money result?"
+ *  1. Flat-1u restatement — what the actual unit P/L would have been if the
+ *     stored odds had been correct instead of the silent -110/-110 fallback.
+ *  2. Post-fix filter — the subset of picks the updated ranker would still
+ *     surface (positive Kelly at real juice, juice tighter than -250).
+ *  3. Bankroll simulation — $100 start, half-Kelly sizing compounded
+ *     chronologically through the whole history. Both "all shipped picks"
+ *     and "post-fix filter only" tracks are reported side-by-side.
+ *
+ * This does NOT re-rank the daily candidate pool (we don't snapshot the full
+ * pool), mutate stored picks, or re-grade outcomes. It only restates what
+ * those same picks would have returned under the corrected pricing regime.
  *
  * Auth: requires CRON_SECRET in production. See lib/debug-auth.ts.
  *
@@ -25,10 +30,32 @@ import { fetchESPNCoreSpreadOdds } from '@/lib/espn'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
+// Minimum juice the live ranker accepts. Anything tighter than -250 is
+// filtered out regardless of model probability; mirror that here so the
+// post-fix simulation faithfully represents what the system would actually
+// surface today.
+const MAX_JUICE_MAGNITUDE = 250
+
 function calculateUnitsWon(odds: number, units: number, result: 'won' | 'lost' | 'push'): number {
   if (result === 'push') return 0
   if (result === 'lost') return -units
   return odds > 0 ? units * (odds / 100) : units * (100 / Math.abs(odds))
+}
+
+function payoutRatio(odds: number): number {
+  return odds > 0 ? odds / 100 : 100 / Math.abs(odds)
+}
+
+/**
+ * Kelly fraction from american odds and true probability [0, 1].
+ * Returns 0 when the bet is -EV so callers don't accidentally size into it.
+ */
+function kellyFraction(odds: number, probability: number): number {
+  const b = payoutRatio(odds)
+  const p = probability
+  const q = 1 - p
+  const f = (b * p - q) / b
+  return f > 0 ? f : 0
 }
 
 /**
@@ -54,10 +81,102 @@ interface RetrospectivePickRow {
   status: TrackedRecommendation['status']
   storedOdds: number
   realJuice: number
+  probability: number // Model probability at pick time, 0-100
   storedUnitsWon: number
   realUnitsWon: number
   unitsDelta: number
+  kellyFracReal: number // 0..1; 0 means post-fix system would skip
+  halfKellyFracReal: number
+  wouldSurfacePostFix: boolean // true if new ranker would still take this pick
   oddsSource: 'current' | 'open' | 'close'
+}
+
+interface BankrollSim {
+  startingBankroll: number
+  finalBankroll: number
+  peakBankroll: number
+  troughBankroll: number
+  maxDrawdownPct: number // relative to running peak, 0..1
+  totalReturnPct: number // (final / start) - 1
+  picksPlaced: number
+  picksSkippedZeroKelly: number
+  wins: number
+  losses: number
+  pushes: number
+  endingBankrollAfterEachPick: number[] // so we can chart it if we want later
+}
+
+/**
+ * Simulate $100 → half-Kelly compounding across a chronologically-sorted
+ * list of picks. `kellyFrac` is the FULL kelly per pick; we halve it here
+ * and cap the stake at `maxFraction` of the current bankroll to protect
+ * against pathological sizing calls.
+ */
+function simulateBankroll(
+  rows: RetrospectivePickRow[],
+  opts: { starting: number; fractionOfKelly: number; maxFraction: number }
+): BankrollSim {
+  const { starting, fractionOfKelly, maxFraction } = opts
+  const sorted = [...rows].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  )
+
+  let bankroll = starting
+  let peak = starting
+  let trough = starting
+  let peakRunning = starting
+  let maxDD = 0
+  let picksPlaced = 0
+  let skipped = 0
+  let wins = 0
+  let losses = 0
+  let pushes = 0
+  const trajectory: number[] = []
+
+  for (const r of sorted) {
+    const kf = r.kellyFracReal * fractionOfKelly
+    if (kf <= 0 || !r.wouldSurfacePostFix) {
+      skipped++
+      trajectory.push(bankroll)
+      continue
+    }
+    const stakeFrac = Math.min(kf, maxFraction)
+    const stake = bankroll * stakeFrac
+    const b = payoutRatio(r.realJuice)
+
+    if (r.status === 'won') {
+      bankroll += stake * b
+      wins++
+    } else if (r.status === 'lost') {
+      bankroll -= stake
+      losses++
+    } else if (r.status === 'push') {
+      pushes++
+    }
+    picksPlaced++
+
+    if (bankroll > peak) peak = bankroll
+    if (bankroll < trough) trough = bankroll
+    if (bankroll > peakRunning) peakRunning = bankroll
+    const ddHere = peakRunning > 0 ? 1 - bankroll / peakRunning : 0
+    if (ddHere > maxDD) maxDD = ddHere
+    trajectory.push(bankroll)
+  }
+
+  return {
+    startingBankroll: starting,
+    finalBankroll: Number(bankroll.toFixed(2)),
+    peakBankroll: Number(peak.toFixed(2)),
+    troughBankroll: Number(trough.toFixed(2)),
+    maxDrawdownPct: Number((maxDD * 100).toFixed(2)),
+    totalReturnPct: Number(((bankroll / starting - 1) * 100).toFixed(2)),
+    picksPlaced,
+    picksSkippedZeroKelly: skipped,
+    wins,
+    losses,
+    pushes,
+    endingBankrollAfterEachPick: trajectory.map((v) => Number(v.toFixed(2))),
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -72,7 +191,6 @@ export async function GET(request: NextRequest) {
   const all = await getRecentRecommendations(0)
 
   // Scope: MLB spreads, settled (won/lost/push), within the lookback window.
-  // Push outcomes don't move units but we report them for completeness.
   const mlbSpreads = all.filter(
     (r) =>
       r.sport === 'baseball_mlb' &&
@@ -84,9 +202,11 @@ export async function GET(request: NextRequest) {
   const rows: RetrospectivePickRow[] = []
   const skipped: Array<{ id: string; reason: string; gameName: string }> = []
 
-  // Fetch ESPN juice sequentially to stay polite (one request per unique game).
   // Cache by gameId so duplicate picks on the same game don't double-request.
-  const juiceCache = new Map<string, { home: number; away: number; source: 'current' | 'open' | 'close' } | null>()
+  const juiceCache = new Map<
+    string,
+    { home: number; away: number; source: 'current' | 'open' | 'close' } | null
+  >()
   for (const reco of mlbSpreads) {
     if (typeof reco.line !== 'number') {
       skipped.push({ id: reco.id, reason: 'missing line', gameName: reco.gameName })
@@ -95,8 +215,6 @@ export async function GET(request: NextRequest) {
 
     let odds = juiceCache.get(reco.gameId)
     if (odds === undefined) {
-      // Retrospective: prefer close price (most representative of what was
-      // actually bookable at game start) with current/open as fallbacks.
       odds = await fetchESPNCoreSpreadOdds('baseball', 'mlb', reco.gameId, { preferClose: true })
       juiceCache.set(reco.gameId, odds)
     }
@@ -110,6 +228,12 @@ export async function GET(request: NextRequest) {
     const storedUnitsWon = calculateUnitsWon(reco.odds, 1, status)
     const realUnitsWon = calculateUnitsWon(realJuice, 1, status)
 
+    // Model probability is stored as 0-100 on TrackedRecommendation.
+    const p = Math.max(0, Math.min(1, reco.probability / 100))
+    const kf = kellyFraction(realJuice, p)
+    const juiceOK = Math.abs(realJuice) <= MAX_JUICE_MAGNITUDE
+    const wouldSurface = kf > 0 && juiceOK
+
     rows.push({
       id: reco.id,
       createdAt: reco.createdAt,
@@ -120,9 +244,13 @@ export async function GET(request: NextRequest) {
       status: reco.status,
       storedOdds: reco.odds,
       realJuice,
+      probability: reco.probability,
       storedUnitsWon,
       realUnitsWon,
       unitsDelta: realUnitsWon - storedUnitsWon,
+      kellyFracReal: Number(kf.toFixed(4)),
+      halfKellyFracReal: Number((kf / 2).toFixed(4)),
+      wouldSurfacePostFix: wouldSurface,
       oddsSource: odds.source,
     })
   }
@@ -137,33 +265,43 @@ export async function GET(request: NextRequest) {
   const storedROI = decided.length > 0 ? (storedUnits / decided.length) * 100 : 0
   const realROI = decided.length > 0 ? (realUnits / decided.length) * 100 : 0
 
-  // Break out by which side of the runline was picked — that's where the bias
-  // actually lives. +1.5 dog covers were the most overstated; -1.5 favorite
-  // covers were the most understated.
-  const splitBySide = (filter: (r: RetrospectivePickRow) => boolean) => {
-    const subset = rows.filter(filter)
-    const subDecided = subset.filter((r) => r.status !== 'push')
-    const subWins = subset.filter((r) => r.status === 'won').length
-    const subLosses = subset.filter((r) => r.status === 'lost').length
-    const subStored = subset.reduce((s, r) => s + r.storedUnitsWon, 0)
-    const subReal = subset.reduce((s, r) => s + r.realUnitsWon, 0)
-    return {
-      picks: subset.length,
-      wins: subWins,
-      losses: subLosses,
-      winRate: subDecided.length > 0 ? (subWins / subDecided.length) * 100 : 0,
-      storedUnits: subStored,
-      realUnits: subReal,
-      storedROI: subDecided.length > 0 ? (subStored / subDecided.length) * 100 : 0,
-      realROI: subDecided.length > 0 ? (subReal / subDecided.length) * 100 : 0,
-      deltaUnits: subReal - subStored,
-    }
-  }
+  // Post-fix subset: picks the updated ranker would actually surface.
+  const postFix = rows.filter((r) => r.wouldSurfacePostFix)
+  const postFixDecided = postFix.filter((r) => r.status !== 'push')
+  const postFixWins = postFix.filter((r) => r.status === 'won').length
+  const postFixLosses = postFix.filter((r) => r.status === 'lost').length
+  const postFixUnits = postFix.reduce((s, r) => s + r.realUnitsWon, 0)
+  const postFixROI = postFixDecided.length > 0 ? (postFixUnits / postFixDecided.length) * 100 : 0
+
+  // Bankroll simulations. We run three tracks for clarity:
+  //   (a) "all shipped" half-Kelly — what you'd have made half-Kelling
+  //       every pick the old system shipped, priced at real juice.
+  //       This is the pessimistic case (includes picks the new filter
+  //       would reject as -EV at real juice, which will drag bankroll).
+  //   (b) "post-fix" half-Kelly — restricted to picks the new system
+  //       would still surface. This is the realistic forward-looking case.
+  //   (c) "post-fix" quarter-Kelly — same subset, more conservative
+  //       sizing. Included so the reader can see how much variance
+  //       drops when you halve the fraction.
+  const simShippedHalf = simulateBankroll(
+    rows.map((r) => ({ ...r, wouldSurfacePostFix: r.kellyFracReal > 0 })),
+    { starting: 100, fractionOfKelly: 0.5, maxFraction: 0.25 }
+  )
+  const simPostFixHalf = simulateBankroll(rows, {
+    starting: 100,
+    fractionOfKelly: 0.5,
+    maxFraction: 0.25,
+  })
+  const simPostFixQuarter = simulateBankroll(rows, {
+    starting: 100,
+    fractionOfKelly: 0.25,
+    maxFraction: 0.25,
+  })
 
   return NextResponse.json({
     success: true,
     windowDays: days,
-    summary: {
+    flatOneUnit: {
       totalPicksInWindow: mlbSpreads.length,
       priced: rows.length,
       skipped: skipped.length,
@@ -177,11 +315,22 @@ export async function GET(request: NextRequest) {
       realROI: Number(realROI.toFixed(2)),
       deltaUnits: Number((realUnits - storedUnits).toFixed(3)),
     },
-    bySide: {
-      favoriteRunline: splitBySide((r) => (r.line ?? 0) < 0),
-      underdogRunline: splitBySide((r) => (r.line ?? 0) > 0),
+    postFixSubset: {
+      criteria: `kelly > 0 at real juice AND |juice| <= ${MAX_JUICE_MAGNITUDE}`,
+      picks: postFix.length,
+      skippedByFilter: rows.length - postFix.length,
+      wins: postFixWins,
+      losses: postFixLosses,
+      winRate: postFixDecided.length > 0 ? (postFixWins / postFixDecided.length) * 100 : 0,
+      realUnits: Number(postFixUnits.toFixed(3)),
+      realROI: Number(postFixROI.toFixed(2)),
     },
-    skipped,
+    bankrollSim: {
+      allShipped_halfKelly: simShippedHalf,
+      postFix_halfKelly: simPostFixHalf,
+      postFix_quarterKelly: simPostFixQuarter,
+    },
     picks: rows,
+    skipped,
   })
 }
