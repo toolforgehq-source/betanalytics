@@ -60,10 +60,11 @@ interface ESPNCoreSpreadOdds {
  * Returns null if the endpoint is unavailable or the data is malformed so the
  * caller can decide whether to fall back or skip the market entirely.
  */
-async function fetchESPNCoreSpreadOdds(
+export async function fetchESPNCoreSpreadOdds(
   sport: string,
   league: string,
-  eventId: string
+  eventId: string,
+  options: { preferClose?: boolean } = {}
 ): Promise<ESPNCoreSpreadOdds | null> {
   try {
     const url = `${ESPN_CORE_API_BASE}/${sport}/leagues/${league}/events/${eventId}/competitions/${eventId}/odds`
@@ -90,8 +91,12 @@ async function fetchESPNCoreSpreadOdds(
       (preferred as { provider?: { name?: string } }).provider?.name || 'DraftKings'
     if (!home || !away) return null
 
-    // Prefer the most representative price: current → open → close.
-    const sources: Array<'current' | 'open' | 'close'> = ['current', 'open', 'close']
+    // For live enrichment prefer current → open → close (what's bookable now).
+    // For retrospective analysis on completed games prefer close → current → open
+    // (the price at game start is the fairest reference).
+    const sources: Array<'current' | 'open' | 'close'> = options.preferClose
+      ? ['close', 'current', 'open']
+      : ['current', 'open', 'close']
     for (const source of sources) {
       const h = parseAmericanOddsString(home[source]?.spread?.american)
       const a = parseAmericanOddsString(away[source]?.spread?.american)
