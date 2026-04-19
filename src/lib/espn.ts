@@ -14,6 +14,102 @@
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
 const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2/sports'
+// ESPN's "core" API exposes richer odds data than pickcenter — including open/current/close
+// prices and (critically for MLB) the spread juice. See fetchESPNCoreSpreadOdds below.
+const ESPN_CORE_API_BASE = 'https://sports.core.api.espn.com/v2/sports'
+
+/**
+ * Parse an ESPN "american" odds string (e.g. "+123", "-156", "EVEN").
+ *
+ * ESPN sometimes uses the same "american" key for juice AND for the point line
+ * (e.g. pointSpread.american = "-1.5"). We only want juice here, so we reject
+ * values with a decimal point and any magnitude < 100.
+ */
+function parseAmericanOddsString(value: unknown): number | null {
+  if (value === null || value === undefined) return null
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && Math.abs(value) >= 100 ? value : null
+  }
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const upper = trimmed.toUpperCase()
+  if (upper === 'EVEN' || upper === 'EV' || upper === 'PK' || upper === 'PICK') return 100
+  if (trimmed.includes('.')) return null
+  const parsed = Number(trimmed)
+  if (!Number.isFinite(parsed) || Math.abs(parsed) < 100) return null
+  return parsed
+}
+
+interface ESPNCoreSpreadOdds {
+  home: number
+  away: number
+  source: 'current' | 'open' | 'close'
+  provider: string
+}
+
+/**
+ * Fetch spread juice from ESPN's core odds endpoint.
+ *
+ * Pickcenter (site.api) omits spreadOdds for MLB — only moneyline, overOdds,
+ * underOdds, and the raw spread value come back. The core endpoint returns
+ * full open/current/close prices for each side of the spread, which is how we
+ * recover the real MLB runline juice (typically +120/+180 on the -1.5 side and
+ * -150/-200 on the +1.5 side) instead of silently pretending it's -110/-110.
+ *
+ * Returns null if the endpoint is unavailable or the data is malformed so the
+ * caller can decide whether to fall back or skip the market entirely.
+ */
+async function fetchESPNCoreSpreadOdds(
+  sport: string,
+  league: string,
+  eventId: string
+): Promise<ESPNCoreSpreadOdds | null> {
+  try {
+    const url = `${ESPN_CORE_API_BASE}/${sport}/leagues/${league}/events/${eventId}/competitions/${eventId}/odds`
+    const response = await fetch(url, {
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+    if (!response.ok) return null
+
+    const data = await response.json()
+    const items: Array<Record<string, unknown>> = Array.isArray(data?.items) ? data.items : []
+    if (items.length === 0) return null
+
+    // Prefer DraftKings to stay aligned with pickcenter's default provider.
+    const preferred =
+      items.find((it) => {
+        const provider = (it as { provider?: { name?: string } }).provider
+        return provider?.name === 'DraftKings'
+      }) || items[0]
+
+    const home = (preferred as { homeTeamOdds?: Record<string, { spread?: { american?: unknown } }> }).homeTeamOdds
+    const away = (preferred as { awayTeamOdds?: Record<string, { spread?: { american?: unknown } }> }).awayTeamOdds
+    const providerName =
+      (preferred as { provider?: { name?: string } }).provider?.name || 'DraftKings'
+    if (!home || !away) return null
+
+    // Prefer the most representative price: current → open → close.
+    const sources: Array<'current' | 'open' | 'close'> = ['current', 'open', 'close']
+    for (const source of sources) {
+      const h = parseAmericanOddsString(home[source]?.spread?.american)
+      const a = parseAmericanOddsString(away[source]?.spread?.american)
+      if (h !== null && a !== null) {
+        return { home: h, away: a, source, provider: providerName }
+      }
+    }
+    return null
+  } catch (error) {
+    console.error(`[ESPN] Failed to fetch core spread odds for ${eventId}:`, error)
+    return null
+  }
+}
+
+export const __testing__ = {
+  parseAmericanOddsString,
+  fetchESPNCoreSpreadOdds,
+}
 
 // Cache key for ESPN odds
 const ESPN_ODDS_CACHE_KEY = 'espn_odds_cache'
@@ -243,7 +339,25 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
     // Get game status from header
     const gameState = header?.competitions?.[0]?.status?.type?.state || 'pre'
     const statusDetail = header?.competitions?.[0]?.status?.type?.shortDetail || ''
-    
+
+    const spread = pickcenter.spread ?? null
+    let spreadOdds: { home: number; away: number } | null =
+      pickcenter.homeTeamOdds?.spreadOdds != null && pickcenter.awayTeamOdds?.spreadOdds != null
+        ? { home: pickcenter.homeTeamOdds.spreadOdds, away: pickcenter.awayTeamOdds.spreadOdds }
+        : null
+
+    // Enrich missing spread juice from ESPN's core odds endpoint.
+    // This is the fix for MLB runlines: pickcenter returns the spread point
+    // (-1.5) but no juice, so without this every MLB spread silently got
+    // priced at -110/-110 downstream, inflating edge/Kelly scores for +1.5
+    // underdog picks and under-ranking -1.5 favorite picks.
+    if (spread !== null && !spreadOdds) {
+      const coreOdds = await fetchESPNCoreSpreadOdds(sport, league, eventId)
+      if (coreOdds) {
+        spreadOdds = { home: coreOdds.home, away: coreOdds.away }
+      }
+    }
+
     return {
       gameId: eventId,
       sport,
@@ -252,11 +366,8 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
       awayTeam: awayTeam.team?.displayName || awayTeam.team?.name || 'Unknown',
       commenceTime: header?.competitions?.[0]?.date || new Date().toISOString(),
       provider: pickcenter.provider?.name || 'DraftKings',
-      spread: pickcenter.spread ?? null,
-      spreadOdds: (pickcenter.homeTeamOdds?.spreadOdds != null && pickcenter.awayTeamOdds?.spreadOdds != null) ? {
-        home: pickcenter.homeTeamOdds.spreadOdds,
-        away: pickcenter.awayTeamOdds.spreadOdds
-      } : null,
+      spread,
+      spreadOdds,
       overUnder: (pickcenter.overUnder != null && pickcenter.overUnder > 0) ? pickcenter.overUnder : null,
       overUnderOdds: (pickcenter.overOdds != null && pickcenter.underOdds != null) ? {
         over: pickcenter.overOdds,

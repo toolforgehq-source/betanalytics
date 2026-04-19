@@ -139,25 +139,31 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds, espnGameData?: ESPNGameData):
   // 
   // We use the spread value directly without re-signing based on homeFavorite,
   // as the spread value itself already encodes who is favorite.
+  // SPREAD JUICE: We require real spreadOdds before emitting a spread market.
+  // Previously this defaulted to -110/-110 when ESPN didn't return juice
+  // (primarily MLB runlines), which silently corrupted every downstream Kelly
+  // and edge calculation. ESPN odds enrichment now pulls the real juice from
+  // the core odds endpoint; if it's still unavailable we skip the market
+  // rather than fabricate a line.
   const homeSpread = espnOdds.spread ?? 0  // Already signed from home team's perspective
-  const spreads = espnOdds.spread !== null ? bookmakers.map(bookmaker => ({
+  const spreads = (espnOdds.spread !== null && espnOdds.spreadOdds) ? bookmakers.map(bookmaker => ({
     bookmaker,
     market: 'spreads',
     outcomes: [
       // Home team gets the spread as-is (already signed correctly by ESPN)
-      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds?.home || -110, point: homeSpread },
+      { name: espnOdds.homeTeam, price: espnOdds.spreadOdds!.home, point: homeSpread },
       // Away team gets the opposite spread
-      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds?.away || -110, point: -homeSpread }
+      { name: espnOdds.awayTeam, price: espnOdds.spreadOdds!.away, point: -homeSpread }
     ]
   })) : []
-  
+
   const overUnderValue = espnOdds.overUnder ?? 0
-  const totals = espnOdds.overUnder !== null ? bookmakers.map(bookmaker => ({
+  const totals = (espnOdds.overUnder !== null && espnOdds.overUnderOdds) ? bookmakers.map(bookmaker => ({
     bookmaker,
     market: 'totals',
     outcomes: [
-      { name: 'Over', price: espnOdds.overUnderOdds?.over || -110, point: overUnderValue },
-      { name: 'Under', price: espnOdds.overUnderOdds?.under || -110, point: overUnderValue }
+      { name: 'Over', price: espnOdds.overUnderOdds!.over, point: overUnderValue },
+      { name: 'Under', price: espnOdds.overUnderOdds!.under, point: overUnderValue }
     ]
   })) : []
   
