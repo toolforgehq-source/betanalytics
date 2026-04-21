@@ -232,6 +232,34 @@ const MIN_ROI = -4.5             // -4.5% minimum ROI (as percentage)
 // meaningful disagreement with the price we're getting.
 const MIN_EDGE_FOR_TOP_TIER = 3  // percentage points (model prob − implied prob from best price)
 
+// JUICE CAP FOR LOCK/STRONG TIERS
+// Picks priced at -170 or worse do not qualify for Lock or Strong tier, even
+// if they clear the edge gate. They remain available as Value plays.
+//
+// WHY THIS EXISTS: Real-juice retrospective on 66 MLB runlines (the only
+// market with a meaningful heavy-juice sample) showed edge gets eaten alive
+// above -169:
+//   • -100 to -149 (n=23): 16-7 (69.6% WR), +23.1% ROI, avg real edge +2.2pp
+//   • -150 to -169 (n=11):  8-3 (72.7% WR), +17.4% ROI, avg real edge −2.3pp
+//   • -170 to -189 (n=20): 12-8 (60.0% WR), −6.8% ROI,  avg real edge −4.1pp
+//   • -190 to -209 (n=10):  5-5 (50.0% WR), −24.7% ROI, avg real edge −5.7pp
+//   • -210 to -250 (n=2):   2-0 (noise)
+// Break-even win rates at these prices are brutal: -180 needs 64.3%, -200
+// needs 66.7%. Above -169 the aggregate record is 19-13 (59.4% WR, −12.5%
+// ROI across 30 picks) — well below break-even for the juice being paid.
+// The model's *real-juice* edge is consistently negative above -150, meaning
+// the apparent edge the gate sees is an artifact of the stored odds, not a
+// true market disagreement.
+//
+// Why a cap and not "require more edge": juice compounds asymmetrically.
+// Even a genuinely correct +5pp edge at -200 produces only +1.7% ROI, which
+// is swamped by model noise. A cap is the cleaner intervention — reversible
+// in one line if CLV tracking shows we're beating close on heavy juice.
+//
+// Plus-odds picks (+100 and above) are unaffected; this only excludes prices
+// more negative than MAX_JUICE_FOR_TOP_TIER.
+const MAX_JUICE_FOR_TOP_TIER = -169  // Picks at -170 or worse drop to Value tier
+
 // VALUE PLAY exception thresholds
 const VALUE_PLAY_MIN_ROI = 5.0   // +5% ROI required for VALUE PLAY
 const VALUE_PLAY_MIN_PROB = 0.48 // 48% minimum probability for VALUE PLAY
@@ -3286,6 +3314,7 @@ export async function computeBestBets(
   // definition for the rationale and backtest validation.
   const globalTopTierGameIds = new Set<string>()
   let edgeGatedCount = 0
+  let juiceCappedCount = 0
   for (const bet of allMergedBets) {
     const key = `${bet.gameId}:${bet.team}:${bet.betType}`
     
@@ -3304,6 +3333,16 @@ export async function computeBestBets(
       continue
     }
     
+    // Juice cap: picks priced at -170 or worse drop to value tier. See
+    // MAX_JUICE_FOR_TOP_TIER definition for rationale and backtest data.
+    // Plus-odds picks are unaffected; only applies to prices more negative
+    // than the cap.
+    if (bet.bestPrice < 0 && bet.bestPrice < MAX_JUICE_FOR_TOP_TIER) {
+      globalTierMap.set(key, 'value')
+      juiceCappedCount++
+      continue
+    }
+    
     if (globalLockCount < MAX_LOCKS) {
       globalTierMap.set(key, 'lock')
       globalLockCount++
@@ -3319,6 +3358,9 @@ export async function computeBestBets(
   
   if (edgeGatedCount > 0) {
     console.log(`[computeBestBets] Edge gate filtered ${edgeGatedCount} picks with edge < ${MIN_EDGE_FOR_TOP_TIER}pp from Lock/Strong eligibility`)
+  }
+  if (juiceCappedCount > 0) {
+    console.log(`[computeBestBets] Juice cap filtered ${juiceCappedCount} picks priced worse than ${MAX_JUICE_FOR_TOP_TIER} from Lock/Strong eligibility`)
   }
   
   // Step 4: Propagate global tiers back to both lists
