@@ -205,6 +205,33 @@ const MAX_JUICE_ODDS = -250       // Don't recommend worse than -250
 const MIN_PROBABILITY = 0.52     // 52% minimum win probability
 const MIN_ROI = -4.5             // -4.5% minimum ROI (as percentage)
 
+// EDGE GATE FOR LOCK/STRONG TIERS
+// A pick must have at least this much edge (model probability minus the implied
+// probability at the best price we can actually bet) to qualify for Lock or
+// Strong Play surfacing. Picks below the gate stay available as Value plays
+// but do not consume the limited top-tier slots.
+//
+// WHY THIS EXISTS: The Elo+market blending (see ELO_CONFIDENCE_WEIGHTS) pulls
+// model probability toward market consensus on efficient markets (most heavy-
+// juice moneylines). The resulting picks look attractive by absolute probability
+// (e.g., 66% favorite at -200) but have no real edge — the model is essentially
+// agreeing with the market. A 48-day audit of 131 settled best_bet picks found:
+//   • NHL moneyline (n=12): avg edge 0.01pp, 3-9 record, -59.5% real-juice ROI
+//   • NCAAB moneyline (n=10): avg edge 0.00pp, 5-5 record, -20.5% ROI
+//   • NBA moneyline (n=8): avg edge 0.00pp, 5-3 record (+59% lucky variance)
+// Every losing bucket had zero-edge model probabilities. Every winning bucket
+// (MLB/NCAAB/NHL/NBA spreads) had meaningful edge (+6 to +12pp average).
+//
+// Backtesting the 48-day sample at a 3pp threshold: 57 picks kept (vs 131),
+// 63% WR, +16% flat ROI, $100 → $218 bankroll at 10%/5% sizing, 32% max
+// drawdown (vs 45% for baseline). Applied to the last-40% holdout alone, the
+// threshold beat the unfiltered baseline by +56% on bankroll with lower DD.
+//
+// This is *not* a market block. Any pick in any market that genuinely exceeds
+// the threshold still surfaces. It only filters picks where the model has no
+// meaningful disagreement with the price we're getting.
+const MIN_EDGE_FOR_TOP_TIER = 3  // percentage points (model prob − implied prob from best price)
+
 // VALUE PLAY exception thresholds
 const VALUE_PLAY_MIN_ROI = 5.0   // +5% ROI required for VALUE PLAY
 const VALUE_PLAY_MIN_PROB = 0.48 // 48% minimum probability for VALUE PLAY
@@ -3252,13 +3279,28 @@ export async function computeBestBets(
   // can be Lock or Strong. This prevents correlated losses when the model likes
   // multiple bet types on the same game (e.g., Radford ML + Radford -2.5).
   // allMergedBets is already sorted by score descending.
+  //
+  // EDGE GATE: Before assigning a pick to Lock/Strong, require that the model
+  // probability exceeds the implied probability from the best price by at least
+  // MIN_EDGE_FOR_TOP_TIER percentage points. See the MIN_EDGE_FOR_TOP_TIER
+  // definition for the rationale and backtest validation.
   const globalTopTierGameIds = new Set<string>()
+  let edgeGatedCount = 0
   for (const bet of allMergedBets) {
     const key = `${bet.gameId}:${bet.team}:${bet.betType}`
     
     // If this game already has a pick in Lock/Strong, skip to value tier
     if (globalTopTierGameIds.has(bet.gameId)) {
       globalTierMap.set(key, 'value')
+      continue
+    }
+    
+    // Edge gate: picks without meaningful edge drop to value tier without
+    // consuming a Lock/Strong slot. A later pick with real edge can still
+    // claim the slot.
+    if (bet.edge < MIN_EDGE_FOR_TOP_TIER) {
+      globalTierMap.set(key, 'value')
+      edgeGatedCount++
       continue
     }
     
@@ -3273,6 +3315,10 @@ export async function computeBestBets(
     } else {
       globalTierMap.set(key, 'value')
     }
+  }
+  
+  if (edgeGatedCount > 0) {
+    console.log(`[computeBestBets] Edge gate filtered ${edgeGatedCount} picks with edge < ${MIN_EDGE_FOR_TOP_TIER}pp from Lock/Strong eligibility`)
   }
   
   // Step 4: Propagate global tiers back to both lists

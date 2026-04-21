@@ -30,9 +30,27 @@ export interface TrackedRecommendation {
   line?: number                 // For spreads/totals/props
   
   // Odds and probability
-  odds: number                  // American odds (e.g., -150, +120)
+  odds: number                  // American odds (e.g., -150, +120) — updated to latest while pick is active
   probability: number           // Our stated probability (0-100)
   score: number                 // Our confidence score
+  
+  // Closing Line Value (CLV) tracking
+  //
+  // initialOdds: the odds recorded at first surfacing of this pick. Captured
+  //   exactly once on insert and never overwritten, so we can measure how much
+  //   the line moved from pick-time to game-time.
+  // closingOdds: odds snapshot at lock-in (game start). Captured exactly once
+  //   when lockedIn flips true.
+  // clv: percentage-point delta = impliedProb(closingOdds) − impliedProb(initialOdds).
+  //   Positive = we beat the closing line (line moved toward our pick after we
+  //   took it, which is the strongest individual-pick predictor of long-run edge).
+  //   Negative = line moved against us.
+  //
+  // These three fields allow measuring model edge within 7-14 days of picks
+  // being made, without waiting for 60+ days of outcome settlement.
+  initialOdds?: number
+  closingOdds?: number
+  clv?: number
   
   // Source of recommendation
   source: 'best_bet' | 'parlay' | 'sport_bet' | 'best_prop'
@@ -122,6 +140,56 @@ export interface TrackingStats {
 const TRACKING_KEY_PREFIX = 'reco:v1:'
 const TRACKING_INDEX_KEY = 'reco:v1:index:createdAt'
 const TRACKING_PENDING_KEY = 'reco:v1:index:pending'
+
+// ============================================
+// CLV (Closing Line Value) HELPERS
+// ============================================
+
+/**
+ * Convert American odds to implied probability (with-vig), expressed as a
+ * percentage (0-100).
+ */
+function americanOddsToImpliedProb(odds: number): number {
+  if (odds > 0) return (100 / (odds + 100)) * 100
+  return (Math.abs(odds) / (Math.abs(odds) + 100)) * 100
+}
+
+/**
+ * Compute Closing Line Value in percentage points.
+ *
+ * CLV = impliedProb(closingOdds) − impliedProb(initialOdds)
+ *
+ * Positive CLV means the line moved toward our pick after we took it — i.e.,
+ * we got a better price than the close. Over large samples, average positive
+ * CLV is the single most reliable predictor of long-run betting edge; it
+ * detaches model evaluation from outcome variance.
+ */
+function computeClv(initialOdds: number | undefined, closingOdds: number | undefined): number | undefined {
+  if (initialOdds === undefined || initialOdds === null) return undefined
+  if (closingOdds === undefined || closingOdds === null) return undefined
+  const initialImplied = americanOddsToImpliedProb(initialOdds)
+  const closingImplied = americanOddsToImpliedProb(closingOdds)
+  return closingImplied - initialImplied
+}
+
+/**
+ * Build the update patch that flips a recommendation to lockedIn=true and
+ * captures its closing-line value.
+ *
+ * Call this in place of `{ lockedIn: true }` whenever a pending pick is being
+ * locked in because its game has started. It captures `odds` (the most recent
+ * upserted price) as `closingOdds`, since trackRecommendation stops updating
+ * odds once the game starts. CLV is then the pp-delta between the first-seen
+ * initialOdds and that closing snapshot.
+ */
+function buildLockInUpdate(existing: TrackedRecommendation): Partial<TrackedRecommendation> {
+  const patch: Partial<TrackedRecommendation> = { lockedIn: true }
+  const closingOdds = existing.odds
+  patch.closingOdds = closingOdds
+  const clv = computeClv(existing.initialOdds, closingOdds)
+  if (clv !== undefined) patch.clv = clv
+  return patch
+}
 
 // ============================================
 // DATABASE HELPERS
@@ -286,6 +354,11 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
         // Model Picks page. Previously it was intentionally excluded, but that caused
         // picks to appear on Model Picks as lock/strong while the stored record still
         // had a stale tier (e.g. value), so they never showed on the Performance page.
+        //
+        // initialOdds is intentionally NOT in the update set — it must be captured
+        // exactly once (on first insert) so CLV can be measured against the first-
+        // seen price. Backfill it here for records created before CLV tracking
+        // existed, so historical picks start producing CLV once they settle.
         const updates: Partial<TrackedRecommendation> = {
           selection: reco.selection,
           line: reco.line,
@@ -293,6 +366,9 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
           probability: reco.probability,
           score: reco.score,
           confidenceTier: reco.confidenceTier,
+        }
+        if (existing.initialOdds === undefined || existing.initialOdds === null) {
+          updates.initialOdds = existing.odds ?? reco.odds
         }
         if (existing.status === 'void') {
           updates.status = 'pending'
@@ -313,7 +389,11 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
     ...reco,
     id,
     createdAt: now.toISOString(),
-    status: 'pending'
+    status: 'pending',
+    // Capture the first price we saw. This is the "opening line" for CLV purposes
+    // and is never overwritten — even as subsequent cron runs upsert `odds` to the
+    // latest market price, `initialOdds` stays pinned to the price at first surface.
+    initialOdds: reco.odds,
   }
   
   try {
@@ -659,7 +739,7 @@ export async function lockInAndCleanupRecommendations(
     // Process lock candidates
     for (const reco of lockCandidates) {
       if (locksFilled < lockSlotsAvailable) {
-        await updateRecommendation(reco.id, { lockedIn: true })
+        await updateRecommendation(reco.id, buildLockInUpdate(reco))
         result.lockedIn++
         locksFilled++
         console.log(`[Tracking] Locked in LOCK ${reco.id} (${lockedLocks + locksFilled}/${MAX_DAILY_LOCKS}) — game started`)
@@ -678,7 +758,7 @@ export async function lockInAndCleanupRecommendations(
     // Process strong candidates
     for (const reco of strongCandidates) {
       if (strongsFilled < strongSlotsAvailable) {
-        await updateRecommendation(reco.id, { lockedIn: true })
+        await updateRecommendation(reco.id, buildLockInUpdate(reco))
         result.lockedIn++
         strongsFilled++
         console.log(`[Tracking] Locked in STRONG ${reco.id} (${lockedStrongs + strongsFilled}/${MAX_DAILY_STRONG}) — game started`)
@@ -696,7 +776,7 @@ export async function lockInAndCleanupRecommendations(
     
     // Lock in non-best_bet recommendations (props, parlays) without cap
     for (const reco of otherLockIns) {
-      await updateRecommendation(reco.id, { lockedIn: true })
+      await updateRecommendation(reco.id, buildLockInUpdate(reco))
       result.lockedIn++
       console.log(`[Tracking] Locked in ${reco.source} recommendation ${reco.id} — game started`)
     }
