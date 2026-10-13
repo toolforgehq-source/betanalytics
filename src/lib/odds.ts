@@ -1,5 +1,5 @@
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
-import { fetchAllESPNOdds } from '@/lib/espn'
+import { fetchAllESPNOdds, type ESPNOddsData } from '@/lib/espn'
 import { convertESPNFeedToOdds } from '@/lib/free-espn-odds'
 
 /**
@@ -633,6 +633,30 @@ export async function getCurrentOdds(): Promise<OddsData> {
       freeOddsCache.games.length && hasUpcomingGames(freeOddsCache.games)) {
     return freeOddsCache
   }
+  // Reuse the ESPN odds that the authenticated hourly prediction cron already
+  // fetched and persisted. Otherwise each public dashboard view performs
+  // dozens of redundant ESPN calls and can intermittently return zero games.
+  let savedESPN: OddsData | null = null
+  try {
+    if (isDbConfigured()) {
+      const raw = await kvGet('espn_odds_cache')
+      if (raw) {
+        const feed = JSON.parse(raw) as ESPNOddsData
+        const converted = convertESPNFeedToOdds(feed)
+        const age = Date.now() - Date.parse(feed.lastUpdated)
+        if (converted.games.length && Number.isFinite(age) && age >= 0 && age < 2 * 3600000) {
+          savedESPN = { ...converted, source: 'ESPN', isStale: age >= 20 * 60000 }
+          if (age < 20 * 60000) {
+            freeOddsCache = savedESPN
+            freeOddsExpiresAt = Date.now() + 3 * 60000
+            return savedESPN
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('[getCurrentOdds] ESPN shared cache unavailable:', error)
+  }
   try {
     const feed = await fetchAllESPNOdds(FREE_ESPN_SPORTS)
     const freeData = convertESPNFeedToOdds(feed)
@@ -645,6 +669,10 @@ export async function getCurrentOdds(): Promise<OddsData> {
   } catch (error) {
     console.error('[getCurrentOdds] Free ESPN feed failed:', error)
   }
+
+  // If the fresh ESPN request failed, display recent cached quotes marked stale.
+  // Never represent 20+-minute-old sportsbook prices as newly executable.
+  if (savedESPN) return savedESPN
 
   // Cached prices do not cost money. Reject empty/old records and disclose
   // the fallback provenance. Never call the paid API automatically.
