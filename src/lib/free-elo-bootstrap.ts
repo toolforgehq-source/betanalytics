@@ -78,29 +78,45 @@ export function parseCompletedESPNEvents(events: unknown[], league: BootstrapLea
 }
 
 /** Requests are spread across months and capped; failed responses are errors, not zero matches. */
+/**
+ * Bounded parallel fetches (4 per league) so free ESPN doesn't time out while
+ * retrieving ~50 months in series. All league batches must pass validation
+ * before any Elo state is written by bootstrapEmptyElo.
+ */
 export async function collectFreeEloHistory(
   today: Date, fetcher: typeof fetch = fetch
 ): Promise<{ games: GameResult[], byLeague: Record<BootstrapLeague,number> }> {
   const combined: GameResult[] = []
   const counts = {} as Record<BootstrapLeague,number>
+  const maxConcurrent = 4
   for (const league of BOOTSTRAP_LEAGUES) {
+    const months = monthKeysForLeague(league,today)
     const seen = new Set<string>()
     let leagueCount = 0
-    for (const month of monthKeysForLeague(league,today)) {
-      const url = 'https://site.api.espn.com/apis/site/v2/sports/' +
-        ESPN[league] + '/scoreboard?dates=' + month + '&limit=1000'
-      const response = await fetcher(url,{headers:{Accept:'application/json'},cache:'no-store',
-        signal:AbortSignal.timeout(12000)})
-      if (!response.ok) throw new Error('ESPN history HTTP ' + response.status + ' for '+league+'/'+month)
-      const data = await response.json() as {events?: unknown[]}
-      if (!Array.isArray(data.events)) throw new Error('Invalid ESPN history for ' + league + '/' + month)
-      if (data.events.length >= 1000) throw new Error('Possibly truncated ESPN results for ' + league + '/' + month)
-      for (const game of parseCompletedESPNEvents(data.events, league)) {
-        if (seen.has(game.gameId)) continue
-        seen.add(game.gameId)
-        if (new Date(game.date).getTime() > today.getTime()) continue
-        combined.push(game)
-        leagueCount++
+    for (let offset=0;offset<months.length;offset+=maxConcurrent) {
+      const batch=months.slice(offset,offset+maxConcurrent)
+      const responses=await Promise.all(batch.map(async month => {
+        const url='https://site.api.espn.com/apis/site/v2/sports/' +
+          ESPN[league] + '/scoreboard?dates=' + month + '&limit=1000'
+        const response=await fetcher(url,{
+          headers:{Accept:'application/json'},
+          cache:'no-store',
+          signal:AbortSignal.timeout(20000)
+        })
+        if (!response.ok) throw new Error('ESPN history HTTP '+response.status+' for '+league+'/'+month)
+        const data=await response.json() as {events?:unknown[]}
+        if (!Array.isArray(data.events)) throw new Error('Invalid ESPN history for '+league+'/'+month)
+        if(data.events.length >= 1000) throw new Error('Possibly truncated ESPN history '+league+'/'+month)
+        return {month,events:data.events}
+      }))
+      for(const {events} of responses) {
+        for(const game of parseCompletedESPNEvents(events,league)) {
+          if(seen.has(game.gameId))continue
+          seen.add(game.gameId)
+          if(Date.parse(game.date)>today.getTime())continue
+          combined.push(game)
+          leagueCount++
+        }
       }
     }
     if (leagueCount < MIN_RESULTS[league]) {
@@ -108,7 +124,7 @@ export async function collectFreeEloHistory(
     }
     counts[league]=leagueCount
   }
-  combined.sort((a,b)=> Date.parse(a.date)-Date.parse(b.date) || a.gameId.localeCompare(b.gameId))
+  combined.sort((a,b)=>Date.parse(a.date)-Date.parse(b.date)||a.gameId.localeCompare(b.gameId))
   return {games:combined,byLeague:counts}
 }
 
