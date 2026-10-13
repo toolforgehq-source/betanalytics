@@ -53,6 +53,12 @@ describe('Free ESPN odds adapter', () => {
     }), NOW)!.moneylines[0].outcomes).toHaveLength(3)
   })
 
+  it('rejects ESPN preseason exhibition odds even when moneylines are quoted', () => {
+    expect(espnOddsToGame(make({ seasonType: 1 }), NOW)).toBeNull()
+    expect(espnOddsToGame(make({ seasonType: 2 }), NOW)).not.toBeNull()
+    expect(espnOddsToGame(make({ seasonType: 3 }), NOW)).not.toBeNull()
+  })
+
   it('marks an empty feed stale, even if upstream did not return an error', () => {
     const r = convertESPNFeedToOdds({
       games: [], lastUpdated: new Date(NOW).toISOString(), error: null

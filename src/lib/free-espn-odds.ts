@@ -30,7 +30,7 @@ export function espnOddsToGame(espn: ESPNOdds, at: number = Date.now()): Game | 
   const sport = SPORT_KEYS[espn.league]
   const start = Date.parse(espn.commenceTime)
   if (!sport || !Number.isFinite(start) || start <= at ||
-      espn.gameStatus !== 'pre' || !espn.gameId ||
+      espn.gameStatus !== 'pre' || espn.seasonType === 1 || !espn.gameId ||
       !espn.homeTeam?.trim() || !espn.awayTeam?.trim() ||
       !espn.provider?.trim()) return null
 
