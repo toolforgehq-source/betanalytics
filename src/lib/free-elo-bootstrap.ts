@@ -128,8 +128,13 @@ export async function bootstrapEmptyElo(
     return {seeded:false,teams:Object.keys(current.ratings||{}).length}
   }
   const result: EloRatings = await updateEloRatings(games)
-  if (!result.gamesProcessed || !Object.keys(result.ratings||{}).length) {
-    throw new Error('Failed to persist initialized Elo ratings')
+  // updateEloRatings can return calculated ratings even if its internal DB save
+  // fails; require a second independent read before declaring success.
+  const persisted = await getEloRatings()
+  if (!result.gamesProcessed || !persisted ||
+      persisted.gamesProcessed < games.length ||
+      Object.keys(persisted.ratings||{}).length === 0) {
+    throw new Error('Elo bootstrap completed calculations but persistent storage was not verified')
   }
-  return {seeded:true,leagueCounts:byLeague,teams:Object.keys(result.ratings).length}
+  return {seeded:true,leagueCounts:byLeague,teams:Object.keys(persisted.ratings).length}
 }
