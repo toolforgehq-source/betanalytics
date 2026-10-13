@@ -257,6 +257,8 @@ export interface ESPNOdds {
   moneyline: { home: number; away: number; draw?: number } | null  // draw for soccer 3-way markets
   homeFavorite: boolean
   gameStatus: 'pre' | 'in' | 'post'
+  /** ESPN competition season type: 1 preseason, 2 regular, 3 postseason. */
+  seasonType?: number
   statusDetail: string
 }
 
@@ -387,6 +389,7 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
       } : null,
       homeFavorite: pickcenter.homeTeamOdds?.favorite ?? false,
       gameStatus: gameState as 'pre' | 'in' | 'post',
+      seasonType: header?.season?.type,
       statusDetail: statusDetail
     }
   } catch (error) {
