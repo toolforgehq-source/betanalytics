@@ -34,7 +34,7 @@
     },
     {
       "path": "/api/cron/bootstrap-elo",
-      "schedule": "0 */4 * * *"
+      "schedule": "28 * * * *"
     },
     {
       "path": "/api/cron/update-elo",
