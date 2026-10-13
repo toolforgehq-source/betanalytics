@@ -23,6 +23,7 @@ import { getRecentRecommendations, calculateTrackingStats, enforceDailyCaps } fr
 import { getCachedBestBet, type RankedBet } from '@/lib/bet-ranking'
 import { dedupeAndEnforceCaps, dedupeToMap, FREEZE_WINDOW_MS, MAX_LOCKS, MAX_STRONG, type PickLike } from '@/lib/enforce-picks'
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
+import { getBlockedPregameGameIds } from '@/lib/pregame-eligibility'
 
 
 // ============================================
@@ -237,9 +238,28 @@ export async function GET() {
       getCachedBestBet()
     ])
 
-    // Defensive: ensure arrays are actually arrays
-    const allPicks = Array.isArray(rawAllPicks) ? rawAllPicks : []
-    const recentRecos = Array.isArray(rawRecentRecos) ? rawRecentRecos : []
+    // Never surface cached game recommendations from an unverified season.
+    // This also covers older cached predictions computed before the ESPN
+    // preseason guard was deployed. The underlying audit history is retained.
+    const candidates = [
+      ...(Array.isArray(rawAllPicks) ? rawAllPicks.map(p=>({
+        gameId:p.gameId,sport:p.sport,commenceTime:p.gameTime
+      })) : []),
+      ...(Array.isArray(rawRecentRecos) ? rawRecentRecos.map(r=>({
+        gameId:r.gameId,sport:r.sport,commenceTime:r.commenceTime
+      })) : []),
+      ...(cachedBestBet?.allRankedBets || []).map(p=>({
+        gameId:p.gameId,sport:p.sport,commenceTime:p.commenceTime
+      })),
+      ...(cachedBestBet?.allEloBets || []).map(p=>({
+        gameId:p.gameId,sport:p.sport,commenceTime:p.commenceTime
+      }))
+    ]
+    const ineligible = await getBlockedPregameGameIds(candidates)
+    const allPicks = (Array.isArray(rawAllPicks) ? rawAllPicks : [])
+      .filter(p => !ineligible.has(String(p.gameId)))
+    const recentRecos = (Array.isArray(rawRecentRecos) ? rawRecentRecos : [])
+      .filter(r => !ineligible.has(String(r.gameId)))
 
     // Calculate stats from the already-fetched recommendations (avoids a second Redis round-trip)
     const stats = await calculateTrackingStats(recentRecos)
@@ -309,8 +329,10 @@ export async function GET() {
     // and relaxed (analyzeGameForSportQuery) analysis paths.
     let livePicks: PickLike[] = []
     if (cachedBestBet) {
-      const strictPicks = cachedBestBet.allRankedBets || []
-      const eloPicks = cachedBestBet.allEloBets || []
+      const strictPicks = (cachedBestBet.allRankedBets || [])
+        .filter(p => !ineligible.has(String(p.gameId)))
+      const eloPicks = (cachedBestBet.allEloBets || [])
+        .filter(p => !ineligible.has(String(p.gameId)))
       
       // Start with strict picks, then add elo picks not already covered
       const seenKeys = new Set(strictPicks.map((b: RankedBet) => `${b.gameId}:${b.team}:${b.betType}`))
@@ -350,7 +372,8 @@ export async function GET() {
     // on, it never changes — even if the model finds a higher-scoring pick.
     // Unfrozen picks (games > 1hr away) continue to update on every request.
     const dateKey = todayStr.replace(/\//g, '-')
-    const pinnedPicks = await loadPinnedPicks(dateKey)
+    const pinnedPicks = (await loadPinnedPicks(dateKey))
+      .filter(p => !ineligible.has(String(p.gameId)))
     console.log(`[API /picks] Loaded ${pinnedPicks.length} pinned picks from Redis`)
 
     const { picks: finalPicks, updatedPins, changed } = resolveHybridPicks(rawPicks, pinnedPicks, enforcedPicks)
