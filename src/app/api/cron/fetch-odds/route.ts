@@ -286,6 +286,11 @@ export async function GET(request: Request) {
     // without odds data. Without merging, picks would disappear when games start.
     // Strategy: keep old picks unless a new pick exists for the same game+team+betType.
     // ============================================
+    // Ineligible ESPN preseason odds must never survive from an older cached
+    // recommendation, even if today's refreshed predictions correctly skip them.
+    const preseasonGameIds = new Set(espnOddsData.games
+      .filter(g => g.seasonType === 1)
+      .map(g => g.gameId))
     const existingCache = await getCachedBestBet()
     if (existingCache) {
       // Helper to merge a pick list: keep old picks unless a new pick replaces them.
@@ -295,7 +300,8 @@ export async function GET(request: Request) {
       // Fix: Only drop old picks if a new pick exists for the exact same game+team+betType.
       const mergePicks = (newPicks: RankedBet[], oldPicks: RankedBet[]): RankedBet[] => {
         const newKeys = new Set(newPicks.map(p => `${p.gameId}:${p.team}:${p.betType}`))
-        const uniqueOld = oldPicks.filter(p => !newKeys.has(`${p.gameId}:${p.team}:${p.betType}`))
+        const uniqueOld = oldPicks.filter(p => !preseasonGameIds.has(p.gameId) &&
+        !newKeys.has(`${p.gameId}:${p.team}:${p.betType}`))
         return [...newPicks, ...uniqueOld]
       }
       
