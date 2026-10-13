@@ -16,6 +16,7 @@
 import { NextResponse } from 'next/server'
 import { fetchAllESPNOdds, type ESPNOdds } from '@/lib/espn'
 import { storeOddsSnapshot } from '@/lib/line-movement'
+import { archiveResearchOdds } from '@/lib/research-odds-archive'
 import { type Game } from '@/lib/odds'
 
 export const runtime = 'nodejs'
@@ -120,9 +121,19 @@ export async function GET(request: Request) {
     // Convert ESPN odds to Game format for snapshot storage
     const gamesForSnapshot = espnOddsData.games.map(convertESPNOddsToGame)
     
-    // Store snapshot for line movement tracking
+    // Store snapshot for line movement tracking (existing short-lived behavior).
     await storeOddsSnapshot(gamesForSnapshot)
-    
+
+    // Experimental permanent archive is separate from the 48-hour line movement cache.
+    // Require the existing cron secret to be configured before enabling DB writes.
+    // The research price timestamp is capture time, NOT bookmaker quote time.
+    const archive = cronSecret ? await archiveResearchOdds(
+      espnOddsData.games, new Date().toISOString()
+    ).catch(error => {
+      console.error('[Cron] Research price archive failed:', error)
+      return { candidates: 0, stored: false }
+    }) : { candidates: 0, stored: false }
+
     const duration = Date.now() - startTime
     
     console.log(`[Cron] Snapshot complete: ${gamesForSnapshot.length} games in ${duration}ms (ESPN FREE)`)
@@ -131,6 +142,8 @@ export async function GET(request: Request) {
       success: true,
       source: 'ESPN (FREE)',
       gamesSnapshotted: gamesForSnapshot.length,
+      researchArchiveCandidates: archive.candidates,
+      researchArchiveStored: archive.stored,
       sportsActive: new Set(espnOddsData.games.map(g => g.league)).size,
       duration: `${duration}ms`,
       timestamp: new Date().toISOString(),
