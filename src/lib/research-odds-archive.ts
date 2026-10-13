@@ -37,6 +37,7 @@ export function makeResearchOddsRows(games: ESPNOdds[], capturedAt: string): Res
   const rows: ResearchOddsRow[] = [], seen = new Set<string>()
   for (const game of games) {
     // Three-way markets with draws are deliberately unsupported.
+    if (game.gameStatus !== 'pre') continue
     if (!SUPPORTED.has(game.league) || !game.moneyline || !game.gameId ||
         !game.homeTeam || !game.awayTeam || !game.provider?.trim()) continue
     if (!validAmerican(game.moneyline.home) || !validAmerican(game.moneyline.away)) continue
