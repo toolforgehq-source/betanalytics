@@ -228,6 +228,7 @@ export async function GET() {
       totalGames: oddsData.games.length,
       lastUpdated: oddsData.lastUpdated,
       isStale: oddsData.isStale,
+      source: oddsData.source || 'unknown',
     })
   } catch (error) {
     console.error('[API /odds] Error:', error)
