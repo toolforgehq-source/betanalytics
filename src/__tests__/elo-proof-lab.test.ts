@@ -116,7 +116,9 @@ describe('Elo proof lab: baseline and holdout isolation', () => {
     }
     const cutoff = game(9).commenceTime
     const report = evaluateHistoricalElo(all, 'NBA', cutoff, { minTrainPredictions: 1 })
-    expect(report.excludedAcrossCutoff).toBe(1)
+    // g7 finished after the cutoff; g9's own price is also before the cutoff but
+    // its outcome was still unknown. Neither can supply a training label.
+    expect(report.excludedAcrossCutoff).toBe(2)
   })
 
   it('never announces a validated betting edge from a tiny sample', () => {
