@@ -40,7 +40,7 @@ export async function getBlockedPregameGameIds(
   fetcher: typeof fetch = fetch
 ): Promise<Set<string>> {
   const blocked=new Set<string>()
-  const unique=new Map(candidates.filter(x=>x.gameId&&x.sport).map(x=>[String(x.gameId),x]))
+  const unique=new Map<string,GameToVerify>(candidates.filter(x=>x.gameId&&x.sport).map(x=>[String(x.gameId),x] as const))
   if(!unique.size)return blocked
   const cached=new Map<string,number>()
   try {
@@ -93,7 +93,9 @@ export async function getBlockedPregameGameIds(
         events?:Array<{id?:string,season?:{type?:number}}>
       }
       if(!Array.isArray(data.events))return
-      const seasonById=new Map(data.events.map(x=>[x.id,x.season?.type]))
+      const seasonById=new Map<string,number | undefined>(data.events
+        .filter((x):x is {id:string,season?:{type?:number}}=>typeof x.id==='string')
+        .map(x=>[x.id,x.season?.type] as const))
       for(const game of games){
         const season=seasonById.get(game.gameId)
         if(season===2||season===3) {
