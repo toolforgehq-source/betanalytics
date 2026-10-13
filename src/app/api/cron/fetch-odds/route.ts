@@ -197,7 +197,9 @@ export async function GET(request: Request) {
     console.log(`[fetch-odds] Cached ESPN odds to Redis`)
     
     // Convert ESPN odds to Game format and enrich with injury data
-    const allGames: EnrichedGame[] = espnOddsData.games.map(espnOdds => {
+    const allGames: EnrichedGame[] = espnOddsData.games
+      .filter(odds => odds.seasonType !== 1)
+      .map(espnOdds => {
       const game = convertESPNOddsToGame(espnOdds)
       
       // Find matching ESPN game data (which has injuries)
