@@ -574,6 +574,8 @@ export interface GameResult {
   homeScore: number
   awayScore: number
   date: string
+  /** True when ESPN reports the matchup is played at a neutral venue. */
+  isNeutralSite?: boolean
 }
 
 // ============================================
@@ -661,10 +663,12 @@ export function updateRatingsAfterGame(
   homeScore: number,
   awayScore: number,
   league: string,
-  recencyMultiplier: number = 1.0
+  recencyMultiplier: number = 1.0,
+  isNeutralSite: boolean = false
 ): { newHomeRating: number; newAwayRating: number } {
   const baseKFactor = K_FACTORS[league] || 24
-  const homeAdvantage = HOME_ADVANTAGE[league] || 70
+  // A nominal home team receives no home-field advantage at a neutral venue.
+  const homeAdvantage = isNeutralSite ? 0 : (HOME_ADVANTAGE[league] ?? 70)
   
   // Calculate expected scores (with home advantage for prediction)
   // Use sport-specific scaling for consistent probability calculation
@@ -912,7 +916,8 @@ async function fetchCompletedGames(
         awayTeamName: awayTeam.team?.displayName || awayTeam.team?.name || 'Unknown',
         homeScore,
         awayScore,
-        date: event.date
+        date: event.date,
+        isNeutralSite: competition.neutralSite === true || competition.venue?.neutralSite === true,
       })
     }
     
@@ -1120,7 +1125,8 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
       game.homeScore,
       game.awayScore,
       game.league,
-      recencyMultiplier * earlySeasonMultiplier
+      recencyMultiplier * earlySeasonMultiplier,
+      game.isNeutralSite === true
     )
     
     homeTeam.rating = newHomeRating
@@ -1340,7 +1346,8 @@ export async function multiPassRecalibrate(
           game.homeScore,
           game.awayScore,
           game.league,
-          recencyMultiplier * earlySeasonMultiplier
+          recencyMultiplier * earlySeasonMultiplier,
+          game.isNeutralSite === true
         )
         
         homeTeam.rating = newHomeRating
@@ -1903,10 +1910,10 @@ export function calculateInjuryAdjustment(
     
     // NHL: Check for starting goalie
     if (league === 'NHL') {
-      const isGoalie = positionLower.includes('g') || 
-                       positionLower.includes('goalie') ||
-                       positionLower.includes('goaltender') ||
-                       (isStartingGoalie && isStartingGoalie(injury.player, teamName))
+      // "Right Wing" contains "g" but should not trigger the goalie penalty.
+      const isGoalie = positionLower.trim() === 'g' ||
+                       /\b(goalie|goaltender|goalkeeper)\b/.test(positionLower) ||
+                       Boolean(isStartingGoalie?.(injury.player, teamName))
       
       if (isGoalie) {
         const goaliePenalty = Math.round(-30 * statusMultiplier)

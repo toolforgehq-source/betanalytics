@@ -15,7 +15,7 @@
  * - Elo/Analysis: Returns mock analysis results
  * - Auth/DB/Subscription: Returns valid session/subscription
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // ============================================================
 // Hoisted values — available inside vi.mock factories
@@ -266,6 +266,17 @@ vi.mock('@/lib/player-prop-analysis', () => ({
 // ============================================================
 
 import { POST } from '@/app/api/chat/route'
+
+// Keep tests independent of real Anthropic credentials: the SDK is mocked above.
+// The application correctly checks for a configured key before invoking the mock.
+beforeEach(() => {
+  vi.stubEnv('ANTHROPIC_API_KEY', 'fake-test-key-for-mocked-sdk')
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
 
 // ============================================================
 // Helper to create mock Request objects

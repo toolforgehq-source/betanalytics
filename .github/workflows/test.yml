@@ -2,7 +2,7 @@ name: Tests
  
 on:
   pull_request:
-    branches: ['*']
+    branches: ['**']
   push:
     branches: ['devin/1767740595-betanalytics-app', 'main', 'master']
  

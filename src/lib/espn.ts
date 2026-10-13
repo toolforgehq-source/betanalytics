@@ -369,8 +369,10 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
       league: leagueName,
       homeTeam: homeTeam.team?.displayName || homeTeam.team?.name || 'Unknown',
       awayTeam: awayTeam.team?.displayName || awayTeam.team?.name || 'Unknown',
-      commenceTime: header?.competitions?.[0]?.date || new Date().toISOString(),
-      provider: pickcenter.provider?.name || 'DraftKings',
+      // Missing kickoff is explicitly invalid rather than a fabricated current time.
+      commenceTime: header?.competitions?.[0]?.date || '',
+      // Don't attribute missing sportsbook metadata to DraftKings.
+      provider: pickcenter.provider?.name || '',
       spread,
       spreadOdds,
       overUnder: (pickcenter.overUnder != null && pickcenter.overUnder > 0) ? pickcenter.overUnder : null,
@@ -458,8 +460,11 @@ async function fetchESPNGameIds(sport: string, league: string, date?: Date): Pro
  * This is FREE and can be called frequently
  * Fetches both today and tomorrow's games to support "best bet tomorrow" queries
  */
-export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
-  console.log('🔄 Fetching ESPN odds for all sports (FREE)...')
+export async function fetchAllESPNOdds(leagueNames?: readonly string[]): Promise<ESPNOddsData> {
+  const targetSports = leagueNames
+    ? ESPN_ODDS_SPORTS.filter(s => leagueNames.includes(s.name))
+    : ESPN_ODDS_SPORTS
+  console.log('🔄 Fetching ESPN odds for ' + targetSports.length + ' sports (FREE)...')
   
   const allOdds: ESPNOdds[] = []
   const seenGameIds = new Set<string>() // Avoid duplicates
@@ -472,7 +477,7 @@ export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
   console.log(`📅 Fetching games for today (${getESPNDateString(today)}) and tomorrow (${getESPNDateString(tomorrow)})`)
   
   // Fetch game IDs for all sports for both today and tomorrow
-  const gameIdPromises = ESPN_ODDS_SPORTS.flatMap(({ sport, league, name }) => [
+  const gameIdPromises = targetSports.flatMap(({ sport, league, name }) => [
     // Fetch today's games
     fetchESPNGameIds(sport, league, today).then(gameIds => ({ sport, league, name, gameIds, day: 'today' })),
     // Fetch tomorrow's games
@@ -545,8 +550,11 @@ export async function fetchAllESPNOdds(): Promise<ESPNOddsData> {
   }
   
   // Update cache
-  espnOddsCache = oddsData
-  espnOddsCacheExpiry = new Date(Date.now() + ESPN_ODDS_CACHE_EXPIRY_MS)
+  // Partial league fetches must NOT overwrite the full-sport cache used by chat.
+  if (!leagueNames) {
+    espnOddsCache = oddsData
+    espnOddsCacheExpiry = new Date(Date.now() + ESPN_ODDS_CACHE_EXPIRY_MS)
+  }
   
   console.log(`✅ ESPN odds fetched: ${allOdds.length} total games with odds`)
   
