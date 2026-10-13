@@ -369,8 +369,10 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
       league: leagueName,
       homeTeam: homeTeam.team?.displayName || homeTeam.team?.name || 'Unknown',
       awayTeam: awayTeam.team?.displayName || awayTeam.team?.name || 'Unknown',
-      commenceTime: header?.competitions?.[0]?.date || new Date().toISOString(),
-      provider: pickcenter.provider?.name || 'DraftKings',
+      // Missing kickoff is explicitly invalid rather than a fabricated current time.
+      commenceTime: header?.competitions?.[0]?.date || '',
+      // Don't attribute missing sportsbook metadata to DraftKings.
+      provider: pickcenter.provider?.name || '',
       spread,
       spreadOdds,
       overUnder: (pickcenter.overUnder != null && pickcenter.overUnder > 0) ? pickcenter.overUnder : null,
