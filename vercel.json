@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/fetch-odds",
-      "schedule": "0 * * * *"
+      "schedule": "36 * * * *"
     },
     {
       "path": "/api/cron/fetch-odds",
@@ -34,7 +34,7 @@
     },
     {
       "path": "/api/cron/bootstrap-elo",
-      "schedule": "28 * * * *"
+      "schedule": "0 */4 * * *"
     },
     {
       "path": "/api/cron/update-elo",
