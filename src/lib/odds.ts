@@ -1,4 +1,6 @@
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
+import { fetchAllESPNOdds } from '@/lib/espn'
+import { convertESPNFeedToOdds } from '@/lib/free-espn-odds'
 
 /**
  * The Odds API Integration with Postgres Caching
@@ -151,6 +153,7 @@ export interface OddsData {
   games: Game[]
   lastUpdated: string
   isStale: boolean
+  source?: 'ESPN' | 'ODDS_API_CACHE' | 'ODDS_API'
   coverage?: CoverageReport
 }
 
@@ -619,56 +622,51 @@ function hasUpcomingGames(games: Game[]): boolean {
   return upcomingGames.length > 0
 }
 
+// ESPN is the preferred free feed. The Odds API MUST NOT be called unless
+// explicitly opted-in by the operator: it can consume paid credits.
+const FREE_ESPN_SPORTS = ['NBA', 'NFL', 'NHL', 'NCAAB', 'NCAAF', 'MLB'] as const
+let freeOddsCache: OddsData | null = null
+let freeOddsExpiresAt = 0
+
 export async function getCurrentOdds(): Promise<OddsData> {
-  // First, try to get cached data
-  console.log('[getCurrentOdds] Checking cache...')
-  const cached = await getCachedOdds()
-  console.log(`[getCurrentOdds] Cache result: ${cached ? (cached.games?.length || 0) + ' games' : 'null'}`)
-  
-  if (cached && cached.games) {
-    // Check if cache is still fresh (less than 2 hours old) - reduced from 4 hours
-    const lastUpdated = new Date(cached.lastUpdated)
-    const now = new Date()
-    const hoursSinceUpdate = (now.getTime() - lastUpdated.getTime()) / (1000 * 60 * 60)
-    console.log(`[getCurrentOdds] Cache age: ${hoursSinceUpdate.toFixed(2)} hours`)
-    
-    // SMART STALENESS CHECK:
-    // 1. Time-based: Cache must be less than 2 hours old
-    // 2. Content-based: Cache must have upcoming games (not yesterday's completed games)
-    const isFreshByTime = hoursSinceUpdate < 2
-    const hasUpcoming = hasUpcomingGames(cached.games)
-    
-    console.log(`[getCurrentOdds] Fresh by time: ${isFreshByTime}, Has upcoming games: ${hasUpcoming}`)
-    
-    if (isFreshByTime && hasUpcoming) {
-      // Cache is fresh AND has upcoming games, return it
-      console.log(`[getCurrentOdds] Returning cached data with ${cached.games.length} games`)
-      return cached
-    }
-    
-    // Cache is stale (by time OR by content), try to fetch new data
-    console.log(`[getCurrentOdds] Cache stale - fetching fresh data...`)
-    try {
-      return await fetchAllOdds()
-    } catch (error) {
-      console.error('Error fetching fresh odds, returning stale cache:', error)
-      // Return stale cache with flag
-      return { ...cached, isStale: true }
-    }
+  if (freeOddsCache && Date.now() < freeOddsExpiresAt &&
+      freeOddsCache.games.length && hasUpcomingGames(freeOddsCache.games)) {
+    return freeOddsCache
   }
-  
-  // No cache, must fetch fresh
   try {
-    return await fetchAllOdds()
+    const feed = await fetchAllESPNOdds(FREE_ESPN_SPORTS)
+    const freeData = convertESPNFeedToOdds(feed)
+    if (freeData.games.length) {
+      freeOddsCache = { ...freeData, source: 'ESPN' }
+      freeOddsExpiresAt = Date.now() + 10 * 60 * 1000
+      return freeOddsCache
+    }
+    console.warn('[getCurrentOdds] ESPN returned no usable upcoming prices.')
   } catch (error) {
-    console.error('Error fetching odds with no cache:', error)
-    // Return empty data
-    return {
-      games: [],
-      lastUpdated: new Date().toISOString(),
-      isStale: true,
+    console.error('[getCurrentOdds] Free ESPN feed failed:', error)
+  }
+
+  // Cached prices do not cost money. Reject empty/old records and disclose
+  // the fallback provenance. Never call the paid API automatically.
+  const cached = await getCachedOdds()
+  if (cached?.games?.length && hasUpcomingGames(cached.games)) {
+    const ageMs = Date.now() - Date.parse(cached.lastUpdated)
+    if (Number.isFinite(ageMs) && ageMs >= 0 && ageMs < 2 * 60 * 60 * 1000) {
+      return { ...cached, source: 'ODDS_API_CACHE' }
     }
   }
+
+  // Explicitly opt into potential paid API use only after the owner approves.
+  if (process.env.USE_PAID_ODDS_FALLBACK === 'true' && process.env.ODDS_API_KEY) {
+    try {
+      const data = await fetchAllOdds(true)
+      if (data.games.length) return { ...data, source: 'ODDS_API' }
+    } catch (error) {
+      console.error('[getCurrentOdds] Opted-in paid odds fallback failed:', error)
+    }
+  }
+
+  return { games: [], lastUpdated: new Date().toISOString(), isStale: true, source: 'ESPN' }
 }
 
 /**
