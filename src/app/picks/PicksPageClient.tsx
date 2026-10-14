@@ -6,6 +6,7 @@ import Image from 'next/image'
 import { Trophy, Target, TrendingUp, Shield, Zap, Clock, ChevronRight, Lock, ArrowRight } from 'lucide-react'
 import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
+import { formatPlayoffContext, type PlayoffContext } from '@/lib/playoff-context'
 
 interface TieredPick {
   team: string
@@ -27,6 +28,8 @@ interface TieredPick {
   awayElo?: number
   eloConfidence?: string
   situationalNotes?: string[]
+  seasonType?: number
+  playoffContext?: PlayoffContext
   // Fields from tracked recommendations
   selection?: string
   odds?: number
@@ -146,6 +149,12 @@ function PickCard({ pick }: { pick: TieredPick }) {
           <div className="text-sm text-slate-400">
             {getSportEmoji(displaySport)} {displayGame}
           </div>
+          {pick.playoffContext && (
+            <div className="mt-2 rounded-md border border-violet-500/30 bg-violet-950/25 p-2 text-xs text-violet-200">
+              <span className="font-semibold">Playoff Intelligence: </span>
+              {formatPlayoffContext(pick.playoffContext, pick.homeTeam, pick.awayTeam)}
+            </div>
+          )}
         </div>
         <div className="text-right">
           <div className="text-2xl font-bold text-white">{displayOdds !== 0 ? formatOdds(displayOdds) : '--'}</div>
