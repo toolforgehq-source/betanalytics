@@ -40,6 +40,7 @@ import { type LineMovement } from './line-movement'
 import { normalizeTeamName as normalizeScheduleTeamName, type TeamScheduleData } from './team-schedule'
 import { getCalibratedProbability } from './calibration'
 import { isEligibleForTopPicks } from './enforce-picks'
+import { formatPlayoffContext, type PlayoffContext } from './playoff-context'
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
 export interface RankedBet {
@@ -49,6 +50,8 @@ export interface RankedBet {
   homeTeam: string
   awayTeam: string
   commenceTime: string
+  seasonType?: number
+  playoffContext?: PlayoffContext
   
   // The recommended bet
   team: string
@@ -2801,13 +2804,32 @@ export async function computeBestBets(
       console.log(`[computeBestBets] ${game.homeTeam} vs ${game.awayTeam}: Rest day data available`)
     }
     
+    // Attach ESPN's verified playoff round, series score and elimination state.
+    // No speculative "must win" probability bonus is applied (0.0pp).
+    const withPlayoffContext = (bet: RankedBet): RankedBet => {
+      const context = enrichedGame.playoffContext
+      if (enrichedGame.seasonType !== 3) return bet
+      const note = context
+        ? formatPlayoffContext(context, game.homeTeam, game.awayTeam)
+        : 'Postseason game — no verified series score available'
+      return {
+        ...bet,
+        seasonType: 3,
+        playoffContext: context,
+        situationalNotes: [...(bet.situationalNotes || []), note],
+        situationalBreakdown: bet.situationalBreakdown ? {
+          ...bet.situationalBreakdown,
+          motivation: { value: note, adjustment: bet.situationalBreakdown.motivation.adjustment },
+        } : undefined,
+      }
+    }
     const bets = await analyzeGame(game, injuries, gameWeather, gameLineMovement, homeLastGameDate, awayLastGameDate)
-    allRankedBets.push(...bets)
-    
+    allRankedBets.push(...bets.map(withPlayoffContext))
+
     // Collect ALL Elo bets (without strict filters) for sport-specific queries
     // This ensures "best NHL bet" works even if no NHL bets pass strict filters
     const eloBets = await analyzeGameForSportQuery(game, injuries, homeLastGameDate, awayLastGameDate)
-    allEloBets.push(...eloBets)
+    allEloBets.push(...eloBets.map(withPlayoffContext))
   }
   
   // ============================================
