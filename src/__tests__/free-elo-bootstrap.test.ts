@@ -26,7 +26,7 @@ function dataFetcher() {
   return vi.fn(async (input:unknown) => {
     const url=String(input), m=url.match(/dates=(\d{6})/)?.[1]
     if(!m) throw Error('Missing month')
-    const n=url.includes('/baseball/')?75:45
+    const n=url.includes('/baseball/')?75:url.includes('mens-college-basketball')?80:45
     return {ok:true,status:200,json:async()=>({
       events:Array.from({length:n},(_,i)=>event('id-'+m+'-'+i,m))
     })} as Response
@@ -66,6 +66,9 @@ describe('Safe free historical Elo initialization',()=>{
     const result=await collectFreeEloHistory(TODAY,f)
     expect(result.byLeague.NHL).toBeGreaterThanOrEqual(200)
     expect(result.byLeague.MLB).toBeGreaterThanOrEqual(500)
+    expect(result.byLeague.NCAAF).toBeGreaterThanOrEqual(200)
+    expect(result.byLeague.NCAAB).toBeGreaterThanOrEqual(800)
+    expect(f.mock.calls.some(args => String(args[0]).includes('groups=50'))).toBe(true)
     expect(f).toHaveBeenCalled()
     expect(result.games.length).toBe(Object.values(result.byLeague).reduce((a,b)=>a+b,0))
     expect(result.games.every((g,i,arr)=>i===0||Date.parse(g.date)>=Date.parse(arr[i-1].date))).toBe(true)
