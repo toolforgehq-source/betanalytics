@@ -1,4 +1,5 @@
 import { kvGet, kvSet, kvDel, isDbConfigured } from '@/lib/pg-kv'
+import { isCompetitiveEloMatch } from './elo-event-filter'
 
 /**
  * Elo Rating System for Sports Betting
@@ -912,6 +913,9 @@ async function fetchCompletedGames(
       )
       
       if (!homeTeam || !awayTeam) continue
+      if (!isCompetitiveEloMatch(leagueName,
+        homeTeam.team?.displayName || homeTeam.team?.name || '',
+        awayTeam.team?.displayName || awayTeam.team?.name || '')) continue
       
       const homeScore = parseInt(homeTeam.score || '0', 10)
       const awayScore = parseInt(awayTeam.score || '0', 10)
@@ -1068,8 +1072,9 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
   let newGamesProcessed = 0
   
   for (const game of sortedGames) {
-    // Skip if already processed
-    if (processedIds.has(game.gameId)) continue
+    // Skip already processed games and non-competitive exhibition teams.
+    if (processedIds.has(game.gameId) ||
+        !isCompetitiveEloMatch(game.league, game.homeTeamName, game.awayTeamName)) continue
     
     const homeKey = `${game.league}:${game.homeTeamId}`
     const awayKey = `${game.league}:${game.awayTeamId}`
