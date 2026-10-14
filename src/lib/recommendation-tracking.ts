@@ -300,18 +300,23 @@ export function enforceDailyCaps(recommendations: TrackedRecommendation[]): Trac
  * Generate a unique, deterministic ID for a recommendation
  * This prevents duplicate logging if cron runs multiple times
  */
-function generateRecommendationId(
+export function generateRecommendationId(
   betType: string,
   sport: string,
   gameId: string,
   _selection: string,
-  date: string
+  date: string,
+  modelVersion?: string
 ): string {
   // NOTE: selection is intentionally EXCLUDED from the key.
   // Previously, including selection meant line moves (e.g., +3.5 → +4.5) created
   // duplicate entries for the same game. Now one game + betType + day = one record.
   // The selection is still stored on the record and updated via upsert when odds change.
-  const key = `${betType}|${sport}|${gameId}|${date.slice(0, 10)}`
+  // Different model versions MUST NOT share an ID: otherwise Elo v3's
+  // initial price can be inherited from an earlier, unvalidated model.
+  // Leave legacy ID hashes unchanged for records that never had a version.
+  const modelKey = modelVersion ? `|model:${modelVersion}` : ''
+  const key = `${betType}|${sport}|${gameId}|${date.slice(0, 10)}${modelKey}`
   // Simple hash function
   let hash = 0
   for (let i = 0; i < key.length; i++) {
@@ -338,7 +343,8 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
     reco.sport,
     reco.gameId,
     reco.selection,
-    now.toISOString()
+    now.toISOString(),
+    reco.modelVersion
   )
   
   // Check if already exists — if so, UPSERT (update odds/line) unless locked in
