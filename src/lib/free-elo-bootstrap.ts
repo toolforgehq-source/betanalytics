@@ -73,6 +73,7 @@ export function parseCompletedESPNEvents(events: unknown[], league: BootstrapLea
       id?: string, date?: string, season?: {type?: number},
       status?: {type?: {completed?: boolean}},
       competitions?: Array<{ neutralSite?: boolean, venue?: {neutralSite?: boolean},
+        notes?: Array<{type?:string, headline?:string}>,
         competitors?: Array<{homeAway?: string,score?: string | number,id?: string,
           team?:{id?:string,displayName?:string,name?:string}}>}>
     }
@@ -94,11 +95,16 @@ export function parseCompletedESPNEvents(events: unknown[], league: BootstrapLea
     const awayName = a.team?.displayName || a.team?.name || ''
     if (!isCompetitiveEloMatch(league, homeName, awayName)) continue
     seen.add(event.id)
+    const headline = comp?.notes?.find(n => /\\bGame\\s*\\d+\\b/i.test(n.headline || ''))?.headline || ''
+    const playoffMatch = event.season?.type === 3 ? headline.match(/^(.*?)\\s*-\\s*Game\\s+(\\d+)\\b/i) : null
     parsed.push({
       gameId:event.id, league, homeTeamId:hId, awayTeamId:aId,
       homeTeamName:homeName, awayTeamName:awayName,
       homeScore:hs, awayScore:as, date:event.date,
-      isNeutralSite:comp?.neutralSite === true || comp?.venue?.neutralSite === true
+      isNeutralSite:comp?.neutralSite === true || comp?.venue?.neutralSite === true,
+      seasonType:event.season?.type,
+      playoffRound:playoffMatch?.[1]?.trim() || undefined,
+      playoffGameNumber:playoffMatch ? Number(playoffMatch[2]) : undefined
     })
   }
   return parsed
