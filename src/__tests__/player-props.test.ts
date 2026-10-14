@@ -40,6 +40,7 @@ function makeGameProps(overrides: Partial<GamePlayerProps> = {}): GamePlayerProp
     homeTeam: 'Los Angeles Lakers',
     awayTeam: 'Boston Celtics',
     commenceTime: new Date(Date.now() + 3600000).toISOString(),
+    playersWithProps: ['LeBron James'],
     props: [
       // Two books for LeBron points - consensus possible
       makeProp({ bookmaker: 'DraftKings', overOdds: -115, underOdds: -105 }),
@@ -84,6 +85,7 @@ describe('computeBestProp', () => {
       homeTeam: 'Lakers',
       awayTeam: 'Celtics',
       commenceTime: new Date().toISOString(),
+      playersWithProps: ['LeBron James'],
       props: [
         makeProp({ bookmaker: 'DraftKings' }),
         // Only one book for this player/market/line → no consensus
