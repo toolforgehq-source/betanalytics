@@ -33,6 +33,7 @@ export interface TrackedRecommendation {
   odds: number                  // American odds (e.g., -150, +120) — updated to latest while pick is active
   probability: number           // Our stated probability (0-100)
   score: number                 // Our confidence score
+  modelVersion?: string         // Enables honest forward tracking after methodology changes
   
   // Closing Line Value (CLV) tracking
   //
@@ -366,6 +367,7 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
           probability: reco.probability,
           score: reco.score,
           confidenceTier: reco.confidenceTier,
+          modelVersion: reco.modelVersion,
         }
         if (existing.initialOdds === undefined || existing.initialOdds === null) {
           updates.initialOdds = existing.odds ?? reco.odds
@@ -1026,6 +1028,7 @@ export async function trackBestBet(bet: RankedBet): Promise<string | null> {
     odds: bet.bestPrice,
     probability: bet.consensusProbability,
     score: bet.score,
+    modelVersion: 'elo-integrity-v2',
     source: 'best_bet',
     confidenceTier: bet.confidenceTier,
     homeElo: bet.homeElo,
