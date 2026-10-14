@@ -5,7 +5,7 @@ import {
 } from '@/lib/elo'
 import { calculateExpectedValue } from '@/lib/bet-ranking'
 import { modelSettlement, blendSpreadWithPush, isFreshPregameQuote,
-  validatedSituationalShift } from '@/lib/model-policy'
+  validatedSituationalShift, twoWaySideProbability } from '@/lib/model-policy'
 import { getSpreadSettlementProbabilities } from '@/lib/spread-settlement'
 import { isEligibleForTopPicks } from '@/lib/enforce-picks'
 
@@ -44,6 +44,12 @@ describe('Elo-first probabilities across ALL supported major sports',()=>{
   }
 })
 describe('Strict bookmaker settlement and Elo probability integrity',()=>{
+  it('opposing two-outcome teams never receive independent non-complementary win forecasts',()=>{
+    for(const home of [0.12,0.38,0.51,0.66,0.89]){
+      expect(twoWaySideProbability(home,true)+twoWaySideProbability(home,false)).toBeCloseTo(1,12)
+    }
+    expect(()=>twoWaySideProbability(1.2,true)).toThrow()
+  })
   it('MLB underdog +1.5 can lose by one run and still cover (no push)',()=>{
     const h=getSpreadSettlementProbabilities(0.25,2.5,-1.5,false)
     expect(h.push).toBe(0)
