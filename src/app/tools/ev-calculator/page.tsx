@@ -71,9 +71,9 @@ export default function EVCalculatorPage() {
               <Link href="/picks" className="text-sm text-slate-300 hover:text-white transition-colors">Model Picks</Link>
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">Methodology</Link>
               <Link href="/blog" className="text-sm text-slate-300 hover:text-white transition-colors">Blog</Link>
-              <Link href="/login" className="text-sm text-slate-300 hover:text-white transition-colors">Sign In</Link>
-              <Link href="/signup" className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25">
-                Start Free Trial
+              <Link href="/chat" className="text-sm text-slate-300 hover:text-white transition-colors">Free Assistant</Link>
+              <Link href="/picks" className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25">
+                View Free Picks
               </Link>
             </div>
             <MobileNav />
@@ -190,8 +190,8 @@ export default function EVCalculatorPage() {
           <div className="text-center">
             <h2 className="text-2xl font-bold mb-3">Let AI Calculate Your True Probabilities</h2>
             <p className="text-slate-400 mb-6">Our Elo model calculates true probabilities for every game. You provide the odds; we provide the edge.</p>
-            <Link href="/signup" className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25">
-              Start Free Trial <ArrowRight className="w-5 h-5" />
+            <Link href="/picks" className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25">
+              View Free Picks <ArrowRight className="w-5 h-5" />
             </Link>
             <p className="text-sm text-slate-500 mt-3">No credit card required</p>
           </div>
