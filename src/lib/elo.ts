@@ -586,6 +586,10 @@ export interface GameResult {
   date: string
   /** True when ESPN reports the matchup is played at a neutral venue. */
   isNeutralSite?: boolean
+  /** Game's own ESPN postseason header; never inferred from final series summary. */
+  seasonType?: number
+  playoffRound?: string
+  playoffGameNumber?: number
 }
 
 // ============================================
