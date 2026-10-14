@@ -4,9 +4,8 @@ import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
 import BetSlipClient from './BetSlipClient'
-import { requireAccess } from '@/lib/require-access'
 
-// Force dynamic rendering to prevent caching issues with auth
+// Always render public model data without a login or paid subscription.
 export const dynamic = "force-dynamic"
 
 export const metadata = {
@@ -24,7 +23,6 @@ export const metadata = {
 }
 
 export default async function BetSlipPage() {
-  await requireAccess()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white flex flex-col">
@@ -49,14 +47,14 @@ export default async function BetSlipPage() {
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Methodology
               </Link>
-              <Link href="/login" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Sign In
+              <Link href="/chat" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Free Assistant
               </Link>
               <Link
-                href="/signup"
+                href="/picks"
                 className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25"
               >
-                Start Free Trial
+                View Picks
               </Link>
             </div>
 
@@ -80,7 +78,7 @@ export default async function BetSlipPage() {
               </span>
             </h1>
             <p className="text-lg text-slate-300 max-w-2xl">
-              Build your perfect parlay with best available odds across every sportsbook. 
+              Build hypothetical parlays with available published sportsbook odds. 
               See combined odds, win probability, and potential payouts updated in real time.
             </p>
           </div>
@@ -91,16 +89,16 @@ export default async function BetSlipPage() {
           <div className="mt-12 bg-gradient-to-br from-blue-900/20 to-cyan-900/20 border border-blue-500/30 rounded-2xl p-8 text-center">
             <h2 className="text-2xl font-bold mb-3">Let AI Build Your Parlay</h2>
             <p className="text-slate-300 mb-6 max-w-lg mx-auto">
-              Our Elo model can build optimized parlays using data-driven edge analysis.
+              Our Elo model can help evaluate bets, but no win is guaranteed.
               Just ask &quot;build me a parlay&quot; in our AI chat.
             </p>
             <Link
-              href="/signup"
+              href="/picks"
               className="inline-block px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25"
             >
-              Start 3-Day Free Trial
+              View Free Model Picks
             </Link>
-            <p className="text-sm text-slate-400 mt-3">No credit card required. $39/month after trial.</p>
+            <p className="text-sm text-slate-400 mt-3">No account, trial or subscription required.</p>
           </div>
         </div>
       </main>

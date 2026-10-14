@@ -70,20 +70,6 @@ export default function MobileNav() {
           >
             Methodology
           </Link>
-          <Link 
-            href="/login" 
-            className="block w-full px-4 py-3 bg-slate-800/50 hover:bg-slate-700/50 rounded-lg transition-colors text-sm text-slate-300 hover:text-white"
-            onClick={() => setMobileMenuOpen(false)}
-          >
-            Sign In
-          </Link>
-          <Link 
-            href="/signup" 
-            className="block w-full px-4 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg transition-colors text-sm font-semibold text-white text-center"
-            onClick={() => setMobileMenuOpen(false)}
-          >
-            Start Free Trial
-          </Link>
         </div>
       )}
     </>

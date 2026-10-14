@@ -16,7 +16,7 @@ export default function Footer() {
           <Link href="/betslip" className="hover:text-slate-300 transition-colors">Parlay Builder</Link>
           <Link href="/alerts" className="hover:text-slate-300 transition-colors">Alerts</Link>
           <Link href="/methodology" className="hover:text-slate-300 transition-colors">Methodology</Link>
-          <Link href="/pricing" className="hover:text-slate-300 transition-colors">Pricing</Link>
+          <Link href="/chat" className="hover:text-slate-300 transition-colors">Free Model Assistant</Link>
           <Link href="/blog" className="hover:text-slate-300 transition-colors">Blog</Link>
           <Link href="/terms" className="hover:text-slate-300 transition-colors">Terms of Service</Link>
           <Link href="/privacy" className="hover:text-slate-300 transition-colors">Privacy Policy</Link>

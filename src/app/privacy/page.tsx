@@ -18,14 +18,14 @@ export default function PrivacyPage() {
                     <Link href="/methodology" className="text-slate-300 hover:text-white transition-colors">
                       Methodology
                     </Link>
-                    <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
-                      Sign In
+                    <Link href="/chat" className="text-slate-300 hover:text-white transition-colors">
+                      Free Assistant
                     </Link>
                     <Link 
-                      href="/signup" 
+                      href="/picks" 
                       className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
                     >
-                      Start Free Trial
+                      View Free Picks
                     </Link>
                   </div>
 

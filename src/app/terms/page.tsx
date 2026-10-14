@@ -18,14 +18,14 @@ export default function TermsPage() {
                     <Link href="/methodology" className="text-slate-300 hover:text-white transition-colors">
                       Methodology
                     </Link>
-                    <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
-                      Sign In
+                    <Link href="/chat" className="text-slate-300 hover:text-white transition-colors">
+                      Free Assistant
                     </Link>
                     <Link 
-                      href="/signup" 
+                      href="/picks" 
                       className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
                     >
-                      Start Free Trial
+                      View Free Picks
                     </Link>
                   </div>
 
@@ -96,7 +96,7 @@ export default function TermsPage() {
             <section>
               <h2 className="text-2xl font-semibold mb-4">7. Subscription and Billing</h2>
               <p className="text-slate-300">
-                The Service is offered on a subscription basis at $39 per month. Subscriptions automatically renew unless canceled. You may cancel at any time through your account settings or by contacting support.
+                Public model picks, historical performance, and public analysis tools are free to access without signing in or starting a subscription. Previously purchased subscriptions, if any, are not automatically canceled by the removal of the paywall. Existing subscribers can manage or cancel billing through their account settings or by contacting support.
               </p>
             </section>
 

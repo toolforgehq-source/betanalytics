@@ -4,7 +4,7 @@ import Logo from '@/components/Logo'
 import Footer from '@/components/Footer'
 import MobileNav from '@/components/MobileNav'
 import AlertsClient from './AlertsClient'
-import { requireAccess } from '@/lib/require-access'
+import { auth } from '@/auth'
 
 // Force dynamic rendering to prevent caching issues with auth
 export const dynamic = "force-dynamic"
@@ -24,7 +24,9 @@ export const metadata = {
 }
 
 export default async function AlertsPage() {
-  await requireAccess()
+  // Browsing alerts never requires a login. Saved email preferences remain
+  // account-bound until a confirmed, abuse-resistant email opt-in exists.
+  const session = await auth().catch(() => null)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-slate-900 text-white flex flex-col">
@@ -49,14 +51,14 @@ export default async function AlertsPage() {
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Methodology
               </Link>
-              <Link href="/login" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Sign In
+              <Link href="/chat" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Free Assistant
               </Link>
               <Link
-                href="/signup"
+                href="/picks"
                 className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25"
               >
-                Start Free Trial
+                View Free Picks
               </Link>
             </div>
 
@@ -85,7 +87,22 @@ export default async function AlertsPage() {
             </p>
           </div>
 
-          <AlertsClient />
+          {session?.user ? (
+            <AlertsClient />
+          ) : (
+            <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-6">
+              <h2 className="text-xl font-semibold mb-3">Free model picks are available now</h2>
+              <p className="text-slate-300 mb-4">
+                No login or payment is required for the live Elo picks, odds board
+                or performance dashboard. Personalized email alert settings are
+                optional and currently need an existing account so alerts can
+                be delivered to the right person.
+              </p>
+              <Link href="/picks" className="inline-flex rounded-lg bg-cyan-500 px-5 py-3 font-semibold text-slate-950">
+                See Today&apos;s Free Picks
+              </Link>
+            </div>
+          )}
         </div>
       </main>
 
