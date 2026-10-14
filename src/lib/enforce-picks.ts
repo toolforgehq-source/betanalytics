@@ -11,9 +11,9 @@
  * - Tier caps (max 1 Lock, max 2 Strong)
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 import { modelSettlement } from './model-policy'
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type PickLike = Record<string, any>
 
 // These caps MUST match the values in bet-ranking.ts computeBestBets()
