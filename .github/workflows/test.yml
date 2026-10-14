@@ -33,3 +33,6 @@ jobs:
 
       - name: Typecheck changed prediction pipeline
         run: pnpm exec tsc --noEmit
+
+      - name: Production build (matches Vercel)
+        run: pnpm run build
