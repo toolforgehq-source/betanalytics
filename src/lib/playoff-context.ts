@@ -68,12 +68,19 @@ export function parseESPNPlayoffContext(event: RawSeriesEvent, league: string): 
   const homeWins = homeRows.length === 1 ? homeRows[0].wins : null
   const awayWins = awayRows.length === 1 ? awayRows[0].wins : null
   const winsNeeded = bestOf !== null ? Math.floor(bestOf / 2) + 1 : null
+  const summary = series?.summary || ''
+  const summaryMatch = summary.match(/(\\d+)\\s*-\\s*(\\d+)/)
+  const summaryMatchesWins = !summaryMatch || (
+    [Number(summaryMatch[1]), Number(summaryMatch[2])].sort((a,b)=>a-b).join(':') ===
+    [homeWins, awayWins].sort((a,b)=>Number(a)-Number(b)).join(':') &&
+    (!/\\btied\\b/i.test(summary) || homeWins === awayWins)
+  )
 
   const complete = event?.status?.type?.completed === true ||
     event?.status?.type?.state === 'post'
   const pregame = event?.status?.type?.state === 'pre' && !complete
   const valid = Boolean(
-    pregame && series?.type === 'playoff' && series.completed === false &&
+    pregame && summaryMatchesWins && series?.type === 'playoff' && series.completed === false &&
     typeof homeId === 'string' && homeId.length > 0 &&
     typeof awayId === 'string' && awayId.length > 0 && homeId !== awayId &&
     Number.isInteger(gameNumber) && gameNumber! > 0 &&
@@ -88,7 +95,7 @@ export function parseESPNPlayoffContext(event: RawSeriesEvent, league: string): 
   const safeAwayWins = valid ? (awayWins as number) : null
   const homeFacingElimination = valid && safeAwayWins === winsNeeded! - 1
   const awayFacingElimination = valid && safeWins === winsNeeded! - 1
-  const summary = valid
+  const displaySummary = valid
     ? `${round} Game ${gameNumber} · ${homeWins}-${awayWins} (home-away) · best of ${bestOf}`
     : 'Playoff series score unavailable or inconsistent; do not promote as a high-confidence pick'
 
@@ -106,7 +113,7 @@ export function parseESPNPlayoffContext(event: RawSeriesEvent, league: string): 
     awayFacingElimination: Boolean(awayFacingElimination),
     homeCanClinch: Boolean(valid && safeWins === winsNeeded! - 1),
     awayCanClinch: Boolean(valid && safeAwayWins === winsNeeded! - 1),
-    summary,
+    summary:displaySummary,
     reason: valid ? undefined : 'Pregame series data failed game number, team-ID, status, or series-win validation',
     probabilityAdjustmentPct: 0,
   }
