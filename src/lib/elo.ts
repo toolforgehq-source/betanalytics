@@ -475,6 +475,15 @@ function isInOffseason(league: string, date: Date = new Date()): boolean {
  * @param league - League for regression factor
  * @returns New rating after regression toward 1500
  */
+/** Season identifier for a completed game, not the wall-clock date. */
+export function getEloSeasonYear(league: string, gameDate: Date): number {
+  const start = SEASON_START_DATES[league]
+  const year = gameDate.getUTCFullYear()
+  if (!start) return year
+  const mmdd = (gameDate.getUTCMonth()+1)*100+gameDate.getUTCDate()
+  return mmdd < start.month*100+start.day ? year-1 : year
+}
+
 export function applySeasonRegression(
   currentRating: number,
   league: string
@@ -1090,7 +1099,22 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
     
     const homeTeam = eloData.ratings[homeKey]
     const awayTeam = eloData.ratings[awayKey]
-    
+
+    // Regress once when a team's next completed regular/postseason game belongs
+    // to a newer season. Reset within-season game counts and variance so old
+    // rosters do not masquerade as high-confidence current-season observations.
+    // Chronological processing makes this deterministic during backfills.
+    for (const team of [homeTeam,awayTeam]) {
+      const previousSeason = getEloSeasonYear(game.league,new Date(team.lastUpdated))
+      const currentSeason = getEloSeasonYear(game.league,new Date(game.date))
+      if (team.gamesPlayed > 0 && currentSeason > previousSeason) {
+        team.rating = applySeasonRegression(team.rating,game.league)
+        team.gamesPlayed = 0
+        team.recentResults = []
+        team.marginStats = undefined
+      }
+    }
+
     // RECENCY WEIGHTING: Apply K-factor multiplier based on days since last game
     // Teams in active rhythm (played recently) get higher K-factor so Elo reacts
     // more to their current form. Teams coming off long breaks get lower K-factor.
@@ -1592,23 +1616,22 @@ export async function getEloWinProbabilityByName(
     console.log(`[Elo Lookup] ${league} teams: ${leagueTeams.map(t => t.teamName).join(', ')}`)
   }
   
-  let homeTeam: TeamRating | null = null
-  let awayTeam: TeamRating | null = null
-  
-  for (const rating of Object.values(ratings)) {
-    if (rating.league !== league) continue
-    
-    const teamNorm = normalizeTeamName(rating.teamName)
-    
-    if (teamNorm.includes(homeNorm) || homeNorm.includes(teamNorm)) {
-      homeTeam = rating
-      console.log(`[Elo Lookup] MATCHED home team: "${homeTeamName}" -> "${rating.teamName}" (Elo: ${rating.rating})`)
-    }
-    if (teamNorm.includes(awayNorm) || awayNorm.includes(teamNorm)) {
-      awayTeam = rating
-      console.log(`[Elo Lookup] MATCHED away team: "${awayTeamName}" -> "${rating.teamName}" (Elo: ${rating.rating})`)
-    }
+  // Exact normalized names first. Never silently use the last partial match:
+  // college teams can share names and iteration order is not a reliable identity.
+  const leagueRatings = Object.values(ratings).filter(r => r.league === league)
+  const resolveTeam = (name: string): TeamRating | null => {
+    const norm = normalizeTeamName(name)
+    const exact = leagueRatings.filter(r => normalizeTeamName(r.teamName) === norm)
+    if (exact.length === 1) return exact[0]
+    if (exact.length > 1) return null
+    const partial = leagueRatings.filter(r => {
+      const n = normalizeTeamName(r.teamName)
+      return n.length >= 5 && norm.length >= 5 && (n.includes(norm) || norm.includes(n))
+    })
+    return partial.length === 1 ? partial[0] : null
   }
+  const homeTeam = resolveTeam(homeTeamName)
+  const awayTeam = resolveTeam(awayTeamName)
   
   // CRITICAL: If either team is not found, return null
   // This prevents using default 1500 ratings which would give meaningless predictions
