@@ -41,7 +41,7 @@ import { type LineMovement } from './line-movement'
 import { normalizeTeamName as normalizeScheduleTeamName, type TeamScheduleData } from './team-schedule'
 import { getCalibratedProbability } from './calibration'
 import { isEligibleForTopPicks } from './enforce-picks'
-import { blendSpreadWithPush, modelSettlement, validatedSituationalShift } from './model-policy'
+import { blendSpreadWithPush, modelSettlement, validatedSituationalShift, twoWaySideProbability } from './model-policy'
 import { formatPlayoffContext, type PlayoffContext } from './playoff-context'
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
@@ -1329,7 +1329,7 @@ export async function analyzeGame(
     // This corrects for systematic over/under-confidence based on historical accuracy
     const calibratedModelProbability = coherentHomeMoneyline === null
       ? await getCalibratedProbability(modelProbability,game.sport)
-      : isHomeTeam ? coherentHomeMoneyline : 1-coherentHomeMoneyline
+      : twoWaySideProbability(coherentHomeMoneyline,isHomeTeam)
     
     // Apply situational adjustment to calibrated model probability
     const adjustedModelProbability = applyAdjustment(calibratedModelProbability, situationalAdj.totalAdjustment)
@@ -2327,7 +2327,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
       modelProbability = coherentSportHomeProbability === null
         ? blendWithMarket(eloProbability,consensusProb,eloResult.confidence)
-        : isHomeTeam ? coherentSportHomeProbability : 1-coherentSportHomeProbability
+        : twoWaySideProbability(coherentSportHomeProbability,isHomeTeam)
       
       if (eloResult.confidence === 'very_low' || eloResult.confidence === 'low') {
         console.log(`[analyzeGameForSportQuery] Blending Elo (${(eloProbability * 100).toFixed(1)}%) with market (${(consensusProb * 100).toFixed(1)}%) at ${eloResult.confidence} confidence → ${(modelProbability * 100).toFixed(1)}% for ${team}`)
