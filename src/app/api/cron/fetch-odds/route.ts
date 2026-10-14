@@ -328,44 +328,23 @@ export async function GET(request: Request) {
     // The cron processes 80+ games and can timeout on Vercel if pick storage runs too late.
     // ============================================
     let picksStored = 0
-    const strictLockStrong = bestBetResult.allRankedBets.filter(
-      b => b.confidenceTier === 'lock' || b.confidenceTier === 'strong'
-    )
-    const eloLockStrong = bestBetResult.allEloBets.filter(
-      b => b.confidenceTier === 'lock' || b.confidenceTier === 'strong'
-    )
-    
-    // Merge: start with strict picks, then add elo picks not already covered (by gameId + team)
-    const seenKeys = new Set(strictLockStrong.map(b => `${b.gameId}:${b.team}`))
-    const additionalEloPicks = eloLockStrong.filter(b => !seenKeys.has(`${b.gameId}:${b.team}`))
-    const mergedLockStrong = [...strictLockStrong, ...additionalEloPicks]
-    
-    console.log(`[fetch-odds] Found ${mergedLockStrong.length} Lock/Strong picks (${strictLockStrong.length} from strict + ${additionalEloPicks.length} from relaxed elo) out of ${bestBetResult.allRankedBets.length} strict + ${bestBetResult.allEloBets.length} elo bets`)
-    
-    // ============================================
-    // TIER CAP ENFORCEMENT: Only store max 1 Lock + 3 Strong = 4 picks per day.
-    // The mergedLockStrong list can have 6-8+ picks because strict and elo pools
-    // are independently tiered. Without this cap, excess picks get stored, locked
-    // in when games start, graded, and inflate the public record.
-    // ============================================
-    const MAX_STORED_LOCKS = 1
-    const MAX_STORED_STRONG = 2
-    mergedLockStrong.sort((a, b) => b.score - a.score)
-    let storedLockCount = 0
-    let storedStrongCount = 0
-    const lockStrongBets = mergedLockStrong.filter(bet => {
-      if (bet.confidenceTier === 'lock' && storedLockCount < MAX_STORED_LOCKS) {
-        storedLockCount++
-        return true
-      }
-      if (bet.confidenceTier === 'strong' && storedStrongCount < MAX_STORED_STRONG) {
-        storedStrongCount++
-        return true
-      }
-      return false
-    })
-    console.log(`[fetch-odds] After tier cap: ${lockStrongBets.length} picks to store (${storedLockCount} lock + ${storedStrongCount} strong), dropped ${mergedLockStrong.length - lockStrongBets.length} excess`)
-    
+    // Use the same globally-qualified list shown by the website and chat.
+    // Never independently merge strict/relaxed pools here: that can choose
+    // multiple sides of one game or grade picks not actually recommended.
+    const canonical = bestBetResult.officialPicks ??
+      [bestBetResult.bestBet, bestBetResult.runnerUp].filter((bet): bet is RankedBet => bet !== null)
+    const selectedGames = new Set<string>()
+    const lockStrongBets: RankedBet[] = []
+    for (const bet of canonical) {
+      if (lockStrongBets.length >= 3) break
+      if (bet.confidenceTier !== 'lock' && bet.confidenceTier !== 'strong') continue
+      if (selectedGames.has(bet.gameId)) continue
+      if (new Date(bet.commenceTime).getTime() <= Date.now()) continue
+      selectedGames.add(bet.gameId)
+      lockStrongBets.push(bet)
+    }
+    console.log(`[fetch-odds] Canonical verified top-three: ${lockStrongBets.length} distinct-game picks`)
+
     // Log top 5 bets by score from each source for debugging tier assignment
     const topStrict = bestBetResult.allRankedBets.slice(0, 5)
     const topElo = bestBetResult.allEloBets.slice(0, 5)
