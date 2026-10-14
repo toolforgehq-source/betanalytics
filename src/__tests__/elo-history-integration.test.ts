@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { collectFreeEloHistory } from '@/lib/free-elo-bootstrap'
-import { replayEloRatings } from '@/lib/elo'
+import { replayEloRatings, calculateWinProbability, getEloSeasonYear, applySeasonRegression, type GameResult, type EloRatings } from '@/lib/elo'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
@@ -21,6 +21,53 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
     expect(games.length).toBeGreaterThan(2000)
     const { ratings, processedIds, newGamesProcessed } = replayEloRatings(games)
     expect(newGamesProcessed).toBe(games.length)
+    // Out-of-sample walk-forward predictions: ratings as of the PREVIOUS day only.
+    // We do not use same-day results, injury data scraped after the fact, or final Elo.
+    const days = new Map<string,GameResult[]>()
+    for (const g of games) {
+      const day = g.date.slice(0,10)
+      if (!days.has(day)) days.set(day,[])
+      days.get(day)!.push(g)
+    }
+    type Pregame = { gameId:string, league:string, date:string,
+      homeTeam:string, awayTeam:string, homeScore:number, awayScore:number,
+      actualHomeWin:number, pHome:number, minGamesCurrentSeason:number,
+      isNeutralSite:boolean }
+    const pregame: Pregame[] = []
+    let state: EloRatings | null = null
+    let seen = new Set<string>()
+    for (const [,dayGames] of Array.from(days.entries()).sort((a,b) => a[0].localeCompare(b[0]))) {
+      for (const game of dayGames) {
+        const h = state?.ratings[`${game.league}:${game.homeTeamId}`]
+        const a = state?.ratings[`${game.league}:${game.awayTeamId}`]
+        if (!h || !a || game.homeScore === game.awayScore) continue
+        const season = getEloSeasonYear(game.league, new Date(game.date))
+        const homeNew = season > getEloSeasonYear(game.league,new Date(h.lastUpdated))
+        const awayNew = season > getEloSeasonYear(game.league,new Date(a.lastUpdated))
+        const homeGames = homeNew ? 0 : h.gamesPlayed
+        const awayGames = awayNew ? 0 : a.gamesPlayed
+        if (Math.min(homeGames,awayGames) < 5) continue
+        const homeRating = homeNew ? applySeasonRegression(h.rating, game.league) : h.rating
+        const awayRating = awayNew ? applySeasonRegression(a.rating, game.league) : a.rating
+        const p = calculateWinProbability(homeRating,awayRating,game.league,game.isNeutralSite === true)
+        pregame.push({gameId:game.gameId,league:game.league,date:game.date,
+          homeTeam:game.homeTeamName,awayTeam:game.awayTeamName,
+          homeScore:game.homeScore,awayScore:game.awayScore,
+          actualHomeWin:game.homeScore > game.awayScore ? 1 : 0,
+          pHome:p,minGamesCurrentSeason:Math.min(homeGames,awayGames),
+          isNeutralSite:game.isNeutralSite === true})
+      }
+      const next = replayEloRatings(dayGames,state,seen)
+      state = next.ratings
+      seen = next.processedIds
+    }
+    const brierByLeague = Object.fromEntries(Object.keys(byLeague).map(league => {
+      const ps = pregame.filter(g => g.league === league)
+      const brier = ps.length
+        ? ps.reduce((sum,g) => sum + Math.pow(g.pHome-g.actualHomeWin,2),0)/ps.length : null
+      return [league,{predictions:ps.length,brierScore:brier, naiveFiftyFiftyBrier:0.25,
+        eligibleTenPlus:ps.filter(g=>g.minGamesCurrentSeason>=10).length}]
+    }))
     const coverage = Object.fromEntries(Object.keys(byLeague).map(league => {
       const teams = Object.values(ratings.ratings).filter(r => r.league === league)
       const activeTeams = teams.filter(r => r.gamesPlayed >= 5)
@@ -37,7 +84,7 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
       collectedAt:collectedAt.toISOString(), inputSha256:inputChecksum,
       from: games[0]?.date, to:games[games.length-1]?.date,
       totalGames:games.length, totalTeams:Object.keys(ratings.ratings).length,
-      coverage,
+      coverage, walkForwardEloOnlyBrier:brierByLeague,
       gamesByLeagueAndYear: Object.fromEntries(Object.keys(byLeague).map(league => [league,
         Object.fromEntries(Array.from(new Set(games.filter(g => g.league === league).map(g => g.date.slice(0,4))))
           .map(y => [y, games.filter(g => g.league === league && g.date.startsWith(y)).length]))])),
@@ -46,6 +93,7 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
     writeFileSync(join(outdir,'elo-shadow-report.json'),JSON.stringify(metadata,null,2))
     writeFileSync(join(outdir,'elo-shadow-input-games.json'),chronology)
     writeFileSync(join(outdir,'elo-shadow-ratings.json'),JSON.stringify(ratings))
+    writeFileSync(join(outdir,'elo-baseline-asof-pregame.json'),JSON.stringify(pregame))
     console.log('SHADOW_ELO_REPORT='+JSON.stringify(metadata))
     for (const [league, stats] of Object.entries(coverage)) {
       expect(stats.teams, league + ': missing teams').toBeGreaterThanOrEqual(LEAGUE_TEAMS_MIN[league])
