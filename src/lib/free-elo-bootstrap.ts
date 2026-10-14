@@ -40,6 +40,30 @@ export function monthKeysForLeague(league: BootstrapLeague, today: Date): string
   return keys
 }
 
+/** ESPN's college scoreboards are day-scoped: a YYYYMM query silently omits
+ * most matchups. Query each active game day, not 1 day per month.
+ * Exclude only entire known off-season months; no scores are fabricated.
+ */
+export function historicalScoreboardDates(league: BootstrapLeague, today: Date): string[] {
+  const months = monthKeysForLeague(league,today)
+  if (league !== 'NCAAB' && league !== 'NCAAF') return months
+  const activeMonths = league === 'NCAAF'
+    ? new Set([1,8,9,10,11,12]) : new Set([1,2,3,4,11,12])
+  const days: string[] = []
+  for (const month of months) {
+    const year = Number(month.slice(0,4))
+    const m = Number(month.slice(4,6))
+    if (!activeMonths.has(m)) continue
+    const length = new Date(Date.UTC(year,m,0)).getUTCDate()
+    for (let d=1;d<=length;d++) {
+      const date = new Date(Date.UTC(year,m-1,d))
+      if (date > today) break
+      days.push(date.toISOString().slice(0,10).replace(/-/g,''))
+    }
+  }
+  return days
+}
+
 export function parseCompletedESPNEvents(events: unknown[], league: BootstrapLeague): GameResult[] {
   const parsed: GameResult[] = []
   const seen = new Set<string>()
@@ -91,11 +115,11 @@ export async function collectFreeEloHistory(
 ): Promise<{ games: GameResult[], byLeague: Record<BootstrapLeague,number> }> {
   const combined: GameResult[] = []
   const counts = {} as Record<BootstrapLeague,number>
-  const maxConcurrent = 4
   for (const league of BOOTSTRAP_LEAGUES) {
-    const months = monthKeysForLeague(league,today)
+    const months = historicalScoreboardDates(league,today)
     const seen = new Set<string>()
     let leagueCount = 0
+    const maxConcurrent = league === 'NCAAF' || league === 'NCAAB' ? 10 : 4
     for (let offset=0;offset<months.length;offset+=maxConcurrent) {
       const batch=months.slice(offset,offset+maxConcurrent)
       const responses=await Promise.all(batch.map(async month => {
