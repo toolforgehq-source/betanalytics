@@ -8,6 +8,7 @@ import { replayEloRatings, calculateWinProbability, getEloSeasonYear, applySeaso
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
+import { reconstructPregameSeriesStates, evaluatePlayoffSeriesHoldout, type PlayoffBacktestExample } from '@/lib/playoff-backtest'
 
 const enabled = process.env.ELO_SHADOW_REBUILD === '1'
 const LEAGUE_TEAMS_MIN: Record<string,number> = {
@@ -21,6 +22,8 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
     expect(games.length).toBeGreaterThan(2000)
     const { ratings, processedIds, newGamesProcessed } = replayEloRatings(games)
     expect(newGamesProcessed).toBe(games.length)
+    const pregameSeries = reconstructPregameSeriesStates(games)
+    const playoffAB: PlayoffBacktestExample[] = []
     // Out-of-sample walk-forward predictions: ratings as of the PREVIOUS day only.
     // We do not use same-day results, injury data scraped after the fact, or final Elo.
     const days = new Map<string,GameResult[]>()
@@ -50,6 +53,15 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
         const homeRating = homeNew ? applySeasonRegression(h.rating, game.league) : h.rating
         const awayRating = awayNew ? applySeasonRegression(a.rating, game.league) : a.rating
         const p = calculateWinProbability(homeRating,awayRating,game.league,game.isNeutralSite === true)
+        const series = pregameSeries.get(game.gameId)
+        if (series && series.seriesGameNumber>=2) {
+          playoffAB.push({
+            gameId:game.gameId,league:series.league,seasonYear:series.seasonYear,
+            seriesGameNumber:series.seriesGameNumber,
+            homeSeriesWins:series.homeSeriesWins,awaySeriesWins:series.awaySeriesWins,
+            homeEloProbability:p,homeWon:game.homeScore>game.awayScore ? 1 : 0,
+          })
+        }
         pregame.push({gameId:game.gameId,league:game.league,date:game.date,
           homeTeam:game.homeTeamName,awayTeam:game.awayTeamName,
           homeScore:game.homeScore,awayScore:game.awayScore,
@@ -68,6 +80,7 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
       return [league,{predictions:ps.length,brierScore:brier, naiveFiftyFiftyBrier:0.25,
         eligibleTenPlus:ps.filter(g=>g.minGamesCurrentSeason>=10).length}]
     }))
+    const playoffHoldout = evaluatePlayoffSeriesHoldout(playoffAB,2026)
     const coverage = Object.fromEntries(Object.keys(byLeague).map(league => {
       const teams = Object.values(ratings.ratings).filter(r => r.league === league)
       const activeTeams = teams.filter(r => r.gamesPlayed >= 5)
@@ -85,6 +98,7 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
       from: games[0]?.date, to:games[games.length-1]?.date,
       totalGames:games.length, totalTeams:Object.keys(ratings.ratings).length,
       coverage, walkForwardEloOnlyBrier:brierByLeague,
+      playoffSeriesHoldout:playoffHoldout,
       gamesByLeagueAndYear: Object.fromEntries(Object.keys(byLeague).map(league => [league,
         Object.fromEntries(Array.from(new Set(games.filter(g => g.league === league).map(g => g.date.slice(0,4))))
           .map(y => [y, games.filter(g => g.league === league && g.date.startsWith(y)).length]))])),
@@ -94,6 +108,8 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
     writeFileSync(join(outdir,'elo-shadow-input-games.json'),chronology)
     writeFileSync(join(outdir,'elo-shadow-ratings.json'),JSON.stringify(ratings))
     writeFileSync(join(outdir,'elo-baseline-asof-pregame.json'),JSON.stringify(pregame))
+    writeFileSync(join(outdir,'elo-playoff-holdout.json'),JSON.stringify(playoffHoldout,null,2))
+    writeFileSync(join(outdir,'elo-playoff-pregame-samples.json'),JSON.stringify(playoffAB))
     console.log('SHADOW_ELO_REPORT='+JSON.stringify(metadata))
     for (const [league, stats] of Object.entries(coverage)) {
       expect(stats.teams, league + ': missing teams').toBeGreaterThanOrEqual(LEAGUE_TEAMS_MIN[league])
