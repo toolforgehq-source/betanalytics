@@ -756,7 +756,10 @@ export async function getEloRatings(): Promise<EloRatings | null> {
   if (!isDbConfigured()) return null
   
   try {
-    const result = await kvGet(ELO_RATINGS_KEY)
+    // Read-only shadow selection for branch-isolated staging verification.
+    // Production is unchanged unless explicitly configured with this key.
+    const readKey = process.env.ELO_RATINGS_READ_KEY || ELO_RATINGS_KEY
+    const result = await kvGet(readKey)
     if (!result) return null
     return JSON.parse(result) as EloRatings
   } catch (error) {
