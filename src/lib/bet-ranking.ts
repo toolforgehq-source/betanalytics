@@ -4287,7 +4287,7 @@ function getSecondsUntil2amET(): number {
 // Bump this version whenever the best-bet algorithm changes materially
 // (e.g. injury disqualification, scoring changes, filter changes).
 // Cached results with a different version are automatically invalidated.
-const BEST_BET_CACHE_VERSION = 4  // v4: true single-book odds, qualified Elo and canonical top picks
+const BEST_BET_CACHE_VERSION = 5  // v5: verified playoff series context & zero untested motivation bonus
 
 /**
  * Cache the best bet result in Postgres
@@ -4320,7 +4320,7 @@ export async function cacheBestBet(result: BestBetResult): Promise<void> {
  */
 export async function getCachedBestBet(): Promise<BestBetResult | null> {
   const { cachedRead } = await import('@/lib/redis-cache')
-  return cachedRead('bestBet:cached:v4', 120, async () => {
+  return cachedRead('bestBet:cached:v5', 120, async () => {
     if (!isDbConfigured()) return null
     
     try {
