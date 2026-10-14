@@ -30,3 +30,54 @@ jobs:
  
       - name: Run tests
         run: pnpm test
+
+      - name: Typecheck changed prediction pipeline
+        run: pnpm exec tsc --noEmit
+
+      - name: Production build (matches Vercel)
+        run: pnpm run build
+
+  shadow-elo:
+    name: Validate real ESPN history (no production writes)
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/elo-pick-integrity-audit-20261014'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Replay verified history in memory
+        env:
+          ELO_SHADOW_REBUILD: '1'
+        run: pnpm exec vitest run src/__tests__/elo-history-integration.test.ts
+
+      - name: Download no-cost MLB historical representative prices
+        if: always()
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts
+          curl --fail --location --silent --show-error --retry 2 --max-time 50 --max-filesize 15000000 \
+            'https://shanemcd.org/wp-content/uploads/2026/03/mlb-2026-odds.xlsx' \
+            --output artifacts/mlb-2026-representative-odds.xlsx
+          file artifacts/mlb-2026-representative-odds.xlsx
+
+      - name: Upload audited inputs and shadow Elo
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: betanalytics-shadow-elo
+          path: artifacts/*
+          retention-days: 14

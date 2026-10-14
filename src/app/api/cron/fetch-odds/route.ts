@@ -221,12 +221,13 @@ export async function GET(request: Request) {
       })
       
       // Attach injury data if found
-      if (matchingEspnGame && matchingEspnGame.injuries.length > 0) {
+      if (matchingEspnGame) {
         console.log(`[fetch-odds] Found ${matchingEspnGame.injuries.length} injuries for ${espnOdds.homeTeam} vs ${espnOdds.awayTeam}`)
         return {
           ...game,
           espnData: {
-            injuries: matchingEspnGame.injuries
+            injuries: matchingEspnGame.injuries,
+            probables: matchingEspnGame.probables || [] // MLB starting pitchers are an independent Elo input
           }
         }
       }
@@ -295,7 +296,11 @@ export async function GET(request: Request) {
       // Fix: Only drop old picks if a new pick exists for the exact same game+team+betType.
       const mergePicks = (newPicks: RankedBet[], oldPicks: RankedBet[]): RankedBet[] => {
         const newKeys = new Set(newPicks.map(p => `${p.gameId}:${p.team}:${p.betType}`))
-        const uniqueOld = oldPicks.filter(p => !newKeys.has(`${p.gameId}:${p.team}:${p.betType}`))
+        const uniqueOld = oldPicks.filter(p =>
+          isGameToday(p.commenceTime) &&
+          new Date(p.commenceTime).getTime() <= Date.now() &&
+          !newKeys.has(`${p.gameId}:${p.team}:${p.betType}`)
+        )
         return [...newPicks, ...uniqueOld]
       }
       
@@ -309,11 +314,8 @@ export async function GET(request: Request) {
       bestBetResult.allRankedBets = mergedRanked
       bestBetResult.allEloBets = mergedElo
       
-      // Update bestBet to be the highest-scored pick across all merged picks
-      const allMerged = [...mergedRanked, ...mergedElo].sort((a, b) => b.score - a.score)
-      if (allMerged.length > 0 && (!bestBetResult.bestBet || allMerged[0].score > bestBetResult.bestBet.score)) {
-        bestBetResult.bestBet = allMerged[0]
-      }
+      // Never override the authoritative qualified bestBet with an unqualified
+      // cached Elo candidate (or a game that has already started).
     }
     
     await cacheBestBet(bestBetResult)

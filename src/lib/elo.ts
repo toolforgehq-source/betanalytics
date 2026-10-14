@@ -1,4 +1,5 @@
 import { kvGet, kvSet, kvDel, isDbConfigured } from '@/lib/pg-kv'
+import { isCompetitiveEloMatch } from './elo-event-filter'
 
 /**
  * Elo Rating System for Sports Betting
@@ -475,6 +476,15 @@ function isInOffseason(league: string, date: Date = new Date()): boolean {
  * @param league - League for regression factor
  * @returns New rating after regression toward 1500
  */
+/** Season identifier for a completed game, not the wall-clock date. */
+export function getEloSeasonYear(league: string, gameDate: Date): number {
+  const start = SEASON_START_DATES[league]
+  const year = gameDate.getUTCFullYear()
+  if (!start) return year
+  const mmdd = (gameDate.getUTCMonth()+1)*100+gameDate.getUTCDate()
+  return mmdd < start.month*100+start.day ? year-1 : year
+}
+
 export function applySeasonRegression(
   currentRating: number,
   league: string
@@ -736,8 +746,8 @@ export function updateRatingsAfterGame(
 // REDIS STORAGE
 // ============================================
 
-const ELO_RATINGS_KEY = 'elo_ratings'
-const ELO_PROCESSED_GAMES_KEY = 'elo_processed_games'
+const ELO_RATINGS_KEY = process.env.ELO_RATINGS_STORAGE_KEY || 'elo_ratings'
+const ELO_PROCESSED_GAMES_KEY = process.env.ELO_PROCESSED_GAMES_STORAGE_KEY || 'elo_processed_games'
 
 /**
  * Get all Elo ratings from Postgres
@@ -746,7 +756,10 @@ export async function getEloRatings(): Promise<EloRatings | null> {
   if (!isDbConfigured()) return null
   
   try {
-    const result = await kvGet(ELO_RATINGS_KEY)
+    // Read-only shadow selection for branch-isolated staging verification.
+    // Production is unchanged unless explicitly configured with this key.
+    const readKey = process.env.ELO_RATINGS_STORAGE_KEY || process.env.ELO_RATINGS_READ_KEY || ELO_RATINGS_KEY
+    const result = await kvGet(readKey)
     if (!result) return null
     return JSON.parse(result) as EloRatings
   } catch (error) {
@@ -865,7 +878,7 @@ async function fetchCompletedGames(
     // For college sports, ESPN only returns top-25/featured games by default.
     // Adding groups=50 (D1) and limit=300 fetches ALL Division I games.
     const isCollege = leagueName === 'NCAAB' || leagueName === 'NCAAF'
-    const collegeParams = isCollege ? '&groups=50&limit=300' : ''
+    const collegeParams = isCollege ? (leagueName === 'NCAAF' ? '&groups=80&limit=300' : '&groups=50&limit=300') : ''
     const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard?dates=${date}${collegeParams}`
     
     const response = await fetch(url, {
@@ -903,6 +916,9 @@ async function fetchCompletedGames(
       )
       
       if (!homeTeam || !awayTeam) continue
+      if (!isCompetitiveEloMatch(leagueName,
+        homeTeam.team?.displayName || homeTeam.team?.name || '',
+        awayTeam.team?.displayName || awayTeam.team?.name || '')) continue
       
       const homeScore = parseInt(homeTeam.score || '0', 10)
       const awayScore = parseInt(awayTeam.score || '0', 10)
@@ -1034,9 +1050,15 @@ export const SUPPORTED_LEAGUES = Object.keys(LEAGUE_TO_ESPN)
  * Process game results and update Elo ratings
  * This is the main function called by the cron job
  */
-export async function updateEloRatings(games: GameResult[]): Promise<EloRatings> {
-  // Get existing ratings or initialize
-  let eloData = await getEloRatings()
+/** Pure, deterministic Elo replay without reads or writes to live storage. */
+export function replayEloRatings(
+  games: GameResult[],
+  existing?: EloRatings | null,
+  alreadyProcessed: ReadonlySet<string> = new Set()
+): { ratings: EloRatings, processedIds: Set<string>, newGamesProcessed: number } {
+  let eloData: EloRatings = existing ? structuredClone(existing) : {
+    ratings: {}, lastUpdated: new Date().toISOString(), gamesProcessed: 0
+  }
   if (!eloData || !eloData.ratings) {
     eloData = {
       ratings: {},
@@ -1048,8 +1070,7 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
   eloData.ratings = eloData.ratings || {}
   eloData.gamesProcessed = eloData.gamesProcessed || 0
   
-  // Get already processed game IDs to avoid duplicates
-  const processedIds = await getProcessedGameIds()
+  const processedIds = new Set(alreadyProcessed)
   
   // Sort games by date to process chronologically
   const sortedGames = [...games].sort(
@@ -1059,8 +1080,9 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
   let newGamesProcessed = 0
   
   for (const game of sortedGames) {
-    // Skip if already processed
-    if (processedIds.has(game.gameId)) continue
+    // Skip already processed games and non-competitive exhibition teams.
+    if (processedIds.has(game.gameId) || processedIds.has(`${game.league}:${game.gameId}`) ||
+        !isCompetitiveEloMatch(game.league, game.homeTeamName, game.awayTeamName)) continue
     
     const homeKey = `${game.league}:${game.homeTeamId}`
     const awayKey = `${game.league}:${game.awayTeamId}`
@@ -1090,7 +1112,22 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
     
     const homeTeam = eloData.ratings[homeKey]
     const awayTeam = eloData.ratings[awayKey]
-    
+
+    // Regress once when a team's next completed regular/postseason game belongs
+    // to a newer season. Reset within-season game counts and variance so old
+    // rosters do not masquerade as high-confidence current-season observations.
+    // Chronological processing makes this deterministic during backfills.
+    for (const team of [homeTeam,awayTeam]) {
+      const previousSeason = getEloSeasonYear(game.league,new Date(team.lastUpdated))
+      const currentSeason = getEloSeasonYear(game.league,new Date(game.date))
+      if (team.gamesPlayed > 0 && currentSeason > previousSeason) {
+        team.rating = applySeasonRegression(team.rating,game.league)
+        team.gamesPlayed = 0
+        team.recentResults = []
+        team.marginStats = undefined
+      }
+    }
+
     // RECENCY WEIGHTING: Apply K-factor multiplier based on days since last game
     // Teams in active rhythm (played recently) get higher K-factor so Elo reacts
     // more to their current form. Teams coming off long breaks get lower K-factor.
@@ -1193,8 +1230,8 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
     awayTeam.marginStats.marginVariance = awayAvgSquared - (awayTeam.marginStats.avgMargin * awayTeam.marginStats.avgMargin)
     awayTeam.marginStats.marginStdDev = Math.sqrt(Math.max(0, awayTeam.marginStats.marginVariance))
     
-    // Mark game as processed
-    processedIds.add(game.gameId)
+    // League-prefix prevents game-ID collisions across sports.
+    processedIds.add(`${game.league}:${game.gameId}`)
     newGamesProcessed++
   }
   
@@ -1202,13 +1239,17 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
   eloData.lastUpdated = new Date().toISOString()
   eloData.gamesProcessed += newGamesProcessed
   
-  // Save to Redis
-  await saveEloRatings(eloData)
+  return { ratings: eloData, processedIds, newGamesProcessed }
+}
+
+/** Preserve the existing live update contract around the same pure replay. */
+export async function updateEloRatings(games: GameResult[]): Promise<EloRatings> {
+  const [previous, ids] = await Promise.all([getEloRatings(), getProcessedGameIds()])
+  const { ratings, processedIds, newGamesProcessed } = replayEloRatings(games, previous, ids)
+  await saveEloRatings(ratings)
   await saveProcessedGameIds(processedIds)
-  
-  console.log(`[Elo] Updated ratings: ${newGamesProcessed} new games processed, ${Object.keys(eloData.ratings).length} teams tracked`)
-  
-  return eloData
+  console.log(`[Elo] Updated ratings: ${newGamesProcessed} new games processed, ${Object.keys(ratings.ratings).length} teams tracked`)
+  return ratings
 }
 
 /**
@@ -1592,23 +1633,22 @@ export async function getEloWinProbabilityByName(
     console.log(`[Elo Lookup] ${league} teams: ${leagueTeams.map(t => t.teamName).join(', ')}`)
   }
   
-  let homeTeam: TeamRating | null = null
-  let awayTeam: TeamRating | null = null
-  
-  for (const rating of Object.values(ratings)) {
-    if (rating.league !== league) continue
-    
-    const teamNorm = normalizeTeamName(rating.teamName)
-    
-    if (teamNorm.includes(homeNorm) || homeNorm.includes(teamNorm)) {
-      homeTeam = rating
-      console.log(`[Elo Lookup] MATCHED home team: "${homeTeamName}" -> "${rating.teamName}" (Elo: ${rating.rating})`)
-    }
-    if (teamNorm.includes(awayNorm) || awayNorm.includes(teamNorm)) {
-      awayTeam = rating
-      console.log(`[Elo Lookup] MATCHED away team: "${awayTeamName}" -> "${rating.teamName}" (Elo: ${rating.rating})`)
-    }
+  // Exact normalized names first. Never silently use the last partial match:
+  // college teams can share names and iteration order is not a reliable identity.
+  const leagueRatings = Object.values(ratings).filter(r => r.league === league)
+  const resolveTeam = (name: string): TeamRating | null => {
+    const norm = normalizeTeamName(name)
+    const exact = leagueRatings.filter(r => normalizeTeamName(r.teamName) === norm)
+    if (exact.length === 1) return exact[0]
+    if (exact.length > 1) return null
+    const partial = leagueRatings.filter(r => {
+      const n = normalizeTeamName(r.teamName)
+      return n.length >= 5 && norm.length >= 5 && (n.includes(norm) || norm.includes(n))
+    })
+    return partial.length === 1 ? partial[0] : null
   }
+  const homeTeam = resolveTeam(homeTeamName)
+  const awayTeam = resolveTeam(awayTeamName)
   
   // CRITICAL: If either team is not found, return null
   // This prevents using default 1500 ratings which would give meaningless predictions

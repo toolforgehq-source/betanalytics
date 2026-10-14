@@ -39,6 +39,7 @@ import type { WeatherData } from './weather'
 import { type LineMovement } from './line-movement'
 import { normalizeTeamName as normalizeScheduleTeamName, type TeamScheduleData } from './team-schedule'
 import { getCalibratedProbability } from './calibration'
+import { isEligibleForTopPicks } from './enforce-picks'
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
 export interface RankedBet {
@@ -55,7 +56,7 @@ export interface RankedBet {
   line?: number  // For spread/total bets (e.g., -3.5, +7, 224.5)
   
   // Probability and edge calculations
-  consensusProbability: number  // No-vig average across books (market fair value)
+  consensusProbability: number  // Final model-adjusted percentage used for grading (legacy name)
   bestPrice: number             // Best available American odds
   bestBook: string              // Which book has the best price
   impliedProbability: number    // Implied prob from best price
@@ -576,6 +577,15 @@ export function americanToImpliedProbability(odds: number): number {
  * - EV = (0.89 × $12.50) - (0.11 × $100) = $11.13 - $11 = +$0.13
  * - This is terrible value despite high probability!
  */
+// A fair market anchor must remove the sportsbook margin using BOTH sides
+// of the SAME bookmaker market. The offered price is still used for real EV.
+export function twoWayNoVigProbability(selectedOdds: number, oppositeOdds?: number): number {
+  const selected = americanToImpliedProbability(selectedOdds)
+  if (oppositeOdds === undefined || !Number.isFinite(oppositeOdds) || oppositeOdds === 0) return selected
+  const other = americanToImpliedProbability(oppositeOdds)
+  return selected / (selected + other)
+}
+
 export function calculateExpectedValue(americanOdds: number, winProbability: number): number {
   const winProb = winProbability // Already in decimal form (0-1)
   const loseProb = 1 - winProb
@@ -962,7 +972,7 @@ function calculateConsensusProbabilityThreeWay(
     })
   }
   
-  if (bookPrices.length < 2) {
+  if (bookPrices.length < 1) {
     // Need at least 2 books for consensus
     return null
   }
@@ -1022,7 +1032,7 @@ function calculateConsensusProbability(
     })
   }
   
-  if (bookPrices.length < 2) {
+  if (bookPrices.length < 1) {
     // Need at least 2 books for consensus
     return null
   }
@@ -1077,109 +1087,9 @@ function findBestPrice(
  * Analyze a single game and return ranked bets for both teams
  */
 /**
- * FALLBACK: Hardcoded star players for each NBA team
- * Used when player stats data is unavailable (Redis not configured or empty)
- * This ensures star player detection ALWAYS works for injury filtering
- */
-const NBA_STAR_PLAYERS: Record<string, string[]> = {
-  // Western Conference
-  'nuggets': ['Nikola Jokic', 'Jamal Murray', 'Michael Porter Jr'],
-  'denver': ['Nikola Jokic', 'Jamal Murray', 'Michael Porter Jr'],
-  'lakers': ['LeBron James', 'Anthony Davis', 'Austin Reaves'],
-  'los angeles lakers': ['LeBron James', 'Anthony Davis', 'Austin Reaves'],
-  'clippers': ['Kawhi Leonard', 'Paul George', 'James Harden'],
-  'la clippers': ['Kawhi Leonard', 'Paul George', 'James Harden'],
-  'warriors': ['Stephen Curry', 'Klay Thompson', 'Draymond Green'],
-  'golden state': ['Stephen Curry', 'Klay Thompson', 'Draymond Green'],
-  'suns': ['Kevin Durant', 'Devin Booker', 'Bradley Beal'],
-  'phoenix': ['Kevin Durant', 'Devin Booker', 'Bradley Beal'],
-  'mavericks': ['Luka Doncic', 'Kyrie Irving', 'PJ Washington'],
-  'dallas': ['Luka Doncic', 'Kyrie Irving', 'PJ Washington'],
-  'grizzlies': ['Ja Morant', 'Desmond Bane', 'Jaren Jackson Jr'],
-  'memphis': ['Ja Morant', 'Desmond Bane', 'Jaren Jackson Jr'],
-  'pelicans': ['Zion Williamson', 'Brandon Ingram', 'CJ McCollum'],
-  'new orleans': ['Zion Williamson', 'Brandon Ingram', 'CJ McCollum'],
-  'timberwolves': ['Anthony Edwards', 'Karl-Anthony Towns', 'Rudy Gobert'],
-  'minnesota': ['Anthony Edwards', 'Karl-Anthony Towns', 'Rudy Gobert'],
-  'thunder': ['Shai Gilgeous-Alexander', 'Jalen Williams', 'Chet Holmgren'],
-  'oklahoma city': ['Shai Gilgeous-Alexander', 'Jalen Williams', 'Chet Holmgren'],
-  'rockets': ['Jalen Green', 'Alperen Sengun', 'Fred VanVleet'],
-  'houston': ['Jalen Green', 'Alperen Sengun', 'Fred VanVleet'],
-  'spurs': ['Victor Wembanyama', 'Devin Vassell', 'Keldon Johnson'],
-  'san antonio': ['Victor Wembanyama', 'Devin Vassell', 'Keldon Johnson'],
-  'kings': ['De\'Aaron Fox', 'Domantas Sabonis', 'Keegan Murray'],
-  'sacramento': ['De\'Aaron Fox', 'Domantas Sabonis', 'Keegan Murray'],
-  'trail blazers': ['Damian Lillard', 'Anfernee Simons', 'Jerami Grant'],
-  'portland': ['Damian Lillard', 'Anfernee Simons', 'Jerami Grant'],
-  'jazz': ['Lauri Markkanen', 'Jordan Clarkson', 'Collin Sexton'],
-  'utah': ['Lauri Markkanen', 'Jordan Clarkson', 'Collin Sexton'],
-  // Eastern Conference
-  'celtics': ['Jayson Tatum', 'Jaylen Brown', 'Kristaps Porzingis'],
-  'boston': ['Jayson Tatum', 'Jaylen Brown', 'Kristaps Porzingis'],
-  'bucks': ['Giannis Antetokounmpo', 'Damian Lillard', 'Khris Middleton'],
-  'milwaukee': ['Giannis Antetokounmpo', 'Damian Lillard', 'Khris Middleton'],
-  '76ers': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
-  'sixers': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
-  'philadelphia': ['Joel Embiid', 'Tyrese Maxey', 'Tobias Harris'],
-  'knicks': ['Jalen Brunson', 'Julius Randle', 'RJ Barrett'],
-  'new york': ['Jalen Brunson', 'Julius Randle', 'RJ Barrett'],
-  'nets': ['Mikal Bridges', 'Cameron Johnson', 'Spencer Dinwiddie'],
-  'brooklyn': ['Mikal Bridges', 'Cameron Johnson', 'Spencer Dinwiddie'],
-  'heat': ['Jimmy Butler', 'Bam Adebayo', 'Tyler Herro'],
-  'miami': ['Jimmy Butler', 'Bam Adebayo', 'Tyler Herro'],
-  'cavaliers': ['Donovan Mitchell', 'Darius Garland', 'Evan Mobley'],
-  'cleveland': ['Donovan Mitchell', 'Darius Garland', 'Evan Mobley'],
-  'bulls': ['DeMar DeRozan', 'Zach LaVine', 'Nikola Vucevic'],
-  'chicago': ['DeMar DeRozan', 'Zach LaVine', 'Nikola Vucevic'],
-  'hawks': ['Trae Young', 'Dejounte Murray', 'John Collins'],
-  'atlanta': ['Trae Young', 'Dejounte Murray', 'John Collins'],
-  'raptors': ['Pascal Siakam', 'Scottie Barnes', 'OG Anunoby'],
-  'toronto': ['Pascal Siakam', 'Scottie Barnes', 'OG Anunoby'],
-  'pacers': ['Tyrese Haliburton', 'Myles Turner', 'Buddy Hield'],
-  'indiana': ['Tyrese Haliburton', 'Myles Turner', 'Buddy Hield'],
-  'magic': ['Paolo Banchero', 'Franz Wagner', 'Jalen Suggs'],
-  'orlando': ['Paolo Banchero', 'Franz Wagner', 'Jalen Suggs'],
-  'pistons': ['Cade Cunningham', 'Jaden Ivey', 'Bojan Bogdanovic'],
-  'detroit': ['Cade Cunningham', 'Jaden Ivey', 'Bojan Bogdanovic'],
-  'wizards': ['Kyle Kuzma', 'Jordan Poole', 'Deni Avdija'],
-  'washington': ['Kyle Kuzma', 'Jordan Poole', 'Deni Avdija'],
-  'hornets': ['LaMelo Ball', 'Terry Rozier', 'Gordon Hayward'],
-  'charlotte': ['LaMelo Ball', 'Terry Rozier', 'Gordon Hayward'],
-}
-
-/**
- * Get fallback star players for a team when player stats data is unavailable
- */
-function getFallbackStarPlayers(teamName: string, sport: string): PlayerImportance[] {
-  // Only NBA has hardcoded fallback for now
-  if (!sport.toLowerCase().includes('nba') && !sport.toLowerCase().includes('basketball')) {
-    return []
-  }
-  
-  const teamNorm = teamName.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim()
-  
-  // Try to find matching team
-  for (const [key, players] of Object.entries(NBA_STAR_PLAYERS)) {
-    if (teamNorm.includes(key) || key.includes(teamNorm)) {
-      console.log(`[getFallbackStarPlayers] Using fallback for ${teamName}: ${players.join(', ')}`)
-      return players.map(name => ({
-        playerName: name,
-        teamName: teamName,
-        sport: sport,
-        scoringAverage: 25, // Placeholder - these are all star players
-        isTopScorer: true
-      }))
-    }
-  }
-  
-  console.log(`[getFallbackStarPlayers] No fallback found for team: ${teamName}`)
-  return []
-}
-
-/**
  * Get top 3 scorers for a team from player stats data
  * Used for injury adjustment calculations
- * CRITICAL: Falls back to hardcoded star players when Redis data unavailable
+ * No hardcoded roster fallback: missing verified player stats must not fabricate injury adjustments.
  */
 async function getTopScorersForTeam(
   teamName: string,
@@ -1192,7 +1102,7 @@ async function getTopScorersForTeam(
     // This ensures star player detection works even when Redis is not configured
     if (!playerStats || !playerStats.players) {
       console.log(`[getTopScorersForTeam] Player stats unavailable, using fallback for ${teamName}`)
-      return getFallbackStarPlayers(teamName, sport)
+      return [] // Do not use stale hardcoded player-team lists in live predictions.
     }
     
     // Filter players for this team and sport (players is a Record, not an array)
@@ -1207,7 +1117,7 @@ async function getTopScorersForTeam(
     // If no players found in stats data, use fallback
     if (teamPlayers.length === 0) {
       console.log(`[getTopScorersForTeam] No players in stats for ${teamName}, using fallback`)
-      return getFallbackStarPlayers(teamName, sport)
+      return [] // Do not use stale hardcoded player-team lists in live predictions.
     }
     
     // Get scoring average based on sport
@@ -1240,14 +1150,14 @@ async function getTopScorersForTeam(
     // If sorted players is empty after filtering, use fallback
     if (sortedPlayers.length === 0) {
       console.log(`[getTopScorersForTeam] No scorers found for ${teamName}, using fallback`)
-      return getFallbackStarPlayers(teamName, sport)
+      return [] // Do not use stale hardcoded player-team lists in live predictions.
     }
     
     return sortedPlayers
   } catch (error) {
     console.error('[getTopScorersForTeam] Error:', error)
     // On error, use fallback instead of returning empty
-    return getFallbackStarPlayers(teamName, sport)
+    return [] // Do not use stale hardcoded player-team lists in live predictions.
   }
 }
 
@@ -1291,7 +1201,7 @@ export async function analyzeGame(
   if (eloLeague) {
     try {
       // If injuries are provided, use injury-adjusted Elo
-      if (injuries && injuries.length > 0) {
+      if ((injuries?.length || 0) > 0 || ((game as EnrichedGame).espnData?.probables?.length || 0) > 0) {
         // Get top scorers for both teams (for NBA/NCAAB/NHL injury adjustments)
         const [homeTopScorers, awayTopScorers] = await Promise.all([
           getTopScorersForTeam(game.homeTeam, game.sport),
@@ -1311,7 +1221,7 @@ export async function analyzeGame(
           eloLeague,
           game.homeTeam,
           game.awayTeam,
-          injuries,
+          injuries || [],
           homeTopScorers,
           awayTopScorers,
           homePitcher ?? undefined,
@@ -1521,7 +1431,7 @@ export async function analyzeGame(
       commenceTime: game.commenceTime,
       team,
       betType: 'moneyline',
-      consensusProbability: Math.round(consensus.consensusProb * 1000) / 10, // Market fair value
+      consensusProbability: Math.round(adjustedModelProbability * 1000) / 10, // Model probability used for EV and grading
       bestPrice: bestPrice.price,
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
@@ -1698,7 +1608,9 @@ export async function analyzeGame(
       // FIX: Blend spread cover probability with market consensus (like moneylines and totals already do)
       // Without blending, the raw Elo model can disagree with the market by 10+ points on large
       // spreads (e.g., Duke -17.5 vs Notre Dame), producing inflated edges (30%+) that aren't real.
-      const marketCoverProb = americanToImpliedProbability(bestEntry.outcome.price)
+      const oppositeSpreadPrice = game.spreads?.find(m => m.bookmaker === bestEntry.book)
+        ?.outcomes.find(o => o.name !== teamName && o.point === -point)?.price
+      const marketCoverProb = twoWayNoVigProbability(bestEntry.outcome.price, oppositeSpreadPrice)
       const baseEloCoverProb = eloResult.confidence
         ? blendWithMarket(calibratedEloCoverProb, marketCoverProb, eloResult.confidence)
         : calibratedEloCoverProb
@@ -1986,7 +1898,8 @@ export async function analyzeGame(
         
         // FIX 1: Blend totals probability with market consensus (like moneylines do)
         // The market implied probability is the best proxy for "consensus" on totals
-        const marketOverProb = americanToImpliedProbability(bestOverEntry.outcome.price)
+        const oppositeUnderPrice = underEntries.find(e => e.book === bestOverEntry.book)?.outcome.price
+        const marketOverProb = twoWayNoVigProbability(bestOverEntry.outcome.price, oppositeUnderPrice)
         const blendedOverProb = eloResult.confidence 
           ? blendWithMarket(baseEloOverProb, marketOverProb, eloResult.confidence)
           : baseEloOverProb
@@ -1997,7 +1910,7 @@ export async function analyzeGame(
         const eloOverProb = applyAdjustment(paceAdjustedOverProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
-        const impliedProb = marketOverProb
+        const impliedProb = americanToImpliedProbability(bestOverEntry.outcome.price)
         
         // Edge is blended probability - implied probability
         const edge = eloOverProb - impliedProb
@@ -2112,7 +2025,8 @@ export async function analyzeGame(
         const baseEloUnderProb = underResult.probability
         
         // FIX 1: Blend totals probability with market consensus (like moneylines do)
-        const marketUnderProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
+        const oppositeOverPrice = overEntries.find(e => e.book === bestUnderEntry.book)?.outcome.price
+        const marketUnderProb = twoWayNoVigProbability(bestUnderEntry.outcome.price, oppositeOverPrice)
         const blendedUnderProb = eloResult.confidence 
           ? blendWithMarket(baseEloUnderProb, marketUnderProb, eloResult.confidence)
           : baseEloUnderProb
@@ -2123,7 +2037,7 @@ export async function analyzeGame(
         const eloUnderProb = applyAdjustment(paceAdjustedUnderProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
-        const impliedProb = marketUnderProb
+        const impliedProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
         
         // Edge is blended probability - implied probability
         const edge = eloUnderProb - impliedProb
@@ -2280,7 +2194,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
   
   if (eloLeague) {
     try {
-      if (injuries && injuries.length > 0) {
+      if ((injuries?.length || 0) > 0 || ((game as EnrichedGame).espnData?.probables?.length || 0) > 0) {
         const [homeTopScorers, awayTopScorers] = await Promise.all([
           getTopScorersForTeam(game.homeTeam, game.sport),
           getTopScorersForTeam(game.awayTeam, game.sport)
@@ -2299,7 +2213,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           eloLeague,
           game.homeTeam,
           game.awayTeam,
-          injuries,
+          injuries || [],
           homeTopScorers,
           awayTopScorers,
           homePitcher ?? undefined,
@@ -2377,13 +2291,9 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     // Try to get consensus probability (requires 2+ books)
     // If not available, use the single book's implied probability
     const consensus = calculateConsensusProbability(game, team)
-    const consensusProb = consensus?.consensusProb ?? bestPrice.impliedProb
-    const bookPrices = consensus?.bookPrices ?? [{
-      book: bestPrice.book,
-      price: bestPrice.price,
-      impliedProb: bestPrice.impliedProb,
-      noVigProb: bestPrice.impliedProb
-    }]
+    if (!consensus) continue // Require paired market sides to remove bookmaker vig.
+    const consensusProb = consensus.consensusProb
+    const bookPrices = consensus.bookPrices
     
     const isHomeTeam = team === game.homeTeam
     
@@ -2450,7 +2360,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       commenceTime: game.commenceTime,
       team,
       betType: 'moneyline',
-      consensusProbability: Math.round(consensusProb * 1000) / 10,
+      consensusProbability: Math.round(modelProbability * 1000) / 10, // Model probability, not market anchor
       bestPrice: bestPrice.price,
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
@@ -2523,7 +2433,9 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       const isHomeTeam = teamName === game.homeTeam || 
                          teamName.toLowerCase() === game.homeTeam.toLowerCase()
       
-      const marketCoverProb = americanToImpliedProbability(bestEntry.outcome.price)
+      const oppositeSpreadPrice = game.spreads?.find(m => m.bookmaker === bestEntry.book)
+        ?.outcomes.find(o => o.name !== teamName && o.point === -point)?.price
+      const marketCoverProb = twoWayNoVigProbability(bestEntry.outcome.price, oppositeSpreadPrice)
       
       let coverProb: number
       let spreadConfidence: string | undefined
@@ -2572,7 +2484,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         console.log(`[analyzeGameForSportQuery] No Elo for spread analysis, using market implied prob (${(marketCoverProb * 100).toFixed(1)}%) for ${teamName} ${point > 0 ? '+' : ''}${point}`)
       }
       
-      const impliedProb = marketCoverProb
+      const impliedProb = americanToImpliedProbability(bestEntry.outcome.price)
       const edge = coverProb - impliedProb
       
       // SANITY CHECK: Reject spreads with impossibly large edges (likely Elo miscalibration)
@@ -2664,7 +2576,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         
         // Only filter out extremely bad odds (worse than -500)
         if (bestOverEntry.outcome.price >= -500) {
-          const marketOverProb = americanToImpliedProbability(bestOverEntry.outcome.price)
+          const oppositeUnderPrice = underEntries.find(e => e.book === bestOverEntry.book)?.outcome.price
+        const marketOverProb = twoWayNoVigProbability(bestOverEntry.outcome.price, oppositeUnderPrice)
           
           let overProb: number
           let overConfidence: string | undefined
@@ -2685,7 +2598,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
             console.log(`[analyzeGameForSportQuery] No Elo for total analysis, using market implied prob (${(marketOverProb * 100).toFixed(1)}%) for Over ${line}`)
           }
           
-          const impliedProb = marketOverProb
+          const impliedProb = americanToImpliedProbability(bestOverEntry.outcome.price)
           const edge = overProb - impliedProb
           const ev = calculateExpectedValue(bestOverEntry.outcome.price, overProb)
           const roi = calculateROI(ev)
@@ -2733,7 +2646,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         
         // Only filter out extremely bad odds (worse than -500)
         if (bestUnderEntry.outcome.price >= -500) {
-          const marketUnderProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
+          const oppositeOverPrice = overEntries.find(e => e.book === bestUnderEntry.book)?.outcome.price
+        const marketUnderProb = twoWayNoVigProbability(bestUnderEntry.outcome.price, oppositeOverPrice)
           
           let underProb: number
           let underConfidence: string | undefined
@@ -2754,7 +2668,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
             console.log(`[analyzeGameForSportQuery] No Elo for total analysis, using market implied prob (${(marketUnderProb * 100).toFixed(1)}%) for Under ${line}`)
           }
           
-          const impliedProb = marketUnderProb
+          const impliedProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
           const edge = underProb - impliedProb
           const ev = calculateExpectedValue(bestUnderEntry.outcome.price, underProb)
           const roi = calculateROI(ev)
@@ -3134,14 +3048,14 @@ export async function computeBestBets(
   // Sort: locks first, then strong, then value, each sub-sorted by score
   const tierOrder: Record<string, number> = { lock: 0, strong: 1, value: 2 }
   tieredBets.sort((a, b) => {
-    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] ?? 2) - (tierOrder[b.confidenceTier || 'value'] ?? 2)
     if (tierDiff !== 0) return tierDiff
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   
-  const bestBet = tieredBets[0] || null
-  const runnerUp = tieredBets[1] || null
+  let bestBet = tieredBets[0] || null
+  let runnerUp = tieredBets[1] || null
   
   let reason: string | null = null
   if (!bestBet) {
@@ -3256,7 +3170,7 @@ export async function computeBestBets(
   
   // Sort tieredEloBets: locks first, then strong, then value
   tieredEloBets.sort((a, b) => {
-    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] ?? 2) - (tierOrder[b.confidenceTier || 'value'] ?? 2)
     if (tierDiff !== 0) return tierDiff
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
@@ -3327,7 +3241,7 @@ export async function computeBestBets(
     // Edge gate: picks without meaningful edge drop to value tier without
     // consuming a Lock/Strong slot. A later pick with real edge can still
     // claim the slot.
-    if (bet.edge < MIN_EDGE_FOR_TOP_TIER) {
+    if (!isEligibleForTopPicks(bet)) {
       globalTierMap.set(key, 'value')
       edgeGatedCount++
       continue
@@ -3343,6 +3257,12 @@ export async function computeBestBets(
       continue
     }
     
+    // Team Elo alone is not a calibrated scoring-totals model.
+    if (bet.betType === 'total') {
+      globalTierMap.set(key, 'value')
+      continue
+    }
+
     if (globalLockCount < MAX_LOCKS) {
       globalTierMap.set(key, 'lock')
       globalLockCount++
@@ -3375,18 +3295,29 @@ export async function computeBestBets(
   
   // Re-sort both lists after tier update: locks first, then strong, then value
   tieredBets.sort((a, b) => {
-    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] ?? 2) - (tierOrder[b.confidenceTier || 'value'] ?? 2)
     if (tierDiff !== 0) return tierDiff
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   tieredEloBets.sort((a, b) => {
-    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] ?? 2) - (tierOrder[b.confidenceTier || 'value'] ?? 2)
     if (tierDiff !== 0) return tierDiff
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   
+  // Canonical official picks: calculate only AFTER global edge/price/game gates.
+  const officialPicks = allMergedBets
+    .filter(b => {
+      const key = `${b.gameId}:${b.team}:${b.betType}`
+      return globalTierMap.get(key) === 'lock' || globalTierMap.get(key) === 'strong'
+    })
+    .map(b => ({ ...b, confidenceTier: globalTierMap.get(`${b.gameId}:${b.team}:${b.betType}`)! }))
+    .sort((a,b) => a.confidenceTier === b.confidenceTier ? b.score-a.score : a.confidenceTier === 'lock' ? -1 : 1)
+  bestBet = officialPicks[0] || null
+  runnerUp = officialPicks[1] || null
+
   console.log(`[computeBestBets] Global re-tier: ${globalLockCount} locks, ${globalStrongCount} strong (from ${allMergedBets.length} unique bets)`)
   
   return {
@@ -4330,7 +4261,7 @@ function getSecondsUntil2amET(): number {
 // Bump this version whenever the best-bet algorithm changes materially
 // (e.g. injury disqualification, scoring changes, filter changes).
 // Cached results with a different version are automatically invalidated.
-const BEST_BET_CACHE_VERSION = 3  // v3: spread quality bonus + spread/Elo penalties
+const BEST_BET_CACHE_VERSION = 4  // v4: true single-book odds, qualified Elo and canonical top picks
 
 /**
  * Cache the best bet result in Postgres
@@ -4363,7 +4294,7 @@ export async function cacheBestBet(result: BestBetResult): Promise<void> {
  */
 export async function getCachedBestBet(): Promise<BestBetResult | null> {
   const { cachedRead } = await import('@/lib/redis-cache')
-  return cachedRead('bestBet:cached', 120, async () => {
+  return cachedRead('bestBet:cached:v4', 120, async () => {
     if (!isDbConfigured()) return null
     
     try {
@@ -5162,7 +5093,7 @@ export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription:
 
 // Cache keys for parlay and sport bets
 const PARLAY_CACHE_KEY = 'betanalytics:parlay'
-const SPORT_BETS_CACHE_KEY = 'betanalytics:sport-bets'
+const SPORT_BETS_CACHE_KEY = 'betanalytics:sport-bets:elo-integrity-v2'
 
 /**
  * Cache parlay result

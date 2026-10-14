@@ -98,15 +98,15 @@ function matchGames(oddsGame: Game, espnGame: ESPNGameData): boolean {
  * Convert ESPN odds to Game format for best bet computation
  * This allows on-demand computation when the cache is empty
  * 
- * IMPORTANT: The bet-ranking algorithm requires at least 2 bookmakers for consensus calculation.
- * Since ESPN only provides one source (typically DraftKings), we create entries for multiple
- * bookmakers with the same odds. This is valid because ESPN's odds represent the market consensus.
+ * ESPN generally provides a single attributable sportsbook. Never duplicate
+ * it as another bookmaker: that fabricates line-shopping or market consensus.
+ * Single-book two-sided quotes can still be de-vigged by the Elo analysis.
  */
 /**
  * Convert ESPN odds to EnrichedGame format for best bet computation
  * Now accepts optional ESPN game data to include injuries
  */
-function convertESPNOddsToGame(espnOdds: ESPNOdds, espnGameData?: ESPNGameData): EnrichedGame {
+export function convertESPNOddsToGame(espnOdds: ESPNOdds, espnGameData?: ESPNGameData): EnrichedGame {
   const sportKeyMap: Record<string, string> = {
     'NBA': 'basketball_nba',
     'NFL': 'americanfootball_nfl',
@@ -125,9 +125,8 @@ function convertESPNOddsToGame(espnOdds: ESPNOdds, espnGameData?: ESPNGameData):
   
   const sportKey = sportKeyMap[espnOdds.league] || espnOdds.sport
   
-  // Create entries for multiple bookmakers to satisfy consensus calculation requirement
-  // ESPN typically shows DraftKings odds, but we duplicate for FanDuel to enable consensus
-  const bookmakers = ['DraftKings', 'FanDuel']
+  // Preserve the actual source; never fabricate a second sportsbook quote.
+  const bookmakers = [espnOdds.provider || 'DraftKings']
   
   // SPREAD SIGN CONVENTION:
   // - Favorite team gets NEGATIVE spread (e.g., -6.5 means must win by > 6.5)
