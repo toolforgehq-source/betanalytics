@@ -30,3 +30,6 @@ jobs:
  
       - name: Run tests
         run: pnpm test
+
+      - name: Typecheck changed prediction pipeline
+        run: pnpm exec tsc --noEmit
