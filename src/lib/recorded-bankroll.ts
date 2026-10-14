@@ -1,3 +1,4 @@
+import { MODEL_VERSION } from './model-policy'
 import type { TrackedRecommendation } from './recommendation-tracking'
 
 /** Paper-only bankroll report built from selections frozen before kickoff.
@@ -52,7 +53,7 @@ function money(value: number) { return Math.round((value + Number.EPSILON) * 100
 export function simulateRecordedTopThree(
   records: TrackedRecommendation[],
   startingBankroll = 60,
-  modelVersion = 'elo-integrity-v2'
+  modelVersion = MODEL_VERSION
 ): BankrollSimulation {
   const groups = new Map<string, TrackedRecommendation[]>()
   for (const r of records) {
