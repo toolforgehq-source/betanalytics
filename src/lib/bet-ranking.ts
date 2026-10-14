@@ -4311,7 +4311,7 @@ function getSecondsUntil2amET(): number {
 // Bump this version whenever the best-bet algorithm changes materially
 // (e.g. injury disqualification, scoring changes, filter changes).
 // Cached results with a different version are automatically invalidated.
-const BEST_BET_CACHE_VERSION = 5  // v5: verified playoff series context & zero untested motivation bonus
+const BEST_BET_CACHE_VERSION = 6  // v6: evidence-first Elo + coherent win/push/loss settlement across sports
 
 /**
  * Cache the best bet result in Postgres
@@ -4344,7 +4344,7 @@ export async function cacheBestBet(result: BestBetResult): Promise<void> {
  */
 export async function getCachedBestBet(): Promise<BestBetResult | null> {
   const { cachedRead } = await import('@/lib/redis-cache')
-  return cachedRead('bestBet:cached:v5', 120, async () => {
+  return cachedRead('bestBet:cached:v6', 120, async () => {
     if (!isDbConfigured()) return null
     
     try {
@@ -5143,7 +5143,7 @@ export function formatFilteredBestBetResponse(bet: RankedBet, filterDescription:
 
 // Cache keys for parlay and sport bets
 const PARLAY_CACHE_KEY = 'betanalytics:parlay'
-const SPORT_BETS_CACHE_KEY = 'betanalytics:sport-bets:elo-integrity-v2'
+const SPORT_BETS_CACHE_KEY = 'betanalytics:sport-bets:elo-evidence-v3'
 
 /**
  * Cache parlay result
