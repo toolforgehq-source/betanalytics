@@ -84,14 +84,14 @@ export default async function MethodologyPage() {
                   <Link href="/methodology" className="text-sm text-cyan-400 font-medium">
                     Methodology
                   </Link>
-                  <Link href="/login" className="text-sm text-slate-300 hover:text-white transition-colors">
-                    Sign In
+                  <Link href="/chat" className="text-sm text-slate-300 hover:text-white transition-colors">
+                    Free Assistant
                   </Link>
                   <Link 
-                    href="/signup" 
+                    href="/picks" 
                     className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25"
                   >
-                    Start Free Trial
+                    View Free Picks
                   </Link>
                 </div>
               </>
@@ -683,10 +683,10 @@ export default async function MethodologyPage() {
               Now that you understand our methodology, try it yourself with a free trial.
             </p>
             <Link 
-              href="/signup" 
+              href="/picks" 
               className="inline-block px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/30"
             >
-              Start 3-Day Free Trial
+              View Free Picks
             </Link>
             <p className="text-sm text-slate-400 mt-4">
               No credit card required.
