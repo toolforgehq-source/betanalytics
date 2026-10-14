@@ -6,7 +6,7 @@ vi.mock('@/lib/elo',()=>({getEloRatings:vi.fn(),updateEloRatings:vi.fn()}))
 import { getEloRatings, updateEloRatings } from '@/lib/elo'
 import {
   monthKeysForLeague, parseCompletedESPNEvents,
-  collectFreeEloHistory, bootstrapEmptyElo
+  collectFreeEloHistory, bootstrapEmptyElo, historicalScoreboardDates
 } from '@/lib/free-elo-bootstrap'
 
 const TODAY=new Date('2026-10-13T20:00:00Z')
@@ -24,9 +24,9 @@ function event(id:string, month='202509') {
 }
 function dataFetcher() {
   return vi.fn(async (input:unknown) => {
-    const url=String(input), m=url.match(/dates=(\d{6})/)?.[1]
+    const url=String(input), m=url.match(/dates=(\d{6,8})/)?.[1]
     if(!m) throw Error('Missing month')
-    const n=url.includes('/baseball/')?75:url.includes('mens-college-basketball')?80:45
+    const n=url.includes('/baseball/')?75:url.includes('mens-college-basketball')?10:url.includes('college-football')?8:45
     return {ok:true,status:200,json:async()=>({
       events:Array.from({length:n},(_,i)=>event('id-'+m+'-'+i,m))
     })} as Response
@@ -42,6 +42,11 @@ describe('Safe free historical Elo initialization',()=>{
     expect(nhl[nhl.length-1]).toBe('202610')
     expect(mlb).toHaveLength(9)
     expect(mlb[mlb.length-1]).toBe('202610')
+    const ncaaf = historicalScoreboardDates('NCAAF', TODAY)
+    expect(ncaaf).toContain('20260912')
+    expect(ncaaf).not.toContain('20260712')
+    expect(ncaaf).not.toContain('20261014')
+    expect(ncaaf.length).toBeGreaterThan(130)
   })
   it('accepts only completed, valid, regular/postseason ESPN games',()=>{
     const complete=event('good')
