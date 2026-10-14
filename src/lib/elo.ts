@@ -1047,9 +1047,15 @@ export const SUPPORTED_LEAGUES = Object.keys(LEAGUE_TO_ESPN)
  * Process game results and update Elo ratings
  * This is the main function called by the cron job
  */
-export async function updateEloRatings(games: GameResult[]): Promise<EloRatings> {
-  // Get existing ratings or initialize
-  let eloData = await getEloRatings()
+/** Pure, deterministic Elo replay without reads or writes to live storage. */
+export function replayEloRatings(
+  games: GameResult[],
+  existing?: EloRatings | null,
+  alreadyProcessed: ReadonlySet<string> = new Set()
+): { ratings: EloRatings, processedIds: Set<string>, newGamesProcessed: number } {
+  const eloData: EloRatings = existing ? structuredClone(existing) : {
+    ratings: {}, lastUpdated: new Date().toISOString(), gamesProcessed: 0
+  }
   if (!eloData || !eloData.ratings) {
     eloData = {
       ratings: {},
@@ -1061,8 +1067,7 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
   eloData.ratings = eloData.ratings || {}
   eloData.gamesProcessed = eloData.gamesProcessed || 0
   
-  // Get already processed game IDs to avoid duplicates
-  const processedIds = await getProcessedGameIds()
+  const processedIds = new Set(alreadyProcessed)
   
   // Sort games by date to process chronologically
   const sortedGames = [...games].sort(
@@ -1073,7 +1078,7 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
   
   for (const game of sortedGames) {
     // Skip already processed games and non-competitive exhibition teams.
-    if (processedIds.has(game.gameId) ||
+    if (processedIds.has(game.gameId) || processedIds.has(`${game.league}:${game.gameId}`) ||
         !isCompetitiveEloMatch(game.league, game.homeTeamName, game.awayTeamName)) continue
     
     const homeKey = `${game.league}:${game.homeTeamId}`
@@ -1222,8 +1227,8 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
     awayTeam.marginStats.marginVariance = awayAvgSquared - (awayTeam.marginStats.avgMargin * awayTeam.marginStats.avgMargin)
     awayTeam.marginStats.marginStdDev = Math.sqrt(Math.max(0, awayTeam.marginStats.marginVariance))
     
-    // Mark game as processed
-    processedIds.add(game.gameId)
+    // League-prefix prevents game-ID collisions across sports.
+    processedIds.add(`${game.league}:${game.gameId}`)
     newGamesProcessed++
   }
   
@@ -1231,13 +1236,17 @@ export async function updateEloRatings(games: GameResult[]): Promise<EloRatings>
   eloData.lastUpdated = new Date().toISOString()
   eloData.gamesProcessed += newGamesProcessed
   
-  // Save to Redis
-  await saveEloRatings(eloData)
+  return { ratings: eloData, processedIds, newGamesProcessed }
+}
+
+/** Preserve the existing live update contract around the same pure replay. */
+export async function updateEloRatings(games: GameResult[]): Promise<EloRatings> {
+  const [previous, ids] = await Promise.all([getEloRatings(), getProcessedGameIds()])
+  const { ratings, processedIds, newGamesProcessed } = replayEloRatings(games, previous, ids)
+  await saveEloRatings(ratings)
   await saveProcessedGameIds(processedIds)
-  
-  console.log(`[Elo] Updated ratings: ${newGamesProcessed} new games processed, ${Object.keys(eloData.ratings).length} teams tracked`)
-  
-  return eloData
+  console.log(`[Elo] Updated ratings: ${newGamesProcessed} new games processed, ${Object.keys(ratings.ratings).length} teams tracked`)
+  return ratings
 }
 
 /**
