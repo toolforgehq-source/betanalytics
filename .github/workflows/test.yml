@@ -36,3 +36,37 @@ jobs:
 
       - name: Production build (matches Vercel)
         run: pnpm run build
+
+  shadow-elo:
+    name: Validate real ESPN history (no production writes)
+    if: github.event_name == 'pull_request' && github.head_ref == 'fix/elo-pick-integrity-audit-20261014'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Replay verified history in memory
+        env:
+          ELO_SHADOW_REBUILD: '1'
+        run: pnpm exec vitest run src/__tests__/elo-history-integration.test.ts
+
+      - name: Upload audited inputs and shadow Elo
+        uses: actions/upload-artifact@v4
+        with:
+          name: betanalytics-shadow-elo
+          path: artifacts/elo-shadow-*.json
+          retention-days: 14
