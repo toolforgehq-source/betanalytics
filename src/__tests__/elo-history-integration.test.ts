@@ -18,7 +18,7 @@ const LEAGUE_TEAMS_MIN: Record<string,number> = {
 describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN results', () => {
   it('reconstructs and publishes evidence with adequate league coverage', async () => {
     const collectedAt = new Date()
-    const { games, byLeague } = await collectFreeEloHistory(collectedAt)
+    const { games, byLeague } = await collectFreeEloHistory(collectedAt,fetch,{ extendedProPlayoffResearch:true })
     expect(games.length).toBeGreaterThan(2000)
     const { ratings, processedIds, newGamesProcessed } = replayEloRatings(games)
     expect(newGamesProcessed).toBe(games.length)
