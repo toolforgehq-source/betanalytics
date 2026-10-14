@@ -22,6 +22,9 @@ export function validatedSituationalShift(
   _market: BetMarket,
   _researchShift: number
 ): number {
+  void _league
+  void _market
+  void _researchShift
   // Intentionally zero in v3: previous additive values were unvalidated and
   // could even imply BOTH teams gained win probability from the same rivalry.
   return 0
@@ -79,4 +82,22 @@ export function isSaneTwoWayMarketPrice(americanOdds: number): boolean {
   return Number.isFinite(americanOdds) && Number.isInteger(americanOdds) &&
     americanOdds !== 0 && Math.abs(americanOdds) >= 100 &&
     americanOdds > -10_000 && americanOdds < 10_000
+}
+
+/** Market no-vig spread prices describe the chance to win conditional on
+ * NOT pushing. Preserve the Elo model's push mass before blending.
+ */
+export function blendSpreadWithPush(
+  eloWin: number, eloPush: number, marketConditionalWin: number, eloWeight: number
+): number {
+  if (![eloWin,eloPush,marketConditionalWin,eloWeight].every(Number.isFinite) ||
+      eloWin<0 || eloPush<0 || eloWin+eloPush>1+1e-10 ||
+      marketConditionalWin<0 || marketConditionalWin>1 ||
+      eloWeight<0 || eloWeight>1) {
+    throw new Error('Invalid market/Elo spread blend')
+  }
+  const active = 1-eloPush
+  if (active<=0) return 0
+  const eloConditional = eloWin/active
+  return active * (eloWeight*eloConditional+(1-eloWeight)*marketConditionalWin)
 }
