@@ -1707,8 +1707,7 @@ export async function analyzeGame(
       // FIX: Blend spread cover probability with market consensus (like moneylines and totals already do)
       // Without blending, the raw Elo model can disagree with the market by 10+ points on large
       // spreads (e.g., Duke -17.5 vs Notre Dame), producing inflated edges (30%+) that aren't real.
-      const oppositeSpreadPrice = game.spreads?
-        .find(m => m.bookmaker === bestEntry.book)
+      const oppositeSpreadPrice = game.spreads?.find(m => m.bookmaker === bestEntry.book)
         ?.outcomes.find(o => o.name !== teamName && o.point === -point)?.price
       const marketCoverProb = twoWayNoVigProbability(bestEntry.outcome.price, oppositeSpreadPrice)
       const baseEloCoverProb = eloResult.confidence
@@ -2533,8 +2532,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       const isHomeTeam = teamName === game.homeTeam || 
                          teamName.toLowerCase() === game.homeTeam.toLowerCase()
       
-      const oppositeSpreadPrice = game.spreads?
-        .find(m => m.bookmaker === bestEntry.book)
+      const oppositeSpreadPrice = game.spreads?.find(m => m.bookmaker === bestEntry.book)
         ?.outcomes.find(o => o.name !== teamName && o.point === -point)?.price
       const marketCoverProb = twoWayNoVigProbability(bestEntry.outcome.price, oppositeSpreadPrice)
       
