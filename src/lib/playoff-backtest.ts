@@ -1,3 +1,61 @@
+import type { GameResult } from './elo'
+
+export interface PregameSeriesState {
+  league: 'MLB' | 'NBA' | 'NHL'
+  seasonYear: number
+  seriesGameNumber: number
+  homeSeriesWins: number
+  awaySeriesWins: number
+}
+
+/** Build PRE-game series scores from *prior completed games only*.
+ * Never use ESPN series.summary on historical completed games; it includes
+ * the very outcome we're supposed to predict and would leak the answer.
+ * For same-day matches, predictions use the state before the entire day.
+ */
+export function reconstructPregameSeriesStates(games: GameResult[]): Map<string, PregameSeriesState> {
+  const results = new Map<string, PregameSeriesState>()
+  const series = new Map<string, Map<string, number>>()
+  const sorted = [...games].sort((a,b) => Date.parse(a.date)-Date.parse(b.date) || a.gameId.localeCompare(b.gameId))
+  const byDay = new Map<string, GameResult[]>()
+  for (const game of sorted) {
+    const day = game.date.slice(0,10)
+    if (!byDay.has(day)) byDay.set(day,[])
+    byDay.get(day)!.push(game)
+  }
+  const keyFor = (g: GameResult) => `${g.league}:${g.date.slice(0,4)}:${g.playoffRound}:${[g.homeTeamId,g.awayTeamId].sort().join(':')}`
+  const eligible = (g: GameResult) =>
+    g.seasonType===3 && ['MLB','NHL','NBA'].includes(g.league) &&
+    Boolean(g.playoffRound) && Number.isInteger(g.playoffGameNumber) &&
+    g.playoffGameNumber!>=1 && g.homeScore!==g.awayScore
+
+  for (const dayGames of byDay.values()) {
+    for (const game of dayGames) {
+      if (!eligible(game)) continue
+      const wins = series.get(keyFor(game)) || new Map<string,number>()
+      const home = wins.get(game.homeTeamId) || 0
+      const away = wins.get(game.awayTeamId) || 0
+      // Missing earlier games must not be mistaken for a Game N pregame record.
+      if (home+away !== game.playoffGameNumber!-1) continue
+      results.set(game.gameId,{
+        league:game.league as PregameSeriesState['league'],
+        seasonYear:Number(game.date.slice(0,4)),
+        seriesGameNumber:game.playoffGameNumber!,
+        homeSeriesWins:home, awaySeriesWins:away,
+      })
+    }
+    for (const game of dayGames) {
+      if (!eligible(game)) continue
+      const key = keyFor(game)
+      const wins=series.get(key) || new Map<string,number>()
+      const winner=game.homeScore>game.awayScore ? game.homeTeamId : game.awayTeamId
+      wins.set(winner,(wins.get(winner)||0)+1)
+      series.set(key,wins)
+    }
+  }
+  return results
+}
+
 /**
  * Research-only, chronological playoff context evaluation.
  *
