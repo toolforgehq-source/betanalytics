@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { collectFreeEloHistory } from '@/lib/free-elo-bootstrap'
-import { replayEloRatings, calculateWinProbability, getEloSeasonYear, applySeasonRegression, type GameResult, type EloRatings } from '@/lib/elo'
+import { replayEloRatings, calculateWinProbability, calculateExpectedMargin, getEloSeasonYear, applySeasonRegression, type GameResult, type EloRatings } from '@/lib/elo'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join } from 'node:path'
@@ -35,7 +35,7 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
     type Pregame = { gameId:string, league:string, date:string,
       homeTeam:string, awayTeam:string, homeScore:number, awayScore:number,
       actualHomeWin:number, pHome:number, minGamesCurrentSeason:number,
-      isNeutralSite:boolean }
+      actualMargin:number, expectedEloMargin:number, isNeutralSite:boolean }
     const pregame: Pregame[] = []
     let state: EloRatings | null = null
     let seen = new Set<string>()
@@ -67,6 +67,8 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
           homeScore:game.homeScore,awayScore:game.awayScore,
           actualHomeWin:game.homeScore > game.awayScore ? 1 : 0,
           pHome:p,minGamesCurrentSeason:Math.min(homeGames,awayGames),
+          actualMargin:game.homeScore-game.awayScore,
+          expectedEloMargin:calculateExpectedMargin(homeRating,awayRating,game.league,game.isNeutralSite===true),
           isNeutralSite:game.isNeutralSite === true})
       }
       const next = replayEloRatings(dayGames,state,seen)
@@ -77,7 +79,14 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
       const ps = pregame.filter(g => g.league === league)
       const brier = ps.length
         ? ps.reduce((sum,g) => sum + Math.pow(g.pHome-g.actualHomeWin,2),0)/ps.length : null
+      const marginMae = ps.length
+        ? ps.reduce((sum,g) => sum+Math.abs(g.actualMargin-g.expectedEloMargin),0)/ps.length : null
+      const naiveZeroMarginMae = ps.length
+        ? ps.reduce((sum,g) => sum+Math.abs(g.actualMargin),0)/ps.length : null
+      const marginBias = ps.length
+        ? ps.reduce((sum,g) => sum+g.expectedEloMargin-g.actualMargin,0)/ps.length : null
       return [league,{predictions:ps.length,brierScore:brier, naiveFiftyFiftyBrier:0.25,
+        eloMarginMae:marginMae, naiveZeroMarginMae, marginBias,
         eligibleTenPlus:ps.filter(g=>g.minGamesCurrentSeason>=10).length}]
     }))
     const playoffHoldout = evaluatePlayoffSeriesHoldout(playoffAB,2026)
@@ -92,7 +101,7 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
     const chronology = JSON.stringify(games)
     const inputChecksum = createHash('sha256').update(chronology).digest('hex')
     const metadata = {
-      type:'read-only-shadow-rebuild', model:'elo-integrity-v2',
+      type:'read-only-shadow-rebuild', model:'elo-evidence-v3-evaluation',
       source:'ESPN public scoreboards (verified completed regular/postseason games)',
       collectedAt:collectedAt.toISOString(), inputSha256:inputChecksum,
       from: games[0]?.date, to:games[games.length-1]?.date,
