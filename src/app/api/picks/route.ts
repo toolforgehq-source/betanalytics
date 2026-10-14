@@ -21,6 +21,7 @@ import { NextResponse } from 'next/server'
 import { getTrackRecord, getAllPicks, type StoredPick } from '@/lib/pick-tracking'
 import { getRecentRecommendations, calculateTrackingStats, enforceDailyCaps } from '@/lib/recommendation-tracking'
 import { getCachedBestBet, type RankedBet } from '@/lib/bet-ranking'
+import { simulateRecordedTopThree } from '@/lib/recorded-bankroll'
 import { dedupeAndEnforceCaps, dedupeToMap, FREEZE_WINDOW_MS, MAX_LOCKS, MAX_STRONG, type PickLike } from '@/lib/enforce-picks'
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
@@ -243,6 +244,7 @@ export async function GET() {
 
     // Calculate stats from the already-fetched recommendations (avoids a second Redis round-trip)
     const stats = await calculateTrackingStats(recentRecos)
+    const bankrollSimulation = simulateRecordedTopThree(recentRecos, 60)
 
     // Separate picks into today's and historical
     // Use the "betting day" boundary: a day runs until 2 AM ET the next morning.
@@ -402,6 +404,7 @@ export async function GET() {
         bySport: stats.bySport,
         byConfidence: stats.byConfidence,
         calibration: stats.calibration,
+        bankrollSimulation,
       },
       lastUpdated: cachedBestBet?.calculatedAt || new Date().toISOString()
     })
