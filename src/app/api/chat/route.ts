@@ -1610,8 +1610,7 @@ export async function POST(request: Request) {
     // Free Elo replies need no account, subscription, or paid AI provider.
     // External LLM mode is explicitly operator-opt-in; it remains authenticated.
     const visitorSession = await auth().catch(() => null)
-    if (process.env.ENABLE_EXTERNAL_AI_CHAT !== 'true' ||
-        !visitorSession?.user?.id || !process.env.ANTHROPIC_API_KEY) {
+    if (process.env.ENABLE_EXTERNAL_AI_CHAT !== 'true' || !visitorSession?.user?.id) {
       return await respondWithPublicElo(request)
     }
 
