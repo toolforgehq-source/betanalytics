@@ -49,7 +49,7 @@ interface PinnedPick {
 
 // v3: Bumped to store snapshot data on pins so locked-in picks are never dropped
 // when ESPN removes in-progress games from the odds feed.
-const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks-v3:'
+const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks-v4-elo-integrity:'
 
 /**
  * Load today's pinned tier assignments from the database.
@@ -275,7 +275,7 @@ export async function GET() {
     // Get today's recommendations (pending or locked-in) from recommendation system.
     // Exclude voided recommendations — these were superseded before game start and shouldn't display.
     const todaysRecommendations = recentRecos.filter(r => {
-      if (r.status === 'void') return false // Superseded picks don't show on the page
+      if (r.status === 'void' || r.modelVersion !== 'elo-integrity-v2') return false // Exclude historical-model recommendations from today's official picks
       const recoDate = new Date(r.commenceTime || r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
       return recoDate === todayStr
     })
@@ -383,6 +383,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      officialModelVersion: 'elo-integrity-v2',
       todaysPicks,
       todaysRecommendations,
       livePicks: finalPicks,  // ALWAYS deduped + tier-capped + pinned

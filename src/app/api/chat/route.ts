@@ -1266,6 +1266,8 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   const todayStr = bettingDay.toLocaleDateString('en-US', { timeZone: 'America/New_York' })
   
   const todaysRecommendations = recentRecos.filter(r => {
+    // Do not merge last model version's bets into the Elo v2 ranking.
+    if (r.modelVersion !== 'elo-integrity-v2' || r.status === 'void') return false
     const recoDate = new Date(r.commenceTime || r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
     return recoDate === todayStr
   })
