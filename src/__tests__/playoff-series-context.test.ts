@@ -20,7 +20,10 @@ function event(homeWins: number, awayWins: number, gameNo: number, overrides: Re
       ],
       series: {
         type: 'playoff', title: 'Playoff Series',
-        summary: 'MIL leads series 2-0',
+        summary: homeWins === awayWins
+          ? `Series tied ${homeWins}-${awayWins}`
+          : awayWins > homeWins ? `MIL leads series ${awayWins}-${homeWins}`
+          : `LAD leads series ${homeWins}-${awayWins}`,
         completed: false, totalCompetitions: 7,
         competitors: [{ id: '19', wins: homeWins, ties: 0 },{ id: '8', wins: awayWins, ties: 0 }],
       },
@@ -89,6 +92,9 @@ describe('Verified playoff series context — ESPN Brewers/Dodgers NLCS', () => 
     impossible.competitions[0].series.competitors[1].id = 'not-the-brewers'
     expect(parseESPNPlayoffContext(impossible,'MLB')?.status).toBe('unverified')
     expect(isEligibleForTopPicks(candidate(null))).toBe(false)
+    const contradicted = event(0,2,3)
+    contradicted.competitions[0].series.summary = 'Series tied 1-1'
+    expect(parseESPNPlayoffContext(contradicted,'MLB')?.status).toBe('unverified')
   })
 
   it('rejects postgame ESPN records — prevents leaking the result into pregame analysis', () => {
