@@ -69,7 +69,7 @@ export function simulateRecordedTopThree(
   let bankroll = startingBankroll, peak = bankroll, maxDrawdown = 0
   let invested = 0, wins = 0, losses = 0, pushes = 0
   let daysTested = 0, incompleteDays = 0, unverifiedPrices = 0
-  for (const [,dayPicks] of [...groups.entries()].sort((a,b) => a[0].localeCompare(b[0]))) {
+  for (const [,dayPicks] of Array.from(groups.entries()).sort((a,b) => a[0].localeCompare(b[0]))) {
     const ranked = [...dayPicks].sort((a,b) => {
       if (a.confidenceTier !== b.confidenceTier) return a.confidenceTier === 'lock' ? -1 : 1
       return (b.score || 0) - (a.score || 0)
