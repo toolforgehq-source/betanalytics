@@ -32,6 +32,19 @@ function unitsWonFor(oddsValue: number | undefined, status: string): number {
 }
 
 interface PerformanceData {
+  bankrollSimulation?: {
+    modelVersion: string
+    startingBankroll: number
+    endingBankroll: number
+    profit: number
+    roiPercent: number
+    maximumDrawdownPercent: number
+    picks: number
+    wins: number
+    losses: number
+    incompleteDays: number
+    insufficientSample: boolean
+  } | null
   overall: TierStats
   lock: TierStats
   strong: TierStats
@@ -215,6 +228,7 @@ export default function PerformancePageClient() {
 
         setData({
           overall: buildStats(trackedPicks),
+          bankrollSimulation: json.stats?.bankrollSimulation ?? null,
           lock: buildStats(lockPicks),
           strong: buildStats(strongPicks),
           recentPicks: settledTrackedRecos,  // Show ALL historical picks, not just 30
@@ -331,6 +345,32 @@ export default function PerformancePageClient() {
                 color="text-cyan-400"
               />
             </div>
+
+            {/* A fixed-version paper bankroll; never market as a proven return. */}
+            {data.bankrollSimulation && (
+              <div className="bg-slate-900/30 border border-slate-800/50 rounded-xl p-6 mb-10">
+                <h3 className="text-lg font-bold mb-2">$60 Top-Three Paper Test</h3>
+                <p className="text-sm text-slate-400 mb-4">
+                  Locked, independently graded picks from the current Elo model only.
+                  Each betting day risks 3%, 2% and 1% on up to three separate games at the first recorded odds.
+                  This is hypothetical performance, not a guarantee of returns.
+                </p>
+                {data.bankrollSimulation.picks === 0 ? (
+                  <p className="text-slate-400">No completed current-model days yet. Earlier model versions are excluded.</p>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <StatCard label="Paper Balance" value={`${data.bankrollSimulation.endingBankroll.toFixed(2)}`} color="text-white" />
+                    <StatCard label="Paper Profit / Loss" value={`${data.bankrollSimulation.profit >= 0 ? '+' : ''}${data.bankrollSimulation.profit.toFixed(2)}`} color={data.bankrollSimulation.profit >= 0 ? 'text-green-400' : 'text-red-400'} />
+                    <StatCard label="Actual-Price ROI" value={`${data.bankrollSimulation.roiPercent.toFixed(1)}%`} color="text-white" />
+                    <StatCard label="Max Drawdown" value={`${data.bankrollSimulation.maximumDrawdownPercent.toFixed(1)}%`} color="text-white" />
+                  </div>
+                )}
+                <p className="text-xs text-slate-500 mt-3">
+                  {data.bankrollSimulation.picks} graded selections; {data.bankrollSimulation.incompleteDays} incomplete days omitted.
+                  {data.bankrollSimulation.insufficientSample ? ' Insufficient sample to infer a profitable edge.' : ' Historical gains cannot guarantee future results.'}
+                </p>
+              </div>
+            )}
 
             {/* Tier Breakdown */}
             <div className="bg-slate-900/30 border border-slate-800/50 rounded-xl p-6 mb-10">
