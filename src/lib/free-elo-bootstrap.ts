@@ -13,19 +13,21 @@ import {
   type EloRatings
 } from '@/lib/elo'
 
-export type BootstrapLeague = 'NHL' | 'NBA' | 'NFL' | 'MLB'
-export const BOOTSTRAP_LEAGUES: readonly BootstrapLeague[] = ['NHL', 'NBA', 'NFL', 'MLB'] as const
+export type BootstrapLeague = 'NHL' | 'NBA' | 'NFL' | 'MLB' | 'NCAAF' | 'NCAAB'
+export const BOOTSTRAP_LEAGUES: readonly BootstrapLeague[] = ['NHL', 'NBA', 'NFL', 'MLB', 'NCAAF', 'NCAAB'] as const
 const ESPN: Record<BootstrapLeague, string> = {
   NHL: 'hockey/nhl',
   NBA: 'basketball/nba',
   NFL: 'football/nfl',
   MLB: 'baseball/mlb',
+  NCAAF: 'football/college-football',
+  NCAAB: 'basketball/mens-college-basketball',
 }
 const MIN_RESULTS: Record<BootstrapLeague, number> = {
-  NHL: 200, NBA: 200, NFL: 40, MLB: 500,
+  NHL: 200, NBA: 200, NFL: 40, MLB: 500, NCAAF: 200, NCAAB: 800,
 }
 const MONTH_WINDOW: Record<BootstrapLeague, number> = {
-  NHL: 14, NBA: 14, NFL: 14, MLB: 9,
+  NHL: 14, NBA: 14, NFL: 14, MLB: 9, NCAAF: 14, NCAAB: 14,
 }
 
 export function monthKeysForLeague(league: BootstrapLeague, today: Date): string[] {
@@ -97,8 +99,13 @@ export async function collectFreeEloHistory(
     for (let offset=0;offset<months.length;offset+=maxConcurrent) {
       const batch=months.slice(offset,offset+maxConcurrent)
       const responses=await Promise.all(batch.map(async month => {
+        // College scoreboards are normally ranked/featured-only unless groups=50
+        // (Division I) and enough event capacity are requested.
+        const isCollege = league === 'NCAAF' || league === 'NCAAB'
+        const maxEvents = isCollege ? 5000 : 1000
         const url='https://site.api.espn.com/apis/site/v2/sports/' +
-          ESPN[league] + '/scoreboard?dates=' + month + '&limit=1000'
+          ESPN[league] + '/scoreboard?dates=' + month +
+          (isCollege ? '&groups=50' : '') + '&limit=' + maxEvents
         const response=await fetcher(url,{
           headers:{Accept:'application/json'},
           cache:'no-store',
@@ -107,7 +114,7 @@ export async function collectFreeEloHistory(
         if (!response.ok) throw new Error('ESPN history HTTP '+response.status+' for '+league+'/'+month)
         const data=await response.json() as {events?:unknown[]}
         if (!Array.isArray(data.events)) throw new Error('Invalid ESPN history for '+league+'/'+month)
-        if(data.events.length >= 1000) throw new Error('Possibly truncated ESPN history '+league+'/'+month)
+        if(data.events.length >= maxEvents) throw new Error('Possibly truncated ESPN history '+league+'/'+month)
         return {month,events:data.events}
       }))
       for(const {events} of responses) {
