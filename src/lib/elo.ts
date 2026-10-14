@@ -746,8 +746,8 @@ export function updateRatingsAfterGame(
 // REDIS STORAGE
 // ============================================
 
-const ELO_RATINGS_KEY = 'elo_ratings'
-const ELO_PROCESSED_GAMES_KEY = 'elo_processed_games'
+const ELO_RATINGS_KEY = process.env.ELO_RATINGS_STORAGE_KEY || 'elo_ratings'
+const ELO_PROCESSED_GAMES_KEY = process.env.ELO_PROCESSED_GAMES_STORAGE_KEY || 'elo_processed_games'
 
 /**
  * Get all Elo ratings from Postgres
@@ -758,7 +758,7 @@ export async function getEloRatings(): Promise<EloRatings | null> {
   try {
     // Read-only shadow selection for branch-isolated staging verification.
     // Production is unchanged unless explicitly configured with this key.
-    const readKey = process.env.ELO_RATINGS_READ_KEY || ELO_RATINGS_KEY
+    const readKey = process.env.ELO_RATINGS_STORAGE_KEY || process.env.ELO_RATINGS_READ_KEY || ELO_RATINGS_KEY
     const result = await kvGet(readKey)
     if (!result) return null
     return JSON.parse(result) as EloRatings
