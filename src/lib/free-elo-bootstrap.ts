@@ -129,7 +129,7 @@ export async function collectFreeEloHistory(
         const maxEvents = isCollege ? 5000 : 1000
         const url='https://site.api.espn.com/apis/site/v2/sports/' +
           ESPN[league] + '/scoreboard?dates=' + month +
-          (isCollege ? '&groups=50' : '') + '&limit=' + maxEvents
+          (isCollege ? (league === 'NCAAF' ? '&groups=80' : '&groups=50') : '') + '&limit=' + maxEvents
         const response=await fetcher(url,{
           headers:{Accept:'application/json'},
           cache:'no-store',
