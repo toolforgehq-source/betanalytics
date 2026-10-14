@@ -47,14 +47,14 @@ export default async function OddsPage() {
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Methodology
               </Link>
-              <Link href="/login" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Sign In
+              <Link href="/chat" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Free Assistant
               </Link>
               <Link
-                href="/signup"
+                href="/picks"
                 className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25"
               >
-                Start Free Trial
+                View Picks
               </Link>
             </div>
 
@@ -78,7 +78,7 @@ export default async function OddsPage() {
               </span>
             </h1>
             <p className="text-lg text-slate-300 max-w-2xl">
-              Compare live odds across every major sportsbook. Find the best price for every bet — 
+              Browse available odds with the source shown for each price — 
               moneylines, spreads, and totals. Best available prices are highlighted in green.
             </p>
           </div>
@@ -93,12 +93,12 @@ export default async function OddsPage() {
               Get personalized recommendations with the best price at the best book.
             </p>
             <Link
-              href="/signup"
+              href="/picks"
               className="inline-block px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25"
             >
-              Start 3-Day Free Trial
+              View Free Model Picks
             </Link>
-            <p className="text-sm text-slate-400 mt-3">No credit card required. $39/month after trial.</p>
+            <p className="text-sm text-slate-400 mt-3">No account, trial or subscription required.</p>
           </div>
         </div>
       </main>
