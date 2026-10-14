@@ -11,7 +11,7 @@
  * - Tier caps (max 1 Lock, max 2 Strong)
  */
 
-import { modelSettlement } from './model-policy'
+import { modelSettlement, isFreshPregameQuote } from './model-policy'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type PickLike = Record<string, any>
@@ -25,6 +25,8 @@ export const MAX_STRONG = 2
  * No compulsory bets: a day may have 0, 1, 2 or 3 qualifying games.
  */
 export function isEligibleForTopPicks(pick: PickLike): boolean {
+  // A known stale odds snapshot cannot produce a current best-bet recommendation.
+  if (pick.oddsObservedAt && !isFreshPregameQuote(pick.oddsObservedAt,pick.commenceTime)) return false
   if (pick.betType !== 'moneyline' && pick.betType !== 'spread') return false
   // Soccer 1X2 cannot use a two-outcome Elo forecast: draws need their own model.
   if (String(pick.sport || '').startsWith('soccer')) return false
