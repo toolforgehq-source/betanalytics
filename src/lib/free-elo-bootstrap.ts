@@ -7,6 +7,7 @@
  * because results are taken from today's historical scoreboard.
  */
 import { isDbConfigured } from '@/lib/pg-kv'
+import { isCompetitiveEloMatch } from './elo-event-filter'
 import {
   type GameResult, getEloRatings, updateEloRatings,
   type EloRatings
@@ -65,7 +66,7 @@ export function parseCompletedESPNEvents(events: unknown[], league: BootstrapLea
         !event.date || !Number.isFinite(Date.parse(event.date))) continue
     const homeName = h.team?.displayName || h.team?.name || ''
     const awayName = a.team?.displayName || a.team?.name || ''
-    if (!homeName || !awayName) continue
+    if (!isCompetitiveEloMatch(league, homeName, awayName)) continue
     seen.add(event.id)
     parsed.push({
       gameId:event.id, league, homeTeamId:hId, awayTeamId:aId,
