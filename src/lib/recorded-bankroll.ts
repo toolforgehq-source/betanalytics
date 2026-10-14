@@ -87,6 +87,12 @@ export function simulateRecordedTopThree(
       incompleteDays++
       continue
     }
+    // A missing timestamped quote invalidates the day's simulation; never
+    // silently omit just that bet and report the day's surviving winners.
+    if (selected.some(r => !Number.isFinite(r.initialOdds ?? r.odds) || (r.initialOdds ?? r.odds) === 0)) {
+      incompleteDays++
+      continue
+    }
     let dailyPnL = 0
     selected.forEach((r,i) => {
       const price = r.initialOdds ?? r.odds
