@@ -128,6 +128,8 @@ export function formatPlayoffContext(context: PlayoffContext, homeTeam: string, 
 /** Historical A/B scaffolding: measured adjustments may be installed later.
  * The shipped production adjustment remains exactly zero.
  */
-export function adjustForSeriesContext(baseHomeWinProbability: number, _context: PlayoffContext | null): number {
+export function adjustForSeriesContext(baseHomeWinProbability: number, context: PlayoffContext | null): number {
+  // Intentional no-op until walk-forward validation demonstrates a reliable edge.
+  void context
   return baseHomeWinProbability
 }
