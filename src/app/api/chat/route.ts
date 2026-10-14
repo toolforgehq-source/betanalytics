@@ -1595,7 +1595,10 @@ async function respondWithPublicElo(request: Request) {
     const line = bet.line === undefined ? '' : ` ${bet.line > 0 ? '+' : ''}${bet.line}`
     const market = bet.betType === 'spread' ? line : bet.betType === 'total' ? ` ${bet.line ?? ''}` : ' moneyline'
     const edge = Number.isFinite(bet.edge) ? `Estimated edge: ${bet.edge.toFixed(1)} percentage points. ` : ''
-    return `${index + 1}. ${bet.team}${market} (${formatOdds(bet.bestPrice)}) — ${bet.sportName}. ${edge}Score: ${bet.score}/100.`
+    const playoff = bet.playoffContext?.status === 'verified'
+      ? ` Playoff series: ${bet.awayTeam} ${bet.playoffContext.awaySeriesWins}, ${bet.homeTeam} ${bet.playoffContext.homeSeriesWins}; ${bet.playoffContext.round} Game ${bet.playoffContext.gameNumber}. `
+      : bet.seasonType === 3 ? ' Postseason series data unverified. ' : ''
+    return `${index + 1}. ${bet.team}${market} (${formatOdds(bet.bestPrice)}) — ${bet.sportName}. ${edge}Score: ${bet.score}/100.${playoff}`
   }
   const message = selected.length
     ? `Current qualifying BetAnalytics Elo picks:\n\n${selected.map(formatPick).join('\n')}\n\nThese are model estimates, not guaranteed winners. Check the latest offered price before betting. For the complete official list, open /picks.`
