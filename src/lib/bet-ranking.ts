@@ -1254,6 +1254,17 @@ export async function analyzeGame(
     }
   }
   
+  // The event has one shared Elo forecast. Calibrate the HOME side once;
+  // the opposing moneyline probability must be its complement. Otherwise
+  // separate bucket corrections can imply both teams win (>100% total).
+  const marketHome = calculateConsensusProbability(game, game.homeTeam)
+  const coherentHomeMoneyline = eloResult && marketHome
+    ? await getCalibratedProbability(
+      blendWithMarket(eloResult.probability,marketHome.consensusProb,eloResult.confidence),
+      game.sport
+    )
+    : null
+
   // Analyze both teams
   for (const team of [game.homeTeam, game.awayTeam]) {
     const consensus = calculateConsensusProbability(game, team)
@@ -1316,7 +1327,9 @@ export async function analyzeGame(
     
     // WIN PCT FIX: Apply calibration to moneyline probability (was only applied to spreads)
     // This corrects for systematic over/under-confidence based on historical accuracy
-    const calibratedModelProbability = await getCalibratedProbability(modelProbability, game.sport)
+    const calibratedModelProbability = coherentHomeMoneyline === null
+      ? await getCalibratedProbability(modelProbability,game.sport)
+      : isHomeTeam ? coherentHomeMoneyline : 1-coherentHomeMoneyline
     
     // Apply situational adjustment to calibrated model probability
     const adjustedModelProbability = applyAdjustment(calibratedModelProbability, situationalAdj.totalAdjustment)
@@ -2265,6 +2278,14 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     console.log(`[analyzeGameForSportQuery] Using Elo with very_low confidence for ${game.homeTeam} vs ${game.awayTeam} (${game.sportName})`)
   }
   
+  // A two-outcome event has a single Elo/market forecast. Use the same
+  // matchup-wide home probability on both sides; this avoids independent
+  // opposing estimates claiming over 100% combined probability.
+  const sportHomeMarket = calculateConsensusProbability(game, game.homeTeam)
+  const coherentSportHomeProbability = eloResult && sportHomeMarket
+    ? blendWithMarket(eloResult.probability,sportHomeMarket.consensusProb,eloResult.confidence)
+    : null
+
   // ============================================
   // MONEYLINE ANALYSIS
   // ============================================
@@ -2304,7 +2325,9 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     
     if (eloResult) {
       eloProbability = isHomeTeam ? eloResult.probability : (1 - eloResult.probability)
-      modelProbability = blendWithMarket(eloProbability, consensusProb, eloResult.confidence)
+      modelProbability = coherentSportHomeProbability === null
+        ? blendWithMarket(eloProbability,consensusProb,eloResult.confidence)
+        : isHomeTeam ? coherentSportHomeProbability : 1-coherentSportHomeProbability
       
       if (eloResult.confidence === 'very_low' || eloResult.confidence === 'low') {
         console.log(`[analyzeGameForSportQuery] Blending Elo (${(eloProbability * 100).toFixed(1)}%) with market (${(consensusProb * 100).toFixed(1)}%) at ${eloResult.confidence} confidence → ${(modelProbability * 100).toFixed(1)}% for ${team}`)
