@@ -12,6 +12,8 @@
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+import { modelSettlement } from './model-policy'
+
 export type PickLike = Record<string, any>
 
 // These caps MUST match the values in bet-ranking.ts computeBestBets()
@@ -37,15 +39,20 @@ export function isEligibleForTopPicks(pick: PickLike): boolean {
       (pick.eloConfidence !== 'high' && pick.eloConfidence !== 'medium')) return false
   const price = Number(pick.bestPrice ?? pick.odds)
   const prob = Number(pick.eloProbability ?? pick.probability ?? pick.consensusProbability)
-  // Recalculate edge at the selected price; a cached score/edge may refer to older odds.
-  const implied = price > 0 ? 100 / (price + 100) : Math.abs(price) / (Math.abs(price) + 100)
-  const edge = (prob / 100 - implied) * 100 // percentage points
+  // Fraction of outcomes refunded on a whole-number spread (NFL -3, NBA +4, etc).
+  const push = Number(pick.pushProbability ?? 0)
+  if (pick.betType === 'spread' && Number.isInteger(pick.line) &&
+      !Number.isFinite(pick.pushProbability)) return false
   if (!Number.isFinite(price) || price === 0 || price < -169 ||
       !Number.isFinite(prob) || prob <= 0 || prob >= 100 ||
-      !Number.isFinite(edge) || edge < 3 || edge > 8) return false
-  const p = prob / 100
-  const netPayout = price > 0 ? price / 100 : 100 / Math.abs(price)
-  return p * netPayout - (1-p) > 0
+      !Number.isFinite(push) || push < 0 || push >= 1 ||
+      prob / 100 + push > 1 + 1e-8) return false
+  const settled = modelSettlement(prob/100,push,price)
+  // Edge is measured against actual breakeven after accounting for pushes.
+  if (!Number.isFinite(settled.edgePercentagePoints) ||
+      settled.edgePercentagePoints < 3 ||
+      settled.edgePercentagePoints > 8) return false
+  return settled.returnPerUnit > 0
 }
 
 /**
