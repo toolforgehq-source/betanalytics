@@ -168,7 +168,7 @@ export default function HomePage() {
                 href="/picks"
                 className="px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
               >
-                View Today's Picks
+                View Today&apos;s Picks
                 <ArrowRight className="w-5 h-5" />
               </Link>
               <Link
