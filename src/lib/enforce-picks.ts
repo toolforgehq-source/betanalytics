@@ -18,6 +18,23 @@ export type PickLike = Record<string, any>
 export const MAX_LOCKS = 1
 export const MAX_STRONG = 2
 
+/** Same eligibility contract for the official picks page and chat rankings.
+ * Totals require a separately validated scoring model; team-strength Elo is not one.
+ * No compulsory bets: a day may have 0, 1, 2 or 3 qualifying games.
+ */
+export function isEligibleForTopPicks(pick: PickLike): boolean {
+  if (pick.betType !== 'moneyline' && pick.betType !== 'spread') return false
+  const price = Number(pick.bestPrice ?? pick.odds)
+  const prob = Number(pick.eloProbability ?? pick.probability ?? pick.consensusProbability)
+  const edge = Number(computeEdge(pick)) // percentage points
+  if (!Number.isFinite(price) || price === 0 || price < -169 ||
+      !Number.isFinite(prob) || prob <= 0 || prob >= 100 ||
+      !Number.isFinite(edge) || edge < 3 || edge > 8) return false
+  const p = prob / 100
+  const netPayout = price > 0 ? price / 100 : 100 / Math.abs(price)
+  return p * netPayout - (1-p) > 0
+}
+
 /**
  * Calculate Kelly Criterion fraction for a bet.
  * Kelly fraction = (b * p - q) / b
@@ -168,6 +185,11 @@ export function dedupeAndEnforceCaps(picks: PickLike[]): PickLike[] {
       return
     }
     
+    if (!isEligibleForTopPicks(pick)) {
+      pick.confidenceTier = 'value'
+      return
+    }
+
     if (lockCount < MAX_LOCKS) {
       pick.confidenceTier = 'lock'
       lockCount++
@@ -306,7 +328,9 @@ export function dedupeAndSort(picks: PickLike[]): PickLike[] {
     }
   }
   
-  return Array.from(dedupMap.values()).sort((a, b) => (b.score || 0) - (a.score || 0))
+  return Array.from(dedupMap.values())
+    .filter(isEligibleForTopPicks)
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
 }
 
 /**
