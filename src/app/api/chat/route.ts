@@ -1248,8 +1248,8 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   // 2. Also fetch stored recommendations (same as picks API does)
   // 3. Run through dedupeAndSort (shared with picks page) which keeps higher-scored
   //    version of duplicates — unlike the old code which arbitrarily preferred strict path
-  const strictPicks = bestBetResult.allRankedBets || []
-  const eloPicks = bestBetResult.allEloBets || []
+  const strictPicks = bestBetResult.officialPicks ?? bestBetResult.allRankedBets ?? []
+  const eloPicks = bestBetResult.officialPicks ? [] : (bestBetResult.allEloBets || [])
   
   // Fetch stored recommendations to merge (same source the picks page uses)
   const rawRecentRecos = await getRecentRecommendations(200)
@@ -1274,7 +1274,9 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   
   // Merge all sources: strict picks + elo picks + stored recommendations
   // dedupeAndSort keeps the higher-scored version of each duplicate (same as picks page)
-  const allRawPicks: PickLike[] = [...strictPicks, ...eloPicks, ...todaysRecommendations]
+  const allRawPicks: PickLike[] = bestBetResult.officialPicks
+    ? [...strictPicks] // Never promote an unqualified stored recommendation above the canonical picks.
+    : [...strictPicks, ...eloPicks, ...todaysRecommendations]
   // dedupeAndSort returns PickLike[] which may include stored recommendations with different
   // field names (odds vs bestPrice, probability vs eloProbability, etc.).
   // normalizeToRankedBetShape fills in the missing RankedBet fields so formatFilteredBestBetResponse works.

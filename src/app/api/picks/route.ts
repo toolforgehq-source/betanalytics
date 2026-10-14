@@ -311,8 +311,8 @@ export async function GET() {
     // and relaxed (analyzeGameForSportQuery) analysis paths.
     let livePicks: PickLike[] = []
     if (cachedBestBet) {
-      const strictPicks = cachedBestBet.allRankedBets || []
-      const eloPicks = cachedBestBet.allEloBets || []
+      const strictPicks = cachedBestBet.officialPicks ?? cachedBestBet.allRankedBets ?? []
+      const eloPicks = cachedBestBet.officialPicks ? [] : (cachedBestBet.allEloBets || [])
       
       // Start with strict picks, then add elo picks not already covered
       const seenKeys = new Set(strictPicks.map((b: RankedBet) => `${b.gameId}:${b.team}:${b.betType}`))
