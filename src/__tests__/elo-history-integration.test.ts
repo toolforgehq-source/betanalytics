@@ -24,14 +24,9 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
     const coverage = Object.fromEntries(Object.keys(byLeague).map(league => {
       const teams = Object.values(ratings.ratings).filter(r => r.league === league)
       const activeTeams = teams.filter(r => r.gamesPlayed >= 5)
-      expect(teams.length, league + ': zero/insufficient teams').toBeGreaterThanOrEqual(LEAGUE_TEAMS_MIN[league])
       return [league, { games: byLeague[league as keyof typeof byLeague], teams: teams.length,
         teamsWithFiveOrMoreCurrentSeasonGames: activeTeams.length }]
     }))
-    expect(coverage.NCAAB.teamsWithFiveOrMoreCurrentSeasonGames).toBeGreaterThan(250)
-    expect(coverage.NCAAF.teamsWithFiveOrMoreCurrentSeasonGames).toBeGreaterThan(90)
-    expect(processedIds.size).toBe(games.length)
-
     const outdir = join(process.cwd(),'artifacts')
     mkdirSync(outdir,{recursive:true})
     const chronology = JSON.stringify(games)
@@ -42,11 +37,21 @@ describe.skipIf(!enabled)('Read-only full Elo reconstruction from real ESPN resu
       collectedAt:collectedAt.toISOString(), inputSha256:inputChecksum,
       from: games[0]?.date, to:games[games.length-1]?.date,
       totalGames:games.length, totalTeams:Object.keys(ratings.ratings).length,
-      coverage, liveDatabaseTouched:false
+      coverage,
+      gamesByLeagueAndYear: Object.fromEntries(Object.keys(byLeague).map(league => [league,
+        Object.fromEntries(Array.from(new Set(games.filter(g => g.league === league).map(g => g.date.slice(0,4))))
+          .map(y => [y, games.filter(g => g.league === league && g.date.startsWith(y)).length]))])),
+      liveDatabaseTouched:false
     }
     writeFileSync(join(outdir,'elo-shadow-report.json'),JSON.stringify(metadata,null,2))
     writeFileSync(join(outdir,'elo-shadow-input-games.json'),chronology)
     writeFileSync(join(outdir,'elo-shadow-ratings.json'),JSON.stringify(ratings))
     console.log('SHADOW_ELO_REPORT='+JSON.stringify(metadata))
+    for (const [league, stats] of Object.entries(coverage)) {
+      expect(stats.teams, league + ': missing teams').toBeGreaterThanOrEqual(LEAGUE_TEAMS_MIN[league])
+    }
+    expect(coverage.NCAAB.teamsWithFiveOrMoreCurrentSeasonGames).toBeGreaterThan(250)
+    expect(coverage.NCAAF.teamsWithFiveOrMoreCurrentSeasonGames).toBeGreaterThan(90)
+    expect(processedIds.size).toBe(games.length)
   }, 600_000)
 })
