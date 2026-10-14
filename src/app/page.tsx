@@ -9,13 +9,13 @@ import ScrollReveal from '@/components/ScrollReveal'
 
 export const metadata = {
   title: 'Sports Betting AI | Elo-Based Edge Detection - BetAnalytics.ai',
-  description: 'AI-powered sports betting analytics using Elo ratings. Find edges where our model disagrees with the market. 800+ teams tracked across NBA, NFL, NHL, MLB. Every pick tracked and verified. 3-day free trial.',
+  description: 'AI-powered sports betting analytics using Elo ratings. Find edges where our model disagrees with the market. 800+ teams tracked across NBA, NFL, NHL, MLB. Every pick tracked and verified. free public access.',
   alternates: {
     canonical: 'https://betanalytics.ai',
   },
   openGraph: {
     title: 'Sports Betting AI | Elo-Based Edge Detection - BetAnalytics.ai',
-    description: 'Find edges where our Elo model disagrees with the market. Every pick tracked and verified. 800+ teams, real-time injury adjustments. 3-day free trial.',
+    description: 'Find edges where our Elo model disagrees with the market. Every pick tracked and verified. 800+ teams, real-time injury adjustments. free public access.',
     url: 'https://betanalytics.ai',
     type: 'website' as const,
   },
@@ -46,7 +46,7 @@ const faqSchema = {
       name: 'What makes this different from other betting tools?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: "Most tools give you a list of picks and say trust us. We give you an AI chat interface where you can ask about any game, any matchup, and get a full Elo breakdown in real time. Every pick is tracked and graded publicly so you can verify our performance.",
+        text: "Most tools give you a list of picks and say trust us. We publish Elo-rated picks with their assumptions and maintain a public performance record. Every pick is tracked and graded publicly so you can verify our performance.",
       },
     },
     {
@@ -75,10 +75,10 @@ const faqSchema = {
     },
     {
       '@type': 'Question',
-      name: 'Can I see your track record before subscribing?',
+      name: 'Can I see your track record without signing up?',
       acceptedAnswer: {
         '@type': 'Answer',
-        text: "Yes. Every pick our model makes is recorded and automatically graded after games complete. Subscribers can see win rates, ROI, and performance breakdowns by sport and bet type.",
+        text: "Yes. Every pick our model makes is recorded and automatically graded after games complete. Anyone can see win rates, ROI, and performance breakdowns by sport and bet type.",
       },
     },
   ],
@@ -125,14 +125,14 @@ export default function HomePage() {
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">
                 Methodology
               </Link>
-              <Link href="/login" className="text-sm text-slate-300 hover:text-white transition-colors">
-                Sign In
+              <Link href="/chat" className="text-sm text-slate-300 hover:text-white transition-colors">
+                Free Assistant
               </Link>
               <Link
-                href="/signup"
+                href="/picks"
                 className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25"
               >
-                Start Free Trial
+                View Free Picks
               </Link>
             </div>
 
@@ -143,7 +143,7 @@ export default function HomePage() {
 
       <main>
         {/* ================================================================
-            HERO — The only job is to get one click: "Start Free Trial" or "See Track Record"
+            HERO — The only job is to get one click: "View Free Picks" or "See Track Record"
             ================================================================ */}
         <section className="pt-16 pb-12 md:pt-24 md:pb-16 px-4">
           <div className="container mx-auto max-w-4xl text-center">
@@ -165,10 +165,10 @@ export default function HomePage() {
 
             <div className="flex flex-col sm:flex-row gap-3 justify-center mb-3">
               <Link
-                href="/signup"
+                href="/picks"
                 className="px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
               >
-                Start 3-Day Free Trial
+                View Today's Picks
                 <ArrowRight className="w-5 h-5" />
               </Link>
               <Link
@@ -180,7 +180,7 @@ export default function HomePage() {
               </Link>
             </div>
             <p className="text-sm text-slate-500">
-              No credit card required &middot; $39/mo after trial &middot; Cancel anytime
+              No login required &middot; No subscription &middot; Free to view
             </p>
           </div>
         </section>
@@ -225,7 +225,7 @@ export default function HomePage() {
                   </div>
 
                   <Link
-                    href="/signup"
+                    href="/chat"
                     className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/25"
                   >
                     <MessageSquare className="w-4 h-4" />
@@ -293,19 +293,19 @@ export default function HomePage() {
                     <Feature
                       icon={<MessageSquare className="w-5 h-5 text-cyan-400" />}
                       title="AI Chat"
-                      text="Ask about any game, team, player, or matchup. Parlays, props, best bets."
+                      text="Ask the free model assistant about the currently qualifying Elo picks."
                       href="/chat"
                     />
                     <Feature
                       icon={<Target className="w-5 h-5 text-blue-400" />}
                       title="Elo Edge Detection"
-                      text="Independent probabilities for 800+ teams. Find where the model disagrees with the market."
+                      text="Explore Elo probabilities and model-qualified bets. Some leagues may have no picks."
                       href="/chat"
                     />
                     <Feature
                       icon={<Search className="w-5 h-5 text-green-400" />}
                       title="Line Shopping"
-                      text="Compare odds across DraftKings, FanDuel, BetMGM, and Caesars. Best price highlighted instantly."
+                      text="View sportsbook prices with their actual source. Available markets vary by league and provider."
                       href="/odds"
                     />
                     <Feature
@@ -328,7 +328,7 @@ export default function HomePage() {
                     <Feature
                       icon={<Bell className="w-5 h-5 text-yellow-400" />}
                       title="Smart Alerts"
-                      text="Get notified when we find high-edge picks. Customizable by sport, bet type, and threshold."
+                      text="Review model selections and their results on the free public performance page."
                       href="/alerts"
                     />
                     <Feature
@@ -342,38 +342,38 @@ export default function HomePage() {
                 {/* Right: Pricing card */}
                 <div className="bg-gradient-to-br from-blue-900/30 to-cyan-900/20 backdrop-blur-sm border border-blue-500/30 rounded-2xl p-8 relative overflow-hidden">
                   <div className="absolute top-0 right-0 bg-gradient-to-r from-blue-500 to-cyan-400 text-white text-xs font-bold px-4 py-1.5 rounded-bl-lg">
-                    3-DAY FREE TRIAL
+                    FREE TO USE
                   </div>
 
                   <div className="mb-6">
                     <div className="text-5xl font-bold">
-                      $39<span className="text-xl text-slate-400 font-normal">/month</span>
+                      Free
                     </div>
-                    <p className="text-slate-400 mt-1">Everything included. Cancel anytime.</p>
+                    <p className="text-slate-400 mt-1">Public model picks, performance and tools. No account needed.</p>
                   </div>
 
                   <ul className="space-y-3 mb-8">
-                    <PricingLine text="Unlimited AI chat" />
+                    <PricingLine text="Free Elo picks assistant" />
                     <PricingLine text="Elo edge detection across 13+ sports" />
-                    <PricingLine text="Odds board &mdash; line shop across 4+ books" />
+                    <PricingLine text="Odds board with source-attributed prices" />
                     <PricingLine text="Visual parlay builder with payout calc" />
                     <PricingLine text="Performance dashboard &mdash; full transparency" />
                     <PricingLine text="Real-time injury adjustments" />
                     <PricingLine text="Player props analysis" />
-                    <PricingLine text="Customizable alerts for +EV picks" />
+                    <PricingLine text="Public model-pick tracking and grading" />
                     <PricingLine text="Tiered picks: Locks, Strong Plays, Value Spots" />
                     <PricingLine text="Verified track record" />
                   </ul>
 
                   <Link
-                    href="/signup"
+                    href="/picks"
                     className="block w-full py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25 text-center"
                   >
-                    Start Free Trial
+                    View Free Picks
                   </Link>
                   <p className="text-xs text-slate-500 mt-3 flex items-center justify-center gap-1">
                     <Lock className="w-3 h-3" />
-                    No credit card required
+                    No login or credit card needed
                   </p>
                 </div>
               </div>
@@ -394,8 +394,8 @@ export default function HomePage() {
                   answer="Elo is a rating system originally created for chess. Each team starts at 1500. Win games and your rating goes up; lose and it goes down. We use Elo to calculate the probability of one team beating another, independent of what the market thinks."
                 />
                 <FAQItem
-                  question="Can I see your track record before subscribing?"
-                  answer="Yes. Every pick our model makes is recorded and graded after games complete. Subscribers can see win rates, ROI, and performance breakdowns by sport and bet type."
+                  question="Can I see your track record without signing up?"
+                  answer="Yes. Every pick our model makes is recorded and graded after games complete. Anyone can see win rates, ROI, and performance breakdowns by sport and bet type."
                 />
                 <FAQItem
                   question="What makes this different from other betting tools?"
@@ -425,14 +425,14 @@ export default function HomePage() {
           <div className="container mx-auto max-w-2xl text-center">
             <h2 className="text-3xl font-bold mb-4">See the math for yourself.</h2>
             <p className="text-slate-400 mb-8 text-lg">
-              3-day free trial. No credit card. Full access.
+              Live model picks and tracked results. No registration needed.
             </p>
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <Link
-                href="/signup"
+                href="/picks"
                 className="px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
               >
-                Start Free Trial
+                View Free Picks
                 <ArrowRight className="w-5 h-5" />
               </Link>
               <Link
