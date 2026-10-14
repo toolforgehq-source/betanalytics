@@ -29,7 +29,7 @@ export function reconstructPregameSeriesStates(games: GameResult[]): Map<string,
     Boolean(g.playoffRound) && Number.isInteger(g.playoffGameNumber) &&
     g.playoffGameNumber!>=1 && g.homeScore!==g.awayScore
 
-  for (const dayGames of byDay.values()) {
+  for (const dayGames of Array.from(byDay.values())) {
     for (const game of dayGames) {
       if (!eligible(game)) continue
       const wins = series.get(keyFor(game)) || new Map<string,number>()
