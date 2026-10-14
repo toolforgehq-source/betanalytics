@@ -95,8 +95,8 @@ export function parseCompletedESPNEvents(events: unknown[], league: BootstrapLea
     const awayName = a.team?.displayName || a.team?.name || ''
     if (!isCompetitiveEloMatch(league, homeName, awayName)) continue
     seen.add(event.id)
-    const headline = comp?.notes?.find(n => /\\bGame\\s*\\d+\\b/i.test(n.headline || ''))?.headline || ''
-    const playoffMatch = event.season?.type === 3 ? headline.match(/^(.*?)\\s*-\\s*Game\\s+(\\d+)\\b/i) : null
+    const headline = comp?.notes?.find(n => /\bGame\s*\d+\b/i.test(n.headline || ''))?.headline || ''
+    const playoffMatch = event.season?.type === 3 ? headline.match(/^(.*?)\s*-\s*Game\s+(\d+)\b/i) : null
     parsed.push({
       gameId:event.id, league, homeTeamId:hId, awayTeamId:aId,
       homeTeamName:homeName, awayTeamName:awayName,
