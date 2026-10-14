@@ -7,7 +7,7 @@ import { isCompetitiveEloMatch } from '@/lib/elo-event-filter'
 function candidate(gameId: string, score: number, extra: Record<string, unknown> = {}) {
   return {
     gameId, team: 'Team ' + gameId, betType: 'moneyline', probability: 60,
-    odds: -110, score, commenceTime: '2027-01-01T19:00:00Z', ...extra
+    odds: -110, score, homeElo:1550, awayElo:1470, eloConfidence:'high', commenceTime: '2027-01-01T19:00:00Z', ...extra
   }
 }
 
