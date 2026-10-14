@@ -499,7 +499,9 @@ describe('Chat Route: Mock ESPN data has all 16 sports', () => {
 describe('Free public Elo assistant (no paywall or login)', () => {
   it('returns a nonempty reply without a user session or paid AI call', async () => {
     const { auth } = await import('@/auth')
-    vi.mocked(auth).mockResolvedValueOnce(null)
+    // NextAuth's overloaded callable type needs an explicit mock assertion here.
+    const mockAuth = auth as unknown as { mockResolvedValueOnce: (value: null) => void }
+    mockAuth.mockResolvedValueOnce(null)
     const previousTools = capturedToolCalls.length
     const res = await POST(createChatRequest('best three picks today'))
     expect(res.status).toBe(200)
