@@ -226,6 +226,8 @@ export async function GET(request: Request) {
         console.log(`[fetch-odds] Found ${matchingEspnGame.injuries.length} injuries for ${espnOdds.homeTeam} vs ${espnOdds.awayTeam}`)
         return {
           ...game,
+          seasonType: espnOdds.seasonType ?? matchingEspnGame.seasonType,
+          playoffContext: espnOdds.playoffContext ?? matchingEspnGame.playoffContext,
           espnData: {
             injuries: matchingEspnGame.injuries,
             probables: matchingEspnGame.probables || [] // MLB starting pitchers are an independent Elo input
