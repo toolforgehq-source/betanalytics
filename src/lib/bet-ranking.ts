@@ -41,7 +41,7 @@ import { type LineMovement } from './line-movement'
 import { normalizeTeamName as normalizeScheduleTeamName, type TeamScheduleData } from './team-schedule'
 import { getCalibratedProbability } from './calibration'
 import { isEligibleForTopPicks } from './enforce-picks'
-import { blendSpreadWithPush, modelSettlement } from './model-policy'
+import { blendSpreadWithPush, modelSettlement, validatedSituationalShift } from './model-policy'
 import { formatPlayoffContext, type PlayoffContext } from './playoff-context'
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
@@ -1885,6 +1885,8 @@ export async function analyzeGame(
         // Between thresholds: no adjustment (neutral pace)
       }
       
+      const scoredPaceAdjustment = validatedSituationalShift(eloLeague, 'total', paceAdjustment)
+
       // Analyze OVER bets
       if (overEntries.length > 0) {
         const bestOverEntry = overEntries.reduce((best, curr) => 
@@ -1905,7 +1907,7 @@ export async function analyzeGame(
         // WIN PCT FIX: Apply calibration to totals (was only applied to spreads)
         const calibratedOverProb = await getCalibratedProbability(blendedOverProb, game.sport)
         // Apply pace adjustment: positive pace = high-scoring game = boosts over probability
-        const paceAdjustedOverProb = applyAdjustment(calibratedOverProb, paceAdjustment)
+        const paceAdjustedOverProb = applyAdjustment(calibratedOverProb, scoredPaceAdjustment)
         const eloOverProb = applyAdjustment(paceAdjustedOverProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
@@ -2032,7 +2034,7 @@ export async function analyzeGame(
         // WIN PCT FIX: Apply calibration to totals (was only applied to spreads)
         const calibratedUnderProb = await getCalibratedProbability(blendedUnderProb, game.sport)
         // Apply pace adjustment: negative pace = low-scoring game = boosts under probability
-        const paceAdjustedUnderProb = applyAdjustment(calibratedUnderProb, -paceAdjustment)
+        const paceAdjustedUnderProb = applyAdjustment(calibratedUnderProb, -scoredPaceAdjustment)
         const eloUnderProb = applyAdjustment(paceAdjustedUnderProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
