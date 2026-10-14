@@ -49,7 +49,7 @@ interface PinnedPick {
 
 // v3: Bumped to store snapshot data on pins so locked-in picks are never dropped
 // when ESPN removes in-progress games from the odds feed.
-const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks-v4-elo-integrity:'
+const PINNED_PICKS_PREFIX = 'betanalytics:pinned-picks-v5-verified-playoffs:'
 
 /**
  * Load today's pinned tier assignments from the database.

@@ -10,6 +10,8 @@
  * - Calculates W-L record, ROI, and calibration
  */
 
+import type { PlayoffContext } from './playoff-context'
+
 // ============================================
 // TYPES
 // ============================================
@@ -23,6 +25,8 @@ export interface TrackedRecommendation {
   sportName: string             // e.g., 'NBA'
   gameId: string                // ESPN/Odds API game ID
   gameName: string              // e.g., 'Lakers @ Celtics'
+  homeTeam?: string
+  awayTeam?: string
   commenceTime: string          // Game start time
   
   betType: 'moneyline' | 'spread' | 'total' | 'prop'
@@ -72,6 +76,7 @@ export interface TrackedRecommendation {
   // Elo ratings (preserved from RankedBet so the UI can always display them)
   homeElo?: number
   awayElo?: number
+  playoffContext?: PlayoffContext
 
   // For props - additional tracking
   playerName?: string
@@ -368,6 +373,9 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
           score: reco.score,
           confidenceTier: reco.confidenceTier,
           modelVersion: reco.modelVersion,
+          playoffContext: reco.playoffContext,
+          homeTeam: reco.homeTeam,
+          awayTeam: reco.awayTeam,
         }
         if (existing.initialOdds === undefined || existing.initialOdds === null) {
           updates.initialOdds = existing.odds ?? reco.odds
@@ -1021,6 +1029,8 @@ export async function trackBestBet(bet: RankedBet): Promise<string | null> {
     sportName: bet.sportName,
     gameId: bet.gameId,
     gameName: `${bet.awayTeam} @ ${bet.homeTeam}`,
+    homeTeam: bet.homeTeam,
+    awayTeam: bet.awayTeam,
     commenceTime: bet.commenceTime,
     betType: bet.betType,
     selection: buildSelection(bet),
@@ -1032,7 +1042,8 @@ export async function trackBestBet(bet: RankedBet): Promise<string | null> {
     source: 'best_bet',
     confidenceTier: bet.confidenceTier,
     homeElo: bet.homeElo,
-    awayElo: bet.awayElo
+    awayElo: bet.awayElo,
+    playoffContext: bet.playoffContext
   })
 }
 

@@ -26,6 +26,11 @@ export function isEligibleForTopPicks(pick: PickLike): boolean {
   if (pick.betType !== 'moneyline' && pick.betType !== 'spread') return false
   // Soccer 1X2 cannot use a two-outcome Elo forecast: draws need their own model.
   if (String(pick.sport || '').startsWith('soccer')) return false
+  // MLB, NBA and NHL playoff series require verified PRE-game team-ID series data.
+  // Missing/contradictory game numbers or scores must never become "Locks".
+  if (pick.seasonType === 3 &&
+      ['MLB', 'NBA', 'NHL'].includes(String(pick.sportName || '')) &&
+      pick.playoffContext?.status !== 'verified') return false
   // Official recommendations must have both real team ratings and at least
   // 10 current-season games per team. Market-only fallback is not Elo evidence.
   if (!Number.isFinite(pick.homeElo) || !Number.isFinite(pick.awayElo) ||

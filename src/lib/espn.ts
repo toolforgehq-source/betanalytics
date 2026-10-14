@@ -12,6 +12,7 @@
  */
 
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
+import { parseESPNPlayoffContext, type PlayoffContext } from './playoff-context'
 
 const ESPN_API_BASE = 'https://site.api.espn.com/apis/site/v2/sports'
 // ESPN's "core" API exposes richer odds data than pickcenter — including open/current/close
@@ -228,6 +229,8 @@ export interface ESPNGameData {
   neutralSite?: boolean
   broadcast?: string
   status: string
+  seasonType?: number
+  playoffContext?: PlayoffContext
 }
 
 export interface ESPNData {
@@ -259,6 +262,7 @@ export interface ESPNOdds {
   gameStatus: 'pre' | 'in' | 'post'
   /** ESPN competition season type: 1 preseason, 2 regular, 3 postseason. */
   seasonType?: number
+  playoffContext?: PlayoffContext
   statusDetail: string
 }
 
@@ -312,7 +316,7 @@ let espnOddsCacheExpiry: Date | null = null
 /**
  * Fetch odds for a single game from ESPN summary endpoint
  */
-async function fetchESPNGameOdds(sport: string, league: string, eventId: string, leagueName: string): Promise<ESPNOdds | null> {
+async function fetchESPNGameOdds(sport: string, league: string, eventId: string, leagueName: string, scoreboardContext?: PlayoffContext | null, scoreboardSeasonType?: number): Promise<ESPNOdds | null> {
   try {
     const url = `https://site.web.api.espn.com/apis/site/v2/sports/${sport}/${league}/summary?event=${eventId}`
     
@@ -389,7 +393,8 @@ async function fetchESPNGameOdds(sport: string, league: string, eventId: string,
       } : null,
       homeFavorite: pickcenter.homeTeamOdds?.favorite ?? false,
       gameStatus: gameState as 'pre' | 'in' | 'post',
-      seasonType: header?.season?.type,
+      seasonType: scoreboardSeasonType ?? header?.season?.type,
+      playoffContext: scoreboardContext ?? undefined,
       statusDetail: statusDetail
     }
   } catch (error) {
@@ -424,7 +429,12 @@ function getESPNDateString(date: Date): string {
  * @param league - ESPN league (e.g., 'nba', 'nfl')
  * @param date - Optional date to fetch games for (defaults to today)
  */
-async function fetchESPNGameIds(sport: string, league: string, date?: Date): Promise<string[]> {
+interface ESPNScoreboardMatch {
+  id: string
+  seasonType?: number
+  playoffContext?: PlayoffContext
+}
+async function fetchESPNGameIds(sport: string, league: string, date?: Date): Promise<ESPNScoreboardMatch[]> {
   try {
     let url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard`
     
@@ -451,7 +461,11 @@ async function fetchESPNGameIds(sport: string, league: string, date?: Date): Pro
     // Filter to upcoming/scheduled games only (not completed)
     return data.events
       .filter((event: { status?: { type?: { completed?: boolean } } }) => !event.status?.type?.completed)
-      .map((event: { id: string }) => event.id)
+      .map((event: ESPNEvent) => ({
+        id: event.id,
+        seasonType: event.season?.type,
+        playoffContext: parseESPNPlayoffContext(event, ESPN_ODDS_SPORTS.find(s => s.sport === sport && s.league === league)?.name || league) || undefined,
+      }))
   } catch (error) {
     console.error(`Failed to fetch ESPN game IDs for ${sport}/${league}:`, error)
     return []
@@ -490,16 +504,16 @@ export async function fetchAllESPNOdds(leagueNames?: readonly string[]): Promise
   const sportsWithGameIds = await Promise.all(gameIdPromises)
   
   // Group by sport/league to combine today and tomorrow's games
-  const sportGameMap = new Map<string, { sport: string; league: string; name: string; gameIds: Set<string> }>()
+  const sportGameMap = new Map<string, { sport: string; league: string; name: string; gameIds: Map<string, ESPNScoreboardMatch> }>()
   
   for (const { sport, league, name, gameIds, day } of sportsWithGameIds) {
     const key = `${sport}/${league}`
     if (!sportGameMap.has(key)) {
-      sportGameMap.set(key, { sport, league, name, gameIds: new Set() })
+      sportGameMap.set(key, { sport, league, name, gameIds: new Map() })
     }
     const entry = sportGameMap.get(key)!
-    for (const gameId of gameIds) {
-      entry.gameIds.add(gameId)
+    for (const match of gameIds) {
+      entry.gameIds.set(match.id, match)
     }
     if (gameIds.length > 0) {
       console.log(`📅 ${name} (${day}): ${gameIds.length} games found`)
@@ -519,7 +533,7 @@ export async function fetchAllESPNOdds(leagueNames?: readonly string[]): Promise
   for (const entry of Array.from(sportGameMap.values())) {
     const { sport, league, name, gameIds } = entry
     const maxGames = COLLEGE_LEAGUES.has(league) ? 80 : 20
-    const uniqueGameIds = Array.from(gameIds).slice(0, maxGames)
+    const uniqueGameIds = Array.from(gameIds.values()).slice(0, maxGames)
     
     if (uniqueGameIds.length === 0) {
       console.log(`📊 ${name}: No upcoming games`)
@@ -527,8 +541,8 @@ export async function fetchAllESPNOdds(leagueNames?: readonly string[]): Promise
     }
     
     // Fetch odds for each game in parallel
-    const oddsPromises = uniqueGameIds.map(gameId => 
-      fetchESPNGameOdds(sport, league, gameId, name)
+    const oddsPromises = uniqueGameIds.map(match =>
+      fetchESPNGameOdds(sport, league, match.id, name, match.playoffContext, match.seasonType)
     )
     
     const oddsResults = await Promise.all(oddsPromises)
@@ -1173,6 +1187,8 @@ async function fetchESPNScoreboard(sport: string, league: string, leagueName: st
         neutralSite: competition.neutralSite === true,
         broadcast: competition.broadcasts?.[0]?.names?.[0] || null,
         status: event.status?.type?.description || 'Scheduled',
+        seasonType: event.season?.type,
+        playoffContext: parseESPNPlayoffContext(event, leagueName) || undefined,
       } as ESPNGameData
     }).filter(Boolean) as ESPNGameData[]
     
@@ -1507,12 +1523,15 @@ function formatTimestamp(isoString: string): string {
 // ESPN API response types (internal)
 interface ESPNEvent {
   id: string
+  season?: { type?: number }
   name?: string
   shortName?: string
   date: string
   status?: {
     type?: {
       description?: string
+      state?: string
+      completed?: boolean
     }
   }
   competitions?: ESPNCompetition[]
@@ -1520,6 +1539,14 @@ interface ESPNEvent {
 
 interface ESPNCompetition {
   competitors?: ESPNCompetitor[]
+  notes?: Array<{ type?: string; headline?: string }>
+  series?: {
+    type?: string
+    completed?: boolean
+    totalCompetitions?: number
+    summary?: string
+    competitors?: Array<{ id?: string; wins?: number; ties?: number }>
+  }
   neutralSite?: boolean
   venue?: {
     fullName?: string

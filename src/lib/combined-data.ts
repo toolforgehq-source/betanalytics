@@ -38,10 +38,13 @@ import {
   type BestBetResult
 } from './bet-ranking'
 import type { ESPNOdds } from './espn'
+import type { PlayoffContext } from './playoff-context'
 import { getTrackRecord, formatTrackRecordForContext } from './pick-tracking'
 import { getEloRatings } from './elo'
 
 export interface EnrichedGame extends Game {
+  seasonType?: number
+  playoffContext?: PlayoffContext
   espnData?: {
     homeRecord?: string
     awayRecord?: string
@@ -186,6 +189,8 @@ export function convertESPNOddsToGame(espnOdds: ESPNOdds, espnGameData?: ESPNGam
     awayTeam: espnOdds.awayTeam,
     commenceTime: espnOdds.commenceTime,
     isNeutralSite: espnGameData?.neutralSite === true,
+    seasonType: espnOdds.seasonType ?? espnGameData?.seasonType,
+    playoffContext: espnOdds.playoffContext ?? espnGameData?.playoffContext,
     spreads,
     totals,
     moneylines
@@ -385,6 +390,8 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
       return {
         ...oddsGame,
         isNeutralSite: espnGame.neutralSite === true,
+        seasonType: espnGame.seasonType,
+        playoffContext: espnGame.playoffContext,
         espnData: {
           homeRecord: espnGame.homeTeam.record,
           awayRecord: espnGame.awayTeam.record,
