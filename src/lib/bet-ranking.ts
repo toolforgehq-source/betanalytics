@@ -52,6 +52,7 @@ export interface RankedBet {
   homeTeam: string
   awayTeam: string
   commenceTime: string
+  oddsObservedAt?: string  // Timestamp of odds retrieval, not a claim of live sportsbook availability
   seasonType?: number
   playoffContext?: PlayoffContext
   
@@ -2830,12 +2831,13 @@ export async function computeBestBets(
     // No speculative "must win" probability bonus is applied (0.0pp).
     const withPlayoffContext = (bet: RankedBet): RankedBet => {
       const context = enrichedGame.playoffContext
-      if (enrichedGame.seasonType !== 3) return bet
+      if (enrichedGame.seasonType !== 3) return { ...bet, oddsObservedAt: enrichedGame.oddsObservedAt }
       const note = context
         ? formatPlayoffContext(context, game.homeTeam, game.awayTeam)
         : 'Postseason game — no verified series score available'
       return {
         ...bet,
+        oddsObservedAt: enrichedGame.oddsObservedAt,
         seasonType: 3,
         playoffContext: context,
         situationalNotes: [...(bet.situationalNotes || []), note],
