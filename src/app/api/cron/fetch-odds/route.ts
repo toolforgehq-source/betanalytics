@@ -19,6 +19,7 @@ import { getCachedTeamScheduleData } from "@/lib/team-schedule"
 import { storeCLVPick } from "@/lib/clv-tracking"
 import { storeCalibrationRecord } from "@/lib/calibration"
 import { checkAndSendEdgeAlerts } from "@/lib/edge-alerts"
+import { selectOfficialPicksForTracking } from "@/lib/official-picks"
 
 // Allow up to 60 seconds for cron processing (analyzes 80+ games with Elo lookups)
 export const maxDuration = 60
@@ -331,18 +332,7 @@ export async function GET(request: Request) {
     // Use the same globally-qualified list shown by the website and chat.
     // Never independently merge strict/relaxed pools here: that can choose
     // multiple sides of one game or grade picks not actually recommended.
-    const canonical = bestBetResult.officialPicks ??
-      [bestBetResult.bestBet, bestBetResult.runnerUp].filter((bet): bet is RankedBet => bet !== null)
-    const selectedGames = new Set<string>()
-    const lockStrongBets: RankedBet[] = []
-    for (const bet of canonical) {
-      if (lockStrongBets.length >= 3) break
-      if (bet.confidenceTier !== 'lock' && bet.confidenceTier !== 'strong') continue
-      if (selectedGames.has(bet.gameId)) continue
-      if (new Date(bet.commenceTime).getTime() <= Date.now()) continue
-      selectedGames.add(bet.gameId)
-      lockStrongBets.push(bet)
-    }
+    const lockStrongBets = selectOfficialPicksForTracking(bestBetResult)
     console.log(`[fetch-odds] Canonical verified top-three: ${lockStrongBets.length} distinct-game picks`)
 
     // Log top 5 bets by score from each source for debugging tier assignment
