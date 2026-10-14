@@ -5,6 +5,15 @@ import { stripe, isStripeConfigured } from "@/lib/stripe"
 import { db } from "@/db"
 
 export async function POST() {
+  // Public BetAnalytics is free. Disable new paid checkouts by default.
+  // Existing subscriptions can still be managed via the authenticated portal.
+  if (process.env.ENABLE_PAID_CHECKOUT !== 'true') {
+    return NextResponse.json({
+      error: 'Paid checkout is disabled. The model picks and public tools are free.',
+      freePicksUrl: '/picks'
+    }, { status: 410 })
+  }
+
   try {
     // Check if Stripe is configured
     if (!isStripeConfigured() || !stripe) {
