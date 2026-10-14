@@ -1053,7 +1053,7 @@ export function replayEloRatings(
   existing?: EloRatings | null,
   alreadyProcessed: ReadonlySet<string> = new Set()
 ): { ratings: EloRatings, processedIds: Set<string>, newGamesProcessed: number } {
-  const eloData: EloRatings = existing ? structuredClone(existing) : {
+  let eloData: EloRatings = existing ? structuredClone(existing) : {
     ratings: {}, lastUpdated: new Date().toISOString(), gamesProcessed: 0
   }
   if (!eloData || !eloData.ratings) {
