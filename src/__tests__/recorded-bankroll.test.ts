@@ -1,3 +1,4 @@
+import { MODEL_VERSION } from '@/lib/model-policy'
 import { describe, expect, it } from 'vitest'
 import { simulateRecordedTopThree } from '@/lib/recorded-bankroll'
 import type { TrackedRecommendation } from '@/lib/recommendation-tracking'
@@ -7,7 +8,7 @@ function rec(gameId: string, status: TrackedRecommendation['status'], extra: Par
     id: gameId, createdAt: '2026-10-14T12:00:00Z', sport: 'baseball_mlb', sportName: 'MLB',
     gameId, gameName: 'A @ B', commenceTime: '2026-10-15T00:00:00Z',
     betType: 'moneyline', selection: 'A ML', odds: -200, initialOdds: -110,
-    probability: 60, score: 80, source: 'best_bet', modelVersion: 'elo-integrity-v2',
+    probability: 60, score: 80, source: 'best_bet', modelVersion: MODEL_VERSION,
     confidenceTier: 'strong', lockedIn: true, status,
     ...extra
   }
