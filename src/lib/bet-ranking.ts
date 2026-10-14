@@ -576,6 +576,15 @@ export function americanToImpliedProbability(odds: number): number {
  * - EV = (0.89 × $12.50) - (0.11 × $100) = $11.13 - $11 = +$0.13
  * - This is terrible value despite high probability!
  */
+// A fair market anchor must remove the sportsbook margin using BOTH sides
+// of the SAME bookmaker market. The offered price is still used for real EV.
+export function twoWayNoVigProbability(selectedOdds: number, oppositeOdds?: number): number {
+  const selected = americanToImpliedProbability(selectedOdds)
+  if (oppositeOdds === undefined || !Number.isFinite(oppositeOdds) || oppositeOdds === 0) return selected
+  const other = americanToImpliedProbability(oppositeOdds)
+  return selected / (selected + other)
+}
+
 export function calculateExpectedValue(americanOdds: number, winProbability: number): number {
   const winProb = winProbability // Already in decimal form (0-1)
   const loseProb = 1 - winProb
@@ -1698,7 +1707,10 @@ export async function analyzeGame(
       // FIX: Blend spread cover probability with market consensus (like moneylines and totals already do)
       // Without blending, the raw Elo model can disagree with the market by 10+ points on large
       // spreads (e.g., Duke -17.5 vs Notre Dame), producing inflated edges (30%+) that aren't real.
-      const marketCoverProb = americanToImpliedProbability(bestEntry.outcome.price)
+      const oppositeSpreadPrice = game.spreads
+        .find(m => m.bookmaker === bestEntry.book)
+        ?.outcomes.find(o => o.name !== teamName && o.point === -point)?.price
+      const marketCoverProb = twoWayNoVigProbability(bestEntry.outcome.price, oppositeSpreadPrice)
       const baseEloCoverProb = eloResult.confidence
         ? blendWithMarket(calibratedEloCoverProb, marketCoverProb, eloResult.confidence)
         : calibratedEloCoverProb
@@ -1986,7 +1998,8 @@ export async function analyzeGame(
         
         // FIX 1: Blend totals probability with market consensus (like moneylines do)
         // The market implied probability is the best proxy for "consensus" on totals
-        const marketOverProb = americanToImpliedProbability(bestOverEntry.outcome.price)
+        const oppositeUnderPrice = underEntries.find(e => e.book === bestOverEntry.book)?.outcome.price
+        const marketOverProb = twoWayNoVigProbability(bestOverEntry.outcome.price, oppositeUnderPrice)
         const blendedOverProb = eloResult.confidence 
           ? blendWithMarket(baseEloOverProb, marketOverProb, eloResult.confidence)
           : baseEloOverProb
@@ -1997,7 +2010,7 @@ export async function analyzeGame(
         const eloOverProb = applyAdjustment(paceAdjustedOverProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
-        const impliedProb = marketOverProb
+        const impliedProb = americanToImpliedProbability(bestOverEntry.outcome.price)
         
         // Edge is blended probability - implied probability
         const edge = eloOverProb - impliedProb
@@ -2112,7 +2125,8 @@ export async function analyzeGame(
         const baseEloUnderProb = underResult.probability
         
         // FIX 1: Blend totals probability with market consensus (like moneylines do)
-        const marketUnderProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
+        const oppositeOverPrice = overEntries.find(e => e.book === bestUnderEntry.book)?.outcome.price
+        const marketUnderProb = twoWayNoVigProbability(bestUnderEntry.outcome.price, oppositeOverPrice)
         const blendedUnderProb = eloResult.confidence 
           ? blendWithMarket(baseEloUnderProb, marketUnderProb, eloResult.confidence)
           : baseEloUnderProb
@@ -2123,7 +2137,7 @@ export async function analyzeGame(
         const eloUnderProb = applyAdjustment(paceAdjustedUnderProb, totalSituationalAdj.totalAdjustment)
         
         // Calculate implied probability from best price
-        const impliedProb = marketUnderProb
+        const impliedProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
         
         // Edge is blended probability - implied probability
         const edge = eloUnderProb - impliedProb
@@ -2519,7 +2533,10 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       const isHomeTeam = teamName === game.homeTeam || 
                          teamName.toLowerCase() === game.homeTeam.toLowerCase()
       
-      const marketCoverProb = americanToImpliedProbability(bestEntry.outcome.price)
+      const oppositeSpreadPrice = game.spreads
+        .find(m => m.bookmaker === bestEntry.book)
+        ?.outcomes.find(o => o.name !== teamName && o.point === -point)?.price
+      const marketCoverProb = twoWayNoVigProbability(bestEntry.outcome.price, oppositeSpreadPrice)
       
       let coverProb: number
       let spreadConfidence: string | undefined
@@ -2568,7 +2585,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         console.log(`[analyzeGameForSportQuery] No Elo for spread analysis, using market implied prob (${(marketCoverProb * 100).toFixed(1)}%) for ${teamName} ${point > 0 ? '+' : ''}${point}`)
       }
       
-      const impliedProb = marketCoverProb
+      const impliedProb = americanToImpliedProbability(bestEntry.outcome.price)
       const edge = coverProb - impliedProb
       
       // SANITY CHECK: Reject spreads with impossibly large edges (likely Elo miscalibration)
@@ -2660,7 +2677,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         
         // Only filter out extremely bad odds (worse than -500)
         if (bestOverEntry.outcome.price >= -500) {
-          const marketOverProb = americanToImpliedProbability(bestOverEntry.outcome.price)
+          const oppositeUnderPrice = underEntries.find(e => e.book === bestOverEntry.book)?.outcome.price
+        const marketOverProb = twoWayNoVigProbability(bestOverEntry.outcome.price, oppositeUnderPrice)
           
           let overProb: number
           let overConfidence: string | undefined
@@ -2681,7 +2699,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
             console.log(`[analyzeGameForSportQuery] No Elo for total analysis, using market implied prob (${(marketOverProb * 100).toFixed(1)}%) for Over ${line}`)
           }
           
-          const impliedProb = marketOverProb
+          const impliedProb = americanToImpliedProbability(bestOverEntry.outcome.price)
           const edge = overProb - impliedProb
           const ev = calculateExpectedValue(bestOverEntry.outcome.price, overProb)
           const roi = calculateROI(ev)
@@ -2729,7 +2747,8 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         
         // Only filter out extremely bad odds (worse than -500)
         if (bestUnderEntry.outcome.price >= -500) {
-          const marketUnderProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
+          const oppositeOverPrice = overEntries.find(e => e.book === bestUnderEntry.book)?.outcome.price
+        const marketUnderProb = twoWayNoVigProbability(bestUnderEntry.outcome.price, oppositeOverPrice)
           
           let underProb: number
           let underConfidence: string | undefined
@@ -2750,7 +2769,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
             console.log(`[analyzeGameForSportQuery] No Elo for total analysis, using market implied prob (${(marketUnderProb * 100).toFixed(1)}%) for Under ${line}`)
           }
           
-          const impliedProb = marketUnderProb
+          const impliedProb = americanToImpliedProbability(bestUnderEntry.outcome.price)
           const edge = underProb - impliedProb
           const ev = calculateExpectedValue(bestUnderEntry.outcome.price, underProb)
           const roi = calculateROI(ev)
