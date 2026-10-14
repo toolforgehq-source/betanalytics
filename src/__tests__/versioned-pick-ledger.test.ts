@@ -34,7 +34,7 @@ describe('Immutable model-version identity in the paper-bet recommendation ledge
     // A change in bookmaker price or displayed line must not double-count a
     // game when its model version and betting day are unchanged.
     expect(generateRecommendationId('spread','baseball_mlb','401908032','Milwaukee Brewers +2.5',at,'elo-evidence-v3')).toBe(v3)
-    expect(generateRecommendationId(...args.slice(0,4),'2026-10-15T00:01:00Z','elo-evidence-v3')).not.toBe(v3)
+    expect(generateRecommendationId('spread','baseball_mlb','401908032','Milwaukee Brewers +1.5','2026-10-15T00:01:00Z','elo-evidence-v3')).not.toBe(v3)
   })
   it('persists v3 as a new candidate with its own first-seen odds while retaining old records',async()=>{
     vi.useFakeTimers()
