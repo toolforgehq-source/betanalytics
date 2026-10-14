@@ -1,3 +1,4 @@
+import { MODEL_VERSION } from '@/lib/model-policy'
 import { NextResponse } from "next/server"
 import { auth } from "@/auth"
 import Anthropic from "@anthropic-ai/sdk"
@@ -1266,7 +1267,7 @@ async function handleGetBestBet(input: GetBestBetInput): Promise<string> {
   
   const todaysRecommendations = recentRecos.filter(r => {
     // Do not merge last model version's bets into the Elo v2 ranking.
-    if (r.modelVersion !== 'elo-integrity-v2' || r.status === 'void') return false
+    if (r.modelVersion !== MODEL_VERSION || r.status === 'void') return false
     const recoDate = new Date(r.commenceTime || r.createdAt).toLocaleDateString('en-US', { timeZone: 'America/New_York' })
     return recoDate === todayStr
   })
@@ -1605,7 +1606,7 @@ async function respondWithPublicElo(request: Request) {
     : (requestedLeague
       ? `There are no qualifying ${requestedLeague} bets in the current official Elo top three. The model does not force a selection. See /picks for other sports.`
       : 'There are no qualifying upcoming Elo picks in the latest cached calculation. The model does not force three bets. Try /picks later.')
-  return NextResponse.json({ message, questionsRemaining: -1, mode: 'free_elo', modelVersion: 'elo-integrity-v2' })
+  return NextResponse.json({ message, questionsRemaining: -1, mode: 'free_elo', modelVersion: MODEL_VERSION })
 }
 
 export async function POST(request: Request) {
