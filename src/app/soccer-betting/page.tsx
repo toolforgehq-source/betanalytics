@@ -71,9 +71,9 @@ export default function SoccerBettingPage() {
               <Link href="/picks" className="text-sm text-slate-300 hover:text-white transition-colors">Model Picks</Link>
               <Link href="/methodology" className="text-sm text-slate-300 hover:text-white transition-colors">Methodology</Link>
               <Link href="/blog" className="text-sm text-slate-300 hover:text-white transition-colors">Blog</Link>
-              <Link href="/login" className="text-sm text-slate-300 hover:text-white transition-colors">Sign In</Link>
-              <Link href="/signup" className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25">
-                Start Free Trial
+              <Link href="/chat" className="text-sm text-slate-300 hover:text-white transition-colors">Free Assistant</Link>
+              <Link href="/picks" className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg font-semibold text-sm transition-all shadow-lg shadow-blue-500/25">
+                View Free Picks
               </Link>
             </div>
             <MobileNav />
@@ -100,8 +100,8 @@ export default function SoccerBettingPage() {
             </p>
 
             <div className="flex flex-col sm:flex-row gap-3 justify-center mb-3">
-              <Link href="/signup" className="px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2">
-                Start 3-Day Free Trial <ArrowRight className="w-5 h-5" />
+              <Link href="/picks" className="px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2">
+                View Free Picks <ArrowRight className="w-5 h-5" />
               </Link>
               <Link href="/methodology" className="px-8 py-4 bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/40 rounded-xl font-semibold text-lg transition-colors flex items-center justify-center gap-2">
                 <Eye className="w-5 h-5" /> See Full Methodology
@@ -189,8 +189,8 @@ export default function SoccerBettingPage() {
           <div className="container mx-auto max-w-2xl text-center">
             <h2 className="text-3xl font-bold mb-4">Find Soccer Edges Across 7 Leagues</h2>
             <p className="text-slate-400 mb-8 text-lg">200+ clubs rated. Every match analyzed. Draw probability modeled.</p>
-            <Link href="/signup" className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25">
-              Start Free Trial <ArrowRight className="w-5 h-5" />
+            <Link href="/picks" className="inline-flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/25">
+              View Free Picks <ArrowRight className="w-5 h-5" />
             </Link>
             <p className="text-sm text-slate-500 mt-3">No credit card required</p>
           </div>
