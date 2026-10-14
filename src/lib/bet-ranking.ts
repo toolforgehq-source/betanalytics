@@ -962,7 +962,7 @@ function calculateConsensusProbabilityThreeWay(
     })
   }
   
-  if (bookPrices.length < 2) {
+  if (bookPrices.length < 1) {
     // Need at least 2 books for consensus
     return null
   }
@@ -1022,7 +1022,7 @@ function calculateConsensusProbability(
     })
   }
   
-  if (bookPrices.length < 2) {
+  if (bookPrices.length < 1) {
     // Need at least 2 books for consensus
     return null
   }
@@ -1192,7 +1192,7 @@ async function getTopScorersForTeam(
     // This ensures star player detection works even when Redis is not configured
     if (!playerStats || !playerStats.players) {
       console.log(`[getTopScorersForTeam] Player stats unavailable, using fallback for ${teamName}`)
-      return getFallbackStarPlayers(teamName, sport)
+      return [] // Do not use stale hardcoded player-team lists in live predictions.
     }
     
     // Filter players for this team and sport (players is a Record, not an array)
@@ -1207,7 +1207,7 @@ async function getTopScorersForTeam(
     // If no players found in stats data, use fallback
     if (teamPlayers.length === 0) {
       console.log(`[getTopScorersForTeam] No players in stats for ${teamName}, using fallback`)
-      return getFallbackStarPlayers(teamName, sport)
+      return [] // Do not use stale hardcoded player-team lists in live predictions.
     }
     
     // Get scoring average based on sport
@@ -1240,14 +1240,14 @@ async function getTopScorersForTeam(
     // If sorted players is empty after filtering, use fallback
     if (sortedPlayers.length === 0) {
       console.log(`[getTopScorersForTeam] No scorers found for ${teamName}, using fallback`)
-      return getFallbackStarPlayers(teamName, sport)
+      return [] // Do not use stale hardcoded player-team lists in live predictions.
     }
     
     return sortedPlayers
   } catch (error) {
     console.error('[getTopScorersForTeam] Error:', error)
     // On error, use fallback instead of returning empty
-    return getFallbackStarPlayers(teamName, sport)
+    return [] // Do not use stale hardcoded player-team lists in live predictions.
   }
 }
 
@@ -1291,7 +1291,7 @@ export async function analyzeGame(
   if (eloLeague) {
     try {
       // If injuries are provided, use injury-adjusted Elo
-      if (injuries && injuries.length > 0) {
+      if ((injuries?.length || 0) > 0 || ((game as EnrichedGame).espnData?.probables?.length || 0) > 0) {
         // Get top scorers for both teams (for NBA/NCAAB/NHL injury adjustments)
         const [homeTopScorers, awayTopScorers] = await Promise.all([
           getTopScorersForTeam(game.homeTeam, game.sport),
@@ -1311,7 +1311,7 @@ export async function analyzeGame(
           eloLeague,
           game.homeTeam,
           game.awayTeam,
-          injuries,
+          injuries || [],
           homeTopScorers,
           awayTopScorers,
           homePitcher ?? undefined,
@@ -1521,7 +1521,7 @@ export async function analyzeGame(
       commenceTime: game.commenceTime,
       team,
       betType: 'moneyline',
-      consensusProbability: Math.round(consensus.consensusProb * 1000) / 10, // Market fair value
+      consensusProbability: Math.round(adjustedModelProbability * 1000) / 10, // Model probability used for EV and grading
       bestPrice: bestPrice.price,
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
@@ -2280,7 +2280,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
   
   if (eloLeague) {
     try {
-      if (injuries && injuries.length > 0) {
+      if ((injuries?.length || 0) > 0 || ((game as EnrichedGame).espnData?.probables?.length || 0) > 0) {
         const [homeTopScorers, awayTopScorers] = await Promise.all([
           getTopScorersForTeam(game.homeTeam, game.sport),
           getTopScorersForTeam(game.awayTeam, game.sport)
@@ -2299,7 +2299,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           eloLeague,
           game.homeTeam,
           game.awayTeam,
-          injuries,
+          injuries || [],
           homeTopScorers,
           awayTopScorers,
           homePitcher ?? undefined,
@@ -2377,13 +2377,9 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
     // Try to get consensus probability (requires 2+ books)
     // If not available, use the single book's implied probability
     const consensus = calculateConsensusProbability(game, team)
-    const consensusProb = consensus?.consensusProb ?? bestPrice.impliedProb
-    const bookPrices = consensus?.bookPrices ?? [{
-      book: bestPrice.book,
-      price: bestPrice.price,
-      impliedProb: bestPrice.impliedProb,
-      noVigProb: bestPrice.impliedProb
-    }]
+    if (!consensus) continue // Require paired market sides to remove bookmaker vig.
+    const consensusProb = consensus.consensusProb
+    const bookPrices = consensus.bookPrices
     
     const isHomeTeam = team === game.homeTeam
     
@@ -2450,7 +2446,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       commenceTime: game.commenceTime,
       team,
       betType: 'moneyline',
-      consensusProbability: Math.round(consensusProb * 1000) / 10,
+      consensusProbability: Math.round(modelProbability * 1000) / 10, // Model probability, not market anchor
       bestPrice: bestPrice.price,
       bestBook: bestPrice.book,
       impliedProbability: Math.round(bestPrice.impliedProb * 1000) / 10,
@@ -3134,14 +3130,14 @@ export async function computeBestBets(
   // Sort: locks first, then strong, then value, each sub-sorted by score
   const tierOrder: Record<string, number> = { lock: 0, strong: 1, value: 2 }
   tieredBets.sort((a, b) => {
-    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] ?? 2) - (tierOrder[b.confidenceTier || 'value'] ?? 2)
     if (tierDiff !== 0) return tierDiff
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   
-  const bestBet = tieredBets[0] || null
-  const runnerUp = tieredBets[1] || null
+  let bestBet = tieredBets[0] || null
+  let runnerUp = tieredBets[1] || null
   
   let reason: string | null = null
   if (!bestBet) {
@@ -3256,7 +3252,7 @@ export async function computeBestBets(
   
   // Sort tieredEloBets: locks first, then strong, then value
   tieredEloBets.sort((a, b) => {
-    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] ?? 2) - (tierOrder[b.confidenceTier || 'value'] ?? 2)
     if (tierDiff !== 0) return tierDiff
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
@@ -3327,7 +3323,7 @@ export async function computeBestBets(
     // Edge gate: picks without meaningful edge drop to value tier without
     // consuming a Lock/Strong slot. A later pick with real edge can still
     // claim the slot.
-    if (bet.edge < MIN_EDGE_FOR_TOP_TIER) {
+    if (!Number.isFinite(bet.edge) || bet.edge < MIN_EDGE_FOR_TOP_TIER || bet.edge > MAX_SANE_EDGE || bet.roi <= 0) {
       globalTierMap.set(key, 'value')
       edgeGatedCount++
       continue
@@ -3343,6 +3339,12 @@ export async function computeBestBets(
       continue
     }
     
+    // Team Elo alone is not a calibrated scoring-totals model.
+    if (bet.betType === 'total') {
+      globalTierMap.set(key, 'value')
+      continue
+    }
+
     if (globalLockCount < MAX_LOCKS) {
       globalTierMap.set(key, 'lock')
       globalLockCount++
@@ -3375,18 +3377,29 @@ export async function computeBestBets(
   
   // Re-sort both lists after tier update: locks first, then strong, then value
   tieredBets.sort((a, b) => {
-    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] ?? 2) - (tierOrder[b.confidenceTier || 'value'] ?? 2)
     if (tierDiff !== 0) return tierDiff
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   tieredEloBets.sort((a, b) => {
-    const tierDiff = (tierOrder[a.confidenceTier || 'value'] || 2) - (tierOrder[b.confidenceTier || 'value'] || 2)
+    const tierDiff = (tierOrder[a.confidenceTier || 'value'] ?? 2) - (tierOrder[b.confidenceTier || 'value'] ?? 2)
     if (tierDiff !== 0) return tierDiff
     if (b.score !== a.score) return b.score - a.score
     return new Date(a.commenceTime).getTime() - new Date(b.commenceTime).getTime()
   })
   
+  // Canonical official picks: calculate only AFTER global edge/price/game gates.
+  const officialPicks = allMergedBets
+    .filter(b => {
+      const key = `${b.gameId}:${b.team}:${b.betType}`
+      return globalTierMap.get(key) === 'lock' || globalTierMap.get(key) === 'strong'
+    })
+    .map(b => ({ ...b, confidenceTier: globalTierMap.get(`${b.gameId}:${b.team}:${b.betType}`)! }))
+    .sort((a,b) => a.confidenceTier === b.confidenceTier ? b.score-a.score : a.confidenceTier === 'lock' ? -1 : 1)
+  bestBet = officialPicks[0] || null
+  runnerUp = officialPicks[1] || null
+
   console.log(`[computeBestBets] Global re-tier: ${globalLockCount} locks, ${globalStrongCount} strong (from ${allMergedBets.length} unique bets)`)
   
   return {
