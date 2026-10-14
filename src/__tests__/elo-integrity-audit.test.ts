@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { dedupeAndEnforceCaps, dedupeAndSort, isEligibleForTopPicks } from '@/lib/enforce-picks'
 import { getEloSeasonYear, calculateWinProbability } from '@/lib/elo'
+import { twoWayNoVigProbability } from '@/lib/bet-ranking'
+import { isCompetitiveEloMatch } from '@/lib/elo-event-filter'
 
 function candidate(gameId: string, score: number, extra: Record<string, unknown> = {}) {
   return {
@@ -54,5 +56,18 @@ describe('Chronological Elo season boundaries', () => {
     const home = calculateWinProbability(1500, 1500, 'NFL', false)
     expect(neutral).toBeCloseTo(0.5)
     expect(home).toBeGreaterThan(neutral)
+  })
+})
+
+describe('Pregame market and training-data integrity', () => {
+  it('removes the sportsbook margin when both sides are known', () => {
+    expect(twoWayNoVigProbability(-110, -110)).toBeCloseTo(0.5, 8)
+    expect(twoWayNoVigProbability(-150, +130)).toBeGreaterThan(0.5)
+  })
+  it('blocks all-star games but keeps ordinary professional matchups', () => {
+    expect(isCompetitiveEloMatch('NFL', 'AFC', 'NFC')).toBe(false)
+    expect(isCompetitiveEloMatch('MLB', 'National All-Stars', 'American All-Stars')).toBe(false)
+    expect(isCompetitiveEloMatch('NBA', 'Team Stars', 'World')).toBe(false)
+    expect(isCompetitiveEloMatch('NFL', 'Dallas Cowboys', 'New York Giants')).toBe(true)
   })
 })
