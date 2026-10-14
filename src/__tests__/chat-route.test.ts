@@ -271,6 +271,7 @@ import { POST } from '@/app/api/chat/route'
 // The application correctly checks for a configured key before invoking the mock.
 beforeEach(() => {
   vi.stubEnv('ANTHROPIC_API_KEY', 'fake-test-key-for-mocked-sdk')
+  vi.stubEnv('ENABLE_EXTERNAL_AI_CHAT', 'true')
 })
 
 afterEach(() => {
@@ -491,5 +492,30 @@ describe('Chat Route: Mock ESPN data has all 16 sports', () => {
 
   it('mock data has 16 games (one per league)', () => {
     expect(mockESPNOddsData.games.length).toBe(16)
+  })
+})
+
+
+describe('Free public Elo assistant (no paywall or login)', () => {
+  it('returns a nonempty reply without a user session or paid AI call', async () => {
+    const { auth } = await import('@/auth')
+    vi.mocked(auth).mockResolvedValueOnce(null)
+    const previousTools = capturedToolCalls.length
+    const res = await POST(createChatRequest('best three picks today'))
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(data.mode).toBe('free_elo')
+    expect(data.message).toMatch(/Elo|model|qualifying/i)
+    expect(data.questionsRemaining).toBe(-1)
+    expect(capturedToolCalls.length).toBe(previousTools)
+  })
+
+  it('is available free even when the external AI key is not configured', async () => {
+    vi.stubEnv('ENABLE_EXTERNAL_AI_CHAT', '')
+    vi.stubEnv('ANTHROPIC_API_KEY', '')
+    const res = await POST(createChatRequest('today picks'))
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(data.mode).toBe('free_elo')
   })
 })
