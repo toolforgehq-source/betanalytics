@@ -366,21 +366,9 @@ const STATIC_COMPRESSION = 0.85  // Compress distance from 50% by 15%
  * Example for NCAAB (0.94x): 62% → distance = 12% → compressed = 12% * 0.94 = 11.28% → 61.28%
  * Example for NHL (0.80x): 62% → distance = 12% → compressed = 12% * 0.80 = 9.6% → 59.6%
  */
-const SPORT_CALIBRATION_CORRECTIONS: Record<string, number> = {
-  // NCAAB: slight overconfidence (-4% in 60-65% bucket)
-  'basketball_ncaab': 0.94,
-  // NHL: severe overconfidence (model says ~55% but actual is ~33%)
-  'icehockey_nhl': 0.80,
-  // MLB: moderate overconfidence — baseball is inherently high-variance
-  // (best teams win ~60%, worst ~40%), so compress predictions toward 50%
-  'baseball_mlb': 0.88,
-  // Soccer leagues: severe overconfidence (0% actual on limited data)
-  'soccer_spain_la_liga': 0.75,
-  'soccer_epl': 0.75,
-  'soccer_germany_bundesliga': 0.75,
-  'soccer_italy_serie_a': 0.75,
-  'soccer_france_ligue_one': 0.75,
-}
+// Do not set sport penalties using 1-3 graded bets. Only restore sport-specific
+// adjustments after a separate, chronological calibration study.
+const SPORT_CALIBRATION_CORRECTIONS: Record<string, number> = {}
 
 function applyStaticCalibration(rawProbability: number, sport?: string): number {
   // Step 1: Compress toward 0.5: calibrated = 0.5 + compression * (raw - 0.5)
@@ -416,12 +404,12 @@ export async function getCalibratedProbability(
   // Threshold lowered from 50 to 30 to activate historical correction sooner.
   // With 30+ settled picks, the bucket correction provides meaningful signal
   // that improves probability accuracy for Kelly Criterion sizing.
-  if (stats.completedRecords >= 30) {
+  if (stats.completedRecords >= 200) {
     const bucket = stats.buckets.find(b => 
       calibratedProb >= b.minProb && calibratedProb < b.maxProb
     )
     
-    if (bucket && bucket.totalPicks >= 10) {
+    if (bucket && bucket.totalPicks >= 40) {
       // Apply historical correction on top of static compression
       calibratedProb = calibratedProb + bucket.correctionFactor
     }
