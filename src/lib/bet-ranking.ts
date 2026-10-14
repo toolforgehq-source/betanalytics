@@ -33,6 +33,7 @@ import {
 import {
   calculateSituationalFactors,
   calculateSituationalAdjustment,
+  researchOnlySituationalAdjustment,
   applyAdjustment
 } from './situational-factors'
 import type { WeatherData } from './weather'
@@ -1311,7 +1312,7 @@ export async function analyzeGame(
       teamLast10  // Last 10 game record from Elo tracking
     )
     
-    const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational, team, opponentName)
+    const situationalAdj = researchOnlySituationalAdjustment(calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational, team, opponentName))
     
     // WIN PCT FIX: Apply calibration to moneyline probability (was only applied to spreads)
     // This corrects for systematic over/under-confidence based on historical accuracy
@@ -1634,7 +1635,7 @@ export async function analyzeGame(
         game.commenceTime ? new Date(game.commenceTime) : null,
         spreadTeamLast10  // Last 10 game record from Elo tracking
       )
-      const spreadSituationalAdj = calculateSituationalAdjustment(spreadSituationalFactors, eloLeague, teamName, opponentName)
+      const spreadSituationalAdj = researchOnlySituationalAdjustment(calculateSituationalAdjustment(spreadSituationalFactors, eloLeague, teamName, opponentName))
       const eloCoverProb = applyAdjustment(baseEloCoverProb, spreadSituationalAdj.totalAdjustment)
       
       // DEBUG: Log spread calculation inputs for high-probability bets
@@ -1846,7 +1847,7 @@ export async function analyzeGame(
         game.commenceTime ? new Date(game.commenceTime) : null,
         totalHomeLast10  // Last 10 game record from Elo tracking
       )
-      const totalSituationalAdj = calculateSituationalAdjustment(totalSituationalFactors, eloLeague, game.homeTeam, game.awayTeam)
+      const totalSituationalAdj = researchOnlySituationalAdjustment(calculateSituationalAdjustment(totalSituationalFactors, eloLeague, game.homeTeam, game.awayTeam))
       
       // PACE-OF-PLAY ADJUSTMENT: Use margin stats as a scoring pace proxy
       // Teams with high average margins (both positive for winners and negative for losers) 
@@ -2334,7 +2335,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       sportQueryTeamLast10  // Last 10 game record from Elo tracking
     )
     
-    const situationalAdj = calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational, team, opponentName)
+    const situationalAdj = researchOnlySituationalAdjustment(calculateSituationalAdjustment(situationalFactors, eloLeagueForSituational, team, opponentName))
     modelProbability = applyAdjustment(modelProbability, situationalAdj.totalAdjustment)
     
     const edge = modelProbability - bestPrice.impliedProb
