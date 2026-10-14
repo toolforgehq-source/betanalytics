@@ -30,10 +30,11 @@ const MONTH_WINDOW: Record<BootstrapLeague, number> = {
   NHL: 14, NBA: 14, NFL: 14, MLB: 9, NCAAF: 14, NCAAB: 14,
 }
 
-export function monthKeysForLeague(league: BootstrapLeague, today: Date): string[] {
+export function monthKeysForLeague(league: BootstrapLeague, today: Date, researchMonths?: number): string[] {
   if (!Number.isFinite(today.getTime())) throw new Error('Invalid bootstrap date')
   const keys: string[] = []
-  for (let back = MONTH_WINDOW[league] - 1; back >= 0; back--) {
+  const windowMonths = researchMonths ?? MONTH_WINDOW[league]
+  for (let back = windowMonths - 1; back >= 0; back--) {
     const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1))
     keys.push(d.toISOString().slice(0, 7).replace('-', ''))
   }
@@ -44,8 +45,8 @@ export function monthKeysForLeague(league: BootstrapLeague, today: Date): string
  * most matchups. Query each active game day, not 1 day per month.
  * Exclude only entire known off-season months; no scores are fabricated.
  */
-export function historicalScoreboardDates(league: BootstrapLeague, today: Date): string[] {
-  const months = monthKeysForLeague(league,today)
+export function historicalScoreboardDates(league: BootstrapLeague, today: Date, researchMonths?: number): string[] {
+  const months = monthKeysForLeague(league,today,researchMonths)
   if (league !== 'NCAAB' && league !== 'NCAAF') return months
   const activeMonths = league === 'NCAAF'
     ? new Set([1,8,9,10,11,12]) : new Set([1,2,3,4,11,12])
@@ -117,12 +118,17 @@ export function parseCompletedESPNEvents(events: unknown[], league: BootstrapLea
  * before any Elo state is written by bootstrapEmptyElo.
  */
 export async function collectFreeEloHistory(
-  today: Date, fetcher: typeof fetch = fetch
+  today: Date, fetcher: typeof fetch = fetch,
+  options: { extendedProPlayoffResearch?: boolean } = {}
 ): Promise<{ games: GameResult[], byLeague: Record<BootstrapLeague,number> }> {
   const combined: GameResult[] = []
   const counts = {} as Record<BootstrapLeague,number>
   for (const league of BOOTSTRAP_LEAGUES) {
-    const months = historicalScoreboardDates(league,today)
+    // Extra older playoff seasons are for offline A/B only. Never expand the
+    // production bootstrap latency or mutate its historical state.
+    const researchMonths = options.extendedProPlayoffResearch &&
+      (league === 'MLB' || league === 'NBA' || league === 'NHL') ? 34 : undefined
+    const months = historicalScoreboardDates(league,today,researchMonths)
     const seen = new Set<string>()
     let leagueCount = 0
     const maxConcurrent = league === 'NCAAF' || league === 'NCAAB' ? 10 : 4
