@@ -65,6 +65,7 @@ jobs:
         run: pnpm exec vitest run src/__tests__/elo-history-integration.test.ts
 
       - name: Upload audited inputs and shadow Elo
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: betanalytics-shadow-elo
