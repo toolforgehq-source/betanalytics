@@ -133,6 +133,7 @@ export interface FallbackBet {
 export interface BestBetResult {
   bestBet: RankedBet | null
   runnerUp: RankedBet | null
+  officialPicks?: RankedBet[] // Final qualified top 3 from distinct games, same for cron/chat/site
   allRankedBets: RankedBet[]
   allEloBets: RankedBet[]  // ALL bets with Elo data (for sport-specific queries, not filtered)
   calculatedAt: string
@@ -3315,6 +3316,8 @@ export async function computeBestBets(
     })
     .map(b => ({ ...b, confidenceTier: globalTierMap.get(`${b.gameId}:${b.team}:${b.betType}`)! }))
     .sort((a,b) => a.confidenceTier === b.confidenceTier ? b.score-a.score : a.confidenceTier === 'lock' ? -1 : 1)
+    .filter((bet,index,list) => list.findIndex(p => p.gameId === bet.gameId) === index)
+    .slice(0,3)
   bestBet = officialPicks[0] || null
   runnerUp = officialPicks[1] || null
 
@@ -3323,6 +3326,7 @@ export async function computeBestBets(
   return {
     bestBet,
     runnerUp,
+    officialPicks,
     allRankedBets: tieredBets,  // Tiered picks: lock > strong > value (from strict analyzeGame)
     allEloBets: tieredEloBets,  // Tiered picks from relaxed analyzeGameForSportQuery (star player filter applied)
     calculatedAt: now,
