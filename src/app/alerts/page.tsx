@@ -99,7 +99,7 @@ export default async function AlertsPage() {
                 be delivered to the right person.
               </p>
               <Link href="/picks" className="inline-flex rounded-lg bg-cyan-500 px-5 py-3 font-semibold text-slate-950">
-                See Today's Free Picks
+                See Today&apos;s Free Picks
               </Link>
             </div>
           )}
