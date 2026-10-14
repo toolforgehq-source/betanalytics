@@ -26,7 +26,9 @@ export function isEligibleForTopPicks(pick: PickLike): boolean {
   if (pick.betType !== 'moneyline' && pick.betType !== 'spread') return false
   const price = Number(pick.bestPrice ?? pick.odds)
   const prob = Number(pick.eloProbability ?? pick.probability ?? pick.consensusProbability)
-  const edge = Number(computeEdge(pick)) // percentage points
+  // Recalculate edge at the selected price; a cached score/edge may refer to older odds.
+  const implied = price > 0 ? 100 / (price + 100) : Math.abs(price) / (Math.abs(price) + 100)
+  const edge = (prob / 100 - implied) * 100 // percentage points
   if (!Number.isFinite(price) || price === 0 || price < -169 ||
       !Number.isFinite(prob) || prob <= 0 || prob >= 100 ||
       !Number.isFinite(edge) || edge < 3 || edge > 8) return false
