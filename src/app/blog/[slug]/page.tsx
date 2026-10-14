@@ -276,14 +276,14 @@ export default function BlogPostPage({ params }: Props) {
               <Link href="/blog" className="text-white font-medium transition-colors">
                 Blog
               </Link>
-              <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
-                Sign In
+              <Link href="/chat" className="text-slate-300 hover:text-white transition-colors">
+                Free Assistant
               </Link>
               <Link
-                href="/signup"
+                href="/picks"
                 className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
               >
-                Start Free Trial
+                View Free Picks
               </Link>
             </div>
 
@@ -333,7 +333,7 @@ export default function BlogPostPage({ params }: Props) {
                   Our Elo model analyzes every game across NBA, NFL, NHL, MLB, college sports, and soccer. See where our probability disagrees with the market.
                 </p>
                 <Link
-                  href="/signup"
+                  href="/picks"
                   className="inline-block px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/30"
                 >
                   Start Your 3-Day Free Trial
@@ -391,10 +391,10 @@ export default function BlogPostPage({ params }: Props) {
                     Elo-based edge detection across all major sports. 3-day free trial.
                   </p>
                   <Link
-                    href="/signup"
+                    href="/picks"
                     className="block text-center px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-lg text-sm font-semibold transition-all"
                   >
-                    Start Free Trial
+                    View Free Picks
                   </Link>
                 </div>
               </div>
