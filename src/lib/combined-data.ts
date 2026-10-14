@@ -106,7 +106,7 @@ function matchGames(oddsGame: Game, espnGame: ESPNGameData): boolean {
  * Convert ESPN odds to EnrichedGame format for best bet computation
  * Now accepts optional ESPN game data to include injuries
  */
-function convertESPNOddsToGame(espnOdds: ESPNOdds, espnGameData?: ESPNGameData): EnrichedGame {
+export function convertESPNOddsToGame(espnOdds: ESPNOdds, espnGameData?: ESPNGameData): EnrichedGame {
   const sportKeyMap: Record<string, string> = {
     'NBA': 'basketball_nba',
     'NFL': 'americanfootball_nfl',
