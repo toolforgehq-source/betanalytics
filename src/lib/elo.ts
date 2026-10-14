@@ -875,7 +875,7 @@ async function fetchCompletedGames(
     // For college sports, ESPN only returns top-25/featured games by default.
     // Adding groups=50 (D1) and limit=300 fetches ALL Division I games.
     const isCollege = leagueName === 'NCAAB' || leagueName === 'NCAAF'
-    const collegeParams = isCollege ? '&groups=50&limit=300' : ''
+    const collegeParams = isCollege ? (leagueName === 'NCAAF' ? '&groups=80&limit=300' : '&groups=50&limit=300') : ''
     const url = `${ESPN_API_BASE}/${sport}/${league}/scoreboard?dates=${date}${collegeParams}`
     
     const response = await fetch(url, {
