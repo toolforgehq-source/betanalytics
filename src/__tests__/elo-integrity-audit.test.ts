@@ -17,6 +17,7 @@ describe('Authoritative positive-EV Elo pick eligibility', () => {
     expect(isEligibleForTopPicks(candidate('b', 100, { probability: 52, odds: -130 }))).toBe(false)
     expect(isEligibleForTopPicks(candidate('c', 100, { probability: 65, odds: -180 }))).toBe(false)
     expect(isEligibleForTopPicks(candidate('d', 100, { betType: 'total' }))).toBe(false)
+    expect(isEligibleForTopPicks(candidate('soc', 100, { sport: 'soccer_epl' }))).toBe(false)
     expect(isEligibleForTopPicks(candidate('e', 100, { probability: 80, odds: -110 }))).toBe(false) // anomalous unvalidated edge
   })
 
