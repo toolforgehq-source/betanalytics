@@ -69,11 +69,11 @@ export function parseESPNPlayoffContext(event: RawSeriesEvent, league: string): 
   const awayWins = awayRows.length === 1 ? awayRows[0].wins : null
   const winsNeeded = bestOf !== null ? Math.floor(bestOf / 2) + 1 : null
   const summary = series?.summary || ''
-  const summaryMatch = summary.match(/(\\d+)\\s*-\\s*(\\d+)/)
+  const summaryMatch = summary.match(/(\d+)\s*-\s*(\d+)/)
   const summaryMatchesWins = !summaryMatch || (
     [Number(summaryMatch[1]), Number(summaryMatch[2])].sort((a,b)=>a-b).join(':') ===
     [homeWins, awayWins].sort((a,b)=>Number(a)-Number(b)).join(':') &&
-    (!/\\btied\\b/i.test(summary) || homeWins === awayWins)
+    (!/\btied\b/i.test(summary) || homeWins === awayWins)
   )
 
   const complete = event?.status?.type?.completed === true ||
