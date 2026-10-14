@@ -24,6 +24,8 @@ export const MAX_STRONG = 2
  */
 export function isEligibleForTopPicks(pick: PickLike): boolean {
   if (pick.betType !== 'moneyline' && pick.betType !== 'spread') return false
+  // Soccer 1X2 cannot use a two-outcome Elo forecast: draws need their own model.
+  if (String(pick.sport || '').startsWith('soccer')) return false
   const price = Number(pick.bestPrice ?? pick.odds)
   const prob = Number(pick.eloProbability ?? pick.probability ?? pick.consensusProbability)
   // Recalculate edge at the selected price; a cached score/edge may refer to older odds.
