@@ -66,7 +66,7 @@ describe('Strict bookmaker settlement and Elo probability integrity',()=>{
     const candidate={
       sport:'americanfootball_nfl', sportName:'NFL',
       betType:'spread',line:-3, bestPrice:-110,
-      eloProbability:60,homeElo:1550,awayElo:1500,eloConfidence:'high',
+      eloProbability:57,homeElo:1550,awayElo:1500,eloConfidence:'high',
       commenceTime:'2026-12-01T20:00:00Z'
     }
     expect(isEligibleForTopPicks(candidate)).toBe(false)
