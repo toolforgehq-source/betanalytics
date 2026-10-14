@@ -52,14 +52,14 @@ export default function BlogPage() {
               <Link href="/blog" className="text-white font-medium transition-colors">
                 Blog
               </Link>
-              <Link href="/login" className="text-slate-300 hover:text-white transition-colors">
-                Sign In
+              <Link href="/chat" className="text-slate-300 hover:text-white transition-colors">
+                Free Assistant
               </Link>
               <Link
-                href="/signup"
+                href="/picks"
                 className="px-4 py-2 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold transition-all shadow-lg shadow-blue-500/30"
               >
-                Start Free Trial
+                View Free Picks
               </Link>
             </div>
 
@@ -135,7 +135,7 @@ export default function BlogPage() {
               Our Elo rating system tracks 800+ teams with real-time injury adjustments across every major sport.
             </p>
             <Link
-              href="/signup"
+              href="/picks"
               className="inline-block px-8 py-4 bg-gradient-to-r from-blue-500 to-cyan-400 hover:from-blue-600 hover:to-cyan-500 rounded-xl font-semibold text-lg transition-all shadow-lg shadow-blue-500/30"
             >
               Start Your 3-Day Free Trial
