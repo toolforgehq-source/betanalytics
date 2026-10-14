@@ -2,7 +2,6 @@ import { NextResponse } from "next/server"
 import { auth } from "@/auth"
 import Anthropic from "@anthropic-ai/sdk"
 import { db } from "@/db"
-import { checkSubscription } from "@/lib/subscription"
 import { getCachedESPNOdds, getCachedESPNData, cacheESPNOdds, searchESPNGameByTeams, type ESPNOdds, type ESPNOddsData, type ESPNInjury } from "@/lib/espn"
 import { analyzeSpecificGame, formatGameAnalysisForContext, computeBestBets, cacheBestBet, computeEnhancedParlay, formatEnhancedParlayForContext, formatFilteredBestBetResponse, getCachedBestBet } from "@/lib/bet-ranking"
 import type { Game } from "@/lib/odds"
@@ -1535,8 +1534,87 @@ async function executeToolCall(name: string, input: Record<string, unknown>): Pr
 // Claude's natural language understanding handles ALL routing.
 // ===============================================================
 
+/**
+ * Public, no-cost mode uses ONLY the verified Elo picks already computed by
+ * BetAnalytics. It never calls a paid LLM, invents picks, or reads user records.
+ * External AI chat stays opt-in for operators (ENABLE_EXTERNAL_AI_CHAT=true).
+ */
+async function respondWithPublicElo(request: Request) {
+  const ip = (
+    request.headers.get('x-vercel-forwarded-for') ||
+    request.headers.get('x-forwarded-for') ||
+    request.headers.get('x-real-ip') ||
+    'anonymous'
+  ).split(',')[0].trim().slice(0, 80)
+  const minute = checkRateLimit(`public-elo:minute:${ip}`, 8, 60 * 1000)
+  const day = checkRateLimit(`public-elo:day:${ip}`, 100, 24 * 60 * 60 * 1000)
+  if (minute.limited || day.limited) {
+    return NextResponse.json(
+      { error: 'Free model assistant limit reached. Try again later.' },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(Math.max(minute.resetMs, day.resetMs) / 1000)) } }
+    )
+  }
+
+  const length = Number(request.headers.get('content-length') || 0)
+  if (length > 16000) {
+    return NextResponse.json({ error: 'Message too long.' }, { status: 413 })
+  }
+  let payload: {messages?: {role?: string; content?: string}[]} = {}
+  try {
+    payload = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 })
+  }
+  if (!Array.isArray(payload.messages) || payload.messages.length === 0 || payload.messages.length > 30) {
+    return NextResponse.json({ error: 'Send a message to the model assistant.' }, { status: 400 })
+  }
+  const last = payload.messages[payload.messages.length - 1]
+  if (last?.role !== 'user' || typeof last.content !== 'string' || !last.content.trim() || last.content.length > 1000) {
+    return NextResponse.json({ error: 'Enter a question under 1,000 characters.' }, { status: 400 })
+  }
+
+  const cached = await getCachedBestBet()
+  const now = Date.now()
+  const official = (cached?.officialPicks ?? [cached?.bestBet, cached?.runnerUp])
+    .filter((bet): bet is NonNullable<typeof bet> => Boolean(bet))
+    .filter(bet => (bet.confidenceTier === 'lock' || bet.confidenceTier === 'strong') &&
+      Date.parse(bet.commenceTime) > now)
+    .slice(0, 3)
+
+  const question = last.content.toLowerCase()
+  const requestedLeague = [
+    ['nba', 'NBA'], ['nfl', 'NFL'], ['nhl', 'NHL'], ['mlb', 'MLB'],
+    ['baseball', 'MLB'], ['football', 'NFL'], ['basketball', 'NBA'],
+    ['ncaaf', 'NCAAF'], ['ncaab', 'NCAAB']
+  ].find(([term]) => question.includes(term))?.[1]
+  const selected = requestedLeague
+    ? official.filter(b => b.sportName.toUpperCase() === requestedLeague)
+    : official
+  const formatOdds = (p: number) => p > 0 ? `+${p}` : String(p)
+  const formatPick = (bet: (typeof official)[number], index: number) => {
+    const line = bet.line === undefined ? '' : ` ${bet.line > 0 ? '+' : ''}${bet.line}`
+    const market = bet.betType === 'spread' ? line : bet.betType === 'total' ? ` ${bet.line ?? ''}` : ' moneyline'
+    const edge = Number.isFinite(bet.edge) ? `Estimated edge: ${bet.edge.toFixed(1)} percentage points. ` : ''
+    return `${index + 1}. ${bet.team}${market} (${formatOdds(bet.bestPrice)}) — ${bet.sportName}. ${edge}Score: ${bet.score}/100.`
+  }
+  const message = selected.length
+    ? `Current qualifying BetAnalytics Elo picks:\n\n${selected.map(formatPick).join('\n')}\n\nThese are model estimates, not guaranteed winners. Check the latest offered price before betting. For the complete official list, open /picks.`
+    : (requestedLeague
+      ? `There are no qualifying ${requestedLeague} bets in the current official Elo top three. The model does not force a selection. See /picks for other sports.`
+      : 'There are no qualifying upcoming Elo picks in the latest cached calculation. The model does not force three bets. Try /picks later.')
+  return NextResponse.json({ message, questionsRemaining: -1, mode: 'free_elo', modelVersion: 'elo-integrity-v2' })
+}
+
 export async function POST(request: Request) {
   try {
+    // Free Elo replies need no account, subscription, or paid AI provider.
+    // External LLM mode is explicitly operator-opt-in; it remains authenticated.
+    const visitorSession = await auth().catch(() => null)
+    if (process.env.ENABLE_EXTERNAL_AI_CHAT !== 'true' ||
+        !visitorSession?.user?.id || !process.env.ANTHROPIC_API_KEY) {
+      return await respondWithPublicElo(request)
+    }
+
     // Check if API key is configured
     if (!process.env.ANTHROPIC_API_KEY) {
       console.error("ANTHROPIC_API_KEY is not configured")
@@ -1555,14 +1633,9 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const subStatus = await checkSubscription()
-    
-    if (!subStatus.isSubscribed && !subStatus.isFreeTrialAvailable) {
-      return NextResponse.json(
-        { error: "Subscription required", requiresSubscription: true },
-        { status: 403 }
-      )
-    }
+    // Access is free. Existing authenticated users may use optional AI mode
+    // without a payment or trial check when the operator explicitly enables it.
+    const subStatus = { questionsRemaining: -1 }
 
     // Rate limiting: 30 requests per minute per user
     const { limited, remaining, resetMs } = checkRateLimit(
