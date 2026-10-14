@@ -1,4 +1,5 @@
 import { kvGet, kvSet, kvDel, isDbConfigured } from '@/lib/pg-kv'
+import { getSpreadSettlementProbabilities } from './spread-settlement'
 import { isCompetitiveEloMatch } from './elo-event-filter'
 
 /**
@@ -2227,7 +2228,7 @@ export function calculateSpreadCoverProbability(
   forHome: boolean = true,
   teamSpecificSigma?: number,  // FIX 2: Optional team-specific sigma for variance adjustment
   isNeutralSite: boolean = false
-): { probability: number; expectedMargin: number; confidence: string; sigmaUsed: number } {
+): { probability: number; pushProbability: number; lossProbability: number; expectedMargin: number; confidence: string; sigmaUsed: number } {
   // FIX 2: Use team-specific sigma if provided and valid, otherwise use league default
   // Team-specific sigma accounts for blowout risk (bad teams have higher variance)
   const leagueSigma = MARGIN_SIGMA[league] || 12
@@ -2276,21 +2277,10 @@ export function calculateSpreadCoverProbability(
   //
   // For away covering: it's the complement of home covering
   
-  const threshold = -spread  // Convert spread to threshold
-  
-  let probability: number
-  if (forHome) {
-    // Home covers if actual margin > threshold
-    // P(margin > threshold) = 1 - NormalCDF((threshold - expectedMargin) / sigma)
-    const zScore = (threshold - expectedMargin) / sigma
-    probability = 1 - normalCDF(zScore)
-  } else {
-    // Away covers if home doesn't cover (margin <= threshold)
-    // P(margin <= threshold) = NormalCDF((threshold - expectedMargin) / sigma)
-    const zScore = (threshold - expectedMargin) / sigma
-    probability = normalCDF(zScore)
-  }
-  
+  const settlement = getSpreadSettlementProbabilities(expectedMargin,sigma,spread,forHome)
+  // A full win excludes a push; do not treat refunded wagers as losses.
+  const probability = settlement.win
+
   // Determine confidence based on how far from 50% the probability is
   // FIX 2: Higher sigma (more variance) reduces confidence
   const edgeFromEven = Math.abs(probability - 0.5)
@@ -2307,7 +2297,9 @@ export function calculateSpreadCoverProbability(
   }
   
   return {
-    probability: Math.max(0.01, Math.min(0.99, probability)), // Clamp to avoid extreme values
+    probability: Math.max(0, Math.min(1, probability)),
+    pushProbability: settlement.push,
+    lossProbability: settlement.lose,
     expectedMargin,
     confidence,
     sigmaUsed: sigma  // FIX 2: Return the sigma used for transparency

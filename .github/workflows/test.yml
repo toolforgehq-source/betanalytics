@@ -39,7 +39,7 @@ jobs:
 
   shadow-elo:
     name: Validate real ESPN history (no production writes)
-    if: github.event_name == 'pull_request' && (github.head_ref == 'fix/elo-pick-integrity-audit-20261014' || github.head_ref == 'feat/verified-playoff-series-context-20261014')
+    if: github.event_name == 'pull_request' && (github.head_ref == 'fix/elo-pick-integrity-audit-20261014' || (github.head_ref == 'feat/verified-playoff-series-context-20261014' || github.head_ref == 'feat/evidence-first-cross-sport-model-v3-20261014'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

@@ -1,3 +1,4 @@
+import { MODEL_VERSION } from './model-policy'
 /**
  * Recommendation Tracking System
  * 
@@ -1038,7 +1039,7 @@ export async function trackBestBet(bet: RankedBet): Promise<string | null> {
     odds: bet.bestPrice,
     probability: bet.consensusProbability,
     score: bet.score,
-    modelVersion: 'elo-integrity-v2',
+    modelVersion: MODEL_VERSION,
     source: 'best_bet',
     confidenceTier: bet.confidenceTier,
     homeElo: bet.homeElo,

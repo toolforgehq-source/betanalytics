@@ -947,3 +947,29 @@ export function buildEnhancedSituationalData(
     totalAdjustment: homeAdjustment.totalAdjustment - awayAdjustment.totalAdjustment,
   }
 }
+
+/** No sport-specific situational coefficient is enabled in the official
+ * production model until independent chronological validation passes.
+ * Raw context is still observable for future experiments, but its numerical
+ * heuristics may not quietly alter Elo or sportsbook expected value.
+ */
+export function researchOnlySituationalAdjustment(result: SituationalAdjustment): SituationalAdjustment {
+  const f = result.factors
+  const notes = ['Situational context is informational; unvalidated probability bonuses are disabled.']
+  if (f.isBackToBack) notes.push('Back-to-back scheduled game')
+  if (f.restAdvantage !== 0) notes.push(`Rest difference: ${f.restAdvantage} days`)
+  if (f.travelDistance !== 'none') notes.push(`Travel: ${f.travelDistance}`)
+  if (f.formTrend !== 'neutral') notes.push(`Recent form: ${f.formTrend}`)
+  if (f.weatherImpact) notes.push(`Weather impact flagged: ${f.weatherImpact.level}`)
+  if (f.lineMovementDirection !== 'neutral') notes.push('Reported line movement; no predictive bonus')
+  return {
+    ...result,
+    totalAdjustment: 0,
+    breakdown: {
+      backToBack:0, restAdvantage:0, travel:0,
+      recentForm:0, weather:0, sharpMoney:0, motivation:0,
+    },
+    motivationAdjustment: undefined,
+    notes,
+  }
+}

@@ -43,6 +43,7 @@ import { getTrackRecord, formatTrackRecordForContext } from './pick-tracking'
 import { getEloRatings } from './elo'
 
 export interface EnrichedGame extends Game {
+  oddsObservedAt?: string  // Actual fetch observation timestamp, not odds update claim
   seasonType?: number
   playoffContext?: PlayoffContext
   espnData?: {
@@ -389,6 +390,7 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
     if (espnGame) {
       return {
         ...oddsGame,
+        oddsObservedAt: oddsData.lastUpdated,
         isNeutralSite: espnGame.neutralSite === true,
         seasonType: espnGame.seasonType,
         playoffContext: espnGame.playoffContext,
@@ -403,7 +405,7 @@ export async function getCombinedSportsData(): Promise<CombinedSportsData> {
       }
     }
     
-    return oddsGame
+    return { ...oddsGame, oddsObservedAt: oddsData.lastUpdated }
   })
   
   return {

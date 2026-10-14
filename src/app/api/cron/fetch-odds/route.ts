@@ -201,7 +201,7 @@ export async function GET(request: Request) {
     const allGames: EnrichedGame[] = espnOddsData.games
       .filter(odds => odds.seasonType !== 1)
       .map(espnOdds => {
-      const game = convertESPNOddsToGame(espnOdds)
+      const game = { ...convertESPNOddsToGame(espnOdds), oddsObservedAt: espnOddsData.lastUpdated }
       
       // Find matching ESPN game data (which has injuries)
       const matchingEspnGame = espnData.games.find(eg => {
