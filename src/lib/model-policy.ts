@@ -101,3 +101,12 @@ export function blendSpreadWithPush(
   const eloConditional = eloWin/active
   return active * (eloWeight*eloConditional+(1-eloWeight)*marketConditionalWin)
 }
+
+/** Opposing teams share ONE calibrated moneyline forecast, never two
+ * independently tuned forecasts that could sum to >100%.
+ */
+export function twoWaySideProbability(homeProbability: number, isHome: boolean): number {
+  if (!Number.isFinite(homeProbability) || homeProbability <= 0 || homeProbability >= 1)
+    throw new Error('Invalid two-way home probability')
+  return isHome ? homeProbability : 1-homeProbability
+}
