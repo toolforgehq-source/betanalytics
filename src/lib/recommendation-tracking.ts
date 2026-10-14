@@ -10,6 +10,8 @@
  * - Calculates W-L record, ROI, and calibration
  */
 
+import type { PlayoffContext } from './playoff-context'
+
 // ============================================
 // TYPES
 // ============================================
@@ -72,6 +74,7 @@ export interface TrackedRecommendation {
   // Elo ratings (preserved from RankedBet so the UI can always display them)
   homeElo?: number
   awayElo?: number
+  playoffContext?: PlayoffContext
 
   // For props - additional tracking
   playerName?: string
@@ -368,6 +371,7 @@ export async function trackRecommendation(reco: Omit<TrackedRecommendation, 'id'
           score: reco.score,
           confidenceTier: reco.confidenceTier,
           modelVersion: reco.modelVersion,
+          playoffContext: reco.playoffContext,
         }
         if (existing.initialOdds === undefined || existing.initialOdds === null) {
           updates.initialOdds = existing.odds ?? reco.odds
@@ -1032,7 +1036,8 @@ export async function trackBestBet(bet: RankedBet): Promise<string | null> {
     source: 'best_bet',
     confidenceTier: bet.confidenceTier,
     homeElo: bet.homeElo,
-    awayElo: bet.awayElo
+    awayElo: bet.awayElo,
+    playoffContext: bet.playoffContext
   })
 }
 
