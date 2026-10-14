@@ -39,6 +39,7 @@ import type { WeatherData } from './weather'
 import { type LineMovement } from './line-movement'
 import { normalizeTeamName as normalizeScheduleTeamName, type TeamScheduleData } from './team-schedule'
 import { getCalibratedProbability } from './calibration'
+import { isEligibleForTopPicks } from './enforce-picks'
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
 export interface RankedBet {
@@ -55,7 +56,7 @@ export interface RankedBet {
   line?: number  // For spread/total bets (e.g., -3.5, +7, 224.5)
   
   // Probability and edge calculations
-  consensusProbability: number  // No-vig average across books (market fair value)
+  consensusProbability: number  // Final model-adjusted percentage used for grading (legacy name)
   bestPrice: number             // Best available American odds
   bestBook: string              // Which book has the best price
   impliedProbability: number    // Implied prob from best price
@@ -3340,7 +3341,7 @@ export async function computeBestBets(
     // Edge gate: picks without meaningful edge drop to value tier without
     // consuming a Lock/Strong slot. A later pick with real edge can still
     // claim the slot.
-    if (!Number.isFinite(bet.edge) || bet.edge < MIN_EDGE_FOR_TOP_TIER || bet.edge > MAX_SANE_EDGE || bet.roi <= 0) {
+    if (!isEligibleForTopPicks(bet)) {
       globalTierMap.set(key, 'value')
       edgeGatedCount++
       continue
