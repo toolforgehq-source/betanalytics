@@ -40,6 +40,7 @@ import { type LineMovement } from './line-movement'
 import { normalizeTeamName as normalizeScheduleTeamName, type TeamScheduleData } from './team-schedule'
 import { getCalibratedProbability } from './calibration'
 import { isEligibleForTopPicks } from './enforce-picks'
+import { blendSpreadWithPush, modelSettlement } from './model-policy'
 import { formatPlayoffContext, type PlayoffContext } from './playoff-context'
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
 
@@ -67,6 +68,7 @@ export interface RankedBet {
   
   // Elo model data (when available)
   eloProbability?: number       // Our Elo model's win probability
+  pushProbability?: number      // Refund probability for integer point spreads
   eloConfidence?: string        // Confidence level based on games played
   homeElo?: number              // Home team's Elo rating
   awayElo?: number              // Away team's Elo rating
@@ -590,23 +592,9 @@ export function twoWayNoVigProbability(selectedOdds: number, oppositeOdds?: numb
   return selected / (selected + other)
 }
 
-export function calculateExpectedValue(americanOdds: number, winProbability: number): number {
-  const winProb = winProbability // Already in decimal form (0-1)
-  const loseProb = 1 - winProb
-  
-  let payout: number
-  if (americanOdds < 0) {
-    // Favorite: -200 means bet $200 to win $100, so payout per $100 bet = 100 / (200/100) = $50
-    payout = 100 / (Math.abs(americanOdds) / 100)
-  } else {
-    // Underdog: +150 means bet $100 to win $150
-    payout = americanOdds
-  }
-  
-  // EV = (Win Prob × Payout) - (Loss Prob × Stake)
-  const ev = (winProb * payout) - (loseProb * 100)
-  
-  return ev
+export function calculateExpectedValue(americanOdds: number, winProbability: number, pushProbability = 0): number {
+  // Pushes return the original stake. EV is net dollars per $100 actually risked.
+  return modelSettlement(winProbability,pushProbability,americanOdds).returnPerUnit * 100
 }
 
 /**
@@ -1604,20 +1592,25 @@ export async function analyzeGame(
       }
       
       const rawEloCoverProb = spreadResult.probability
-      
-      // FIX 3: Apply calibration to adjust probability based on historical accuracy
-      // This corrects for systematic over/under-confidence in our predictions
-      const calibratedEloCoverProb = await getCalibratedProbability(rawEloCoverProb, game.sport)
-      
-      // FIX: Blend spread cover probability with market consensus (like moneylines and totals already do)
+      const pushProbability = spreadResult.pushProbability
+
+      // Calibrate Elo's probability conditional on the bet resolving.
+      // Multiplying back by (1-push) preserves the refund mass.
+      const conditionalEloProb = rawEloCoverProb / (1-pushProbability)
+      const calibratedEloConditional = await getCalibratedProbability(conditionalEloProb, game.sport)
+
+      // Blend spread cover probability with market consensus conditional on no push.
       // Without blending, the raw Elo model can disagree with the market by 10+ points on large
       // spreads (e.g., Duke -17.5 vs Notre Dame), producing inflated edges (30%+) that aren't real.
       const oppositeSpreadPrice = game.spreads?.find(m => m.bookmaker === bestEntry.book)
         ?.outcomes.find(o => o.name !== teamName && o.point === -point)?.price
       const marketCoverProb = twoWayNoVigProbability(bestEntry.outcome.price, oppositeSpreadPrice)
-      const baseEloCoverProb = eloResult.confidence
-        ? blendWithMarket(calibratedEloCoverProb, marketCoverProb, eloResult.confidence)
-        : calibratedEloCoverProb
+      const baseEloCoverProb = blendSpreadWithPush(
+        calibratedEloConditional*(1-pushProbability),
+        pushProbability,
+        marketCoverProb,
+        ELO_CONFIDENCE_WEIGHTS[eloResult.confidence] ?? 0.5
+      )
       
       // Apply situational factors to spread cover probability
       const opponentName = isHomeTeam ? game.awayTeam : game.homeTeam
@@ -1662,10 +1655,10 @@ export async function analyzeGame(
       const impliedProb = americanToImpliedProbability(bestEntry.outcome.price)
       
       // Edge is Elo probability - implied probability (our model vs market)
-      const edge = eloCoverProb - impliedProb
+      const edge = eloCoverProb - (1-pushProbability)*impliedProb
       
       // Calculate EV and ROI using Elo probability
-      const ev = calculateExpectedValue(bestEntry.outcome.price, eloCoverProb)
+      const ev = calculateExpectedValue(bestEntry.outcome.price, eloCoverProb, pushProbability)
       const roi = calculateROI(ev)
       
       // Apply spread-specific thresholds (more relaxed than moneyline)
@@ -1742,6 +1735,7 @@ export async function analyzeGame(
         impliedProbability: Math.round(impliedProb * 1000) / 10,
         edge: Math.round(edge * 1000) / 10,
         eloProbability: Math.round(eloCoverProb * 1000) / 10,
+        pushProbability: Math.round(pushProbability * 10000) / 10000,
         eloConfidence: spreadResult.confidence,
         homeElo: homeElo, // Use effective (injury-adjusted) rating that was actually used in calculation
         awayElo: awayElo, // Use effective (injury-adjusted) rating that was actually used in calculation
@@ -2442,6 +2436,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       const marketCoverProb = twoWayNoVigProbability(bestEntry.outcome.price, oppositeSpreadPrice)
       
       let coverProb: number
+      let pushProbability = 0
       let spreadConfidence: string | undefined
       let homeEloRating: number | undefined
       let awayEloRating: number | undefined
@@ -2476,10 +2471,10 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
           return
         }
         
+        pushProbability = spreadResult.pushProbability
         const rawEloCoverProb = spreadResult.probability
-        coverProb = eloResult.confidence
-          ? blendWithMarket(rawEloCoverProb, marketCoverProb, eloResult.confidence)
-          : rawEloCoverProb
+        coverProb = blendSpreadWithPush(rawEloCoverProb,pushProbability,marketCoverProb,
+          ELO_CONFIDENCE_WEIGHTS[eloResult.confidence] ?? 0.5)
         spreadConfidence = spreadResult.confidence
         hasEloAnalysis = true
       } else {
@@ -2489,7 +2484,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
       }
       
       const impliedProb = americanToImpliedProbability(bestEntry.outcome.price)
-      const edge = coverProb - impliedProb
+      const edge = coverProb - (1-pushProbability)*impliedProb
       
       // SANITY CHECK: Reject spreads with impossibly large edges (likely Elo miscalibration)
       // This was missing from the sport query path, allowing 20%+ phantom edges through
@@ -2498,7 +2493,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         return
       }
       
-      const ev = calculateExpectedValue(bestEntry.outcome.price, coverProb)
+      const ev = calculateExpectedValue(bestEntry.outcome.price, coverProb,pushProbability)
       const roi = calculateROI(ev)
       const sportQuerySpreadSize = Math.abs(point)
       const sportQuerySpreadEloGap = homeEloRating && awayEloRating ? Math.abs(homeEloRating - awayEloRating) : undefined
@@ -2527,6 +2522,7 @@ async function analyzeGameForSportQuery(game: Game, injuries?: InjuryInfo[], hom
         impliedProbability: Math.round(impliedProb * 1000) / 10,
         edge: Math.round(edge * 1000) / 10,
         eloProbability: hasEloAnalysis ? Math.round(coverProb * 1000) / 10 : undefined,
+        pushProbability: Math.round(pushProbability*10000)/10000,
         eloConfidence: spreadConfidence,
         homeElo: homeEloRating,
         awayElo: awayEloRating,
