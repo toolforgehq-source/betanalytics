@@ -144,9 +144,18 @@ let previous={records:[]}
 try{previous=JSON.parse(await fs.readFile(PREVIOUS,'utf8'))}catch(e){if(e.code!=='ENOENT')throw e}
 if(previous.records && !Array.isArray(previous.records))throw new Error('Invalid prior paper ledger')
 const records=new Map((previous.records||[]).map(g=>[g.league+':'+g.gameId,g]))
+// Week number is derived from the season calendar, not a fixed October slate.
+const daysSince = date => Math.floor((NOW - Date.parse(date)) / 86_400_000)
+const weekIndex = (firstWeek, maxWeek) =>
+  Math.max(1, Math.min(maxWeek, 1 + Math.floor(daysSince(firstWeek) / 7)))
+const cfbWeek = weekIndex('2026-08-29T12:00:00Z', 16)
+const nflWeek = weekIndex('2026-09-10T00:00:00Z', 18)
+const rollingWeeks = (league,week,max) =>
+  Array.from({length:4},(_,i)=>week-2+i).filter(w=>w>0&&w<=max)
+    .map(w=>({league,week:w}))
 const weekly=await Promise.all([
-  ...[7,8,9].map(w=>({league:'NCAAF',week:w})),
-  ...[6,7,8].map(w=>({league:'NFL',week:w}))
+  ...rollingWeeks('NCAAF',cfbWeek,16),
+  ...rollingWeeks('NFL',nflWeek,18)
 ].map(async spec=>({...spec,raw:await fetchJson(urlFor(spec.league,spec.week))})))
 const fixtureMap=new Map(), finalMap=new Map()
 for(const b of weekly)for(const e of b.raw.events||[]) {
