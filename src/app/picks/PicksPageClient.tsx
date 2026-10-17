@@ -39,10 +39,32 @@ interface TieredPick {
   frozen?: boolean
 }
 
+interface RejectedCandidate {
+  gameId: string
+  game: string
+  team: string
+  betType: string
+  line?: number
+  odds: number
+  probability?: number
+  edge?: number
+  reasonNotOfficial: string[]
+}
+
+interface PickDiagnostics {
+  gamesAnalyzed: number | null
+  eloCandidates: number
+  hasFreshModel: boolean
+  officialPickCount: number
+  nearestCandidates: RejectedCandidate[]
+  explanation: string | null
+}
+
 interface PicksData {
   locks: TieredPick[]
   strong: TieredPick[]
   lastUpdated: string
+  diagnostics?: PickDiagnostics
 }
 
 function formatOdds(odds: number): string {
@@ -219,7 +241,8 @@ export default function PicksPageClient() {
         setData({
           locks,
           strong,
-          lastUpdated: json.lastUpdated || new Date().toISOString()
+          lastUpdated: json.lastUpdated || new Date().toISOString(),
+          diagnostics: json.pickDiagnostics
         })
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -344,10 +367,42 @@ export default function PicksPageClient() {
               <div className="text-center py-20 bg-slate-900/30 border border-slate-800/50 rounded-xl">
                 <Shield className="w-12 h-12 text-slate-600 mx-auto mb-4" />
                 <h3 className="text-xl font-bold mb-2">No Picks Yet Today</h3>
-                <p className="text-slate-400 mb-6 max-w-md mx-auto">
-                  Picks are generated when games are available and our model finds qualifying edges.
-                  Check back closer to game time.
+                <p className="text-slate-400 mb-4 max-w-xl mx-auto">
+                  {data.diagnostics?.explanation ||
+                    'No picks meet the full official model safeguards right now. The model will re-evaluate as odds change.'}
                 </p>
+                {data.diagnostics && (
+                  <div className="mb-6 text-sm text-slate-400">
+                    {data.diagnostics.gamesAnalyzed ?? 0} games analyzed ·{' '}
+                    {data.diagnostics.eloCandidates} Elo candidates ·{' '}
+                    {data.diagnostics.hasFreshModel ? 'Model refreshed recently' : 'Model refresh needs attention'}
+                  </div>
+                )}
+                {data.diagnostics?.nearestCandidates && data.diagnostics.nearestCandidates.length > 0 && (
+                  <div className="max-w-2xl mx-auto mb-8 text-left space-y-3">
+                    <p className="text-xs font-semibold text-amber-300 uppercase tracking-wide">
+                      Candidates rejected by the official model — not betting recommendations
+                    </p>
+                    {data.diagnostics.nearestCandidates.map(candidate => (
+                      <div key={candidate.gameId} className="border border-slate-700/60 rounded-lg p-4 bg-slate-900/60">
+                        <p className="text-sm font-semibold text-slate-100">
+                          {candidate.team}{' '}
+                          {candidate.betType === 'moneyline' ? 'ML' : candidate.betType === 'spread' && candidate.line != null
+                            ? `${candidate.line > 0 ? '+' : ''}${candidate.line}`
+                            : candidate.betType} · {formatOdds(candidate.odds)}
+                        </p>
+                        <p className="text-xs text-slate-400 mb-2">{candidate.game}</p>
+                        <p className="text-xs text-slate-400 mb-2">
+                          Model: {candidate.probability != null ? `${candidate.probability.toFixed(1)}%` : 'N/A'}
+                          {' · '}Calculated edge: {candidate.edge != null ? `${candidate.edge.toFixed(1)}pp` : 'N/A'}
+                        </p>
+                        <ul className="text-xs text-amber-200/90 list-disc pl-4 space-y-1">
+                          {candidate.reasonNotOfficial.map((reason, i) => <li key={i}>{reason}</li>)}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <Link
                   href="/chat"
                   className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-500 to-cyan-400 rounded-xl font-semibold transition-all"
