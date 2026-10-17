@@ -58,6 +58,79 @@ export function isEligibleForTopPicks(pick: PickLike): boolean {
 }
 
 /**
+ * Explain why an Elo candidate cannot be an official Lock/Strong pick.
+ *
+ * This is diagnostic only: the original isEligibleForTopPicks function remains
+ * the authoritative gate. Do not promote a candidate based on these reasons.
+ * In particular, a high model score is not proof of a betting advantage.
+ */
+export function getTopPickRejectionReasons(pick: PickLike): string[] {
+  const reasons: string[] = []
+  if (pick.oddsObservedAt && !isFreshPregameQuote(pick.oddsObservedAt, pick.commenceTime)) {
+    reasons.push('Odds snapshot is stale or the game has already started')
+  }
+  if (pick.betType !== 'moneyline' && pick.betType !== 'spread') {
+    reasons.push('Market is not eligible for official Elo picks')
+  }
+  if (String(pick.sport || '').startsWith('soccer')) {
+    reasons.push('Soccer draws require a validated three-way model')
+  }
+  if (pick.seasonType === 3 &&
+      ['MLB', 'NBA', 'NHL'].includes(String(pick.sportName || '')) &&
+      pick.playoffContext?.status !== 'verified') {
+    reasons.push('Postseason series context could not be verified')
+  }
+  if (!Number.isFinite(pick.homeElo) || !Number.isFinite(pick.awayElo)) {
+    reasons.push('Verified Elo ratings are missing')
+  }
+  if (pick.eloConfidence !== 'high' && pick.eloConfidence !== 'medium') {
+    reasons.push(`Elo confidence is ${String(pick.eloConfidence || 'unknown')}; medium or high is required`)
+  }
+  const price = Number(pick.bestPrice ?? pick.odds)
+  const prob = Number(pick.eloProbability ?? pick.probability ?? pick.consensusProbability)
+  const push = Number(pick.pushProbability ?? 0)
+  if (!Number.isFinite(price) || !Number.isInteger(price) || price === 0) {
+    reasons.push('A valid sportsbook price is missing')
+  } else if (price < -169) {
+    reasons.push(`Price ${price} is worse than the -169 official-pick cap`)
+  }
+  if (!Number.isFinite(prob) || prob <= 0 || prob >= 100) {
+    reasons.push('Model win probability is invalid')
+  }
+  if (pick.betType === 'spread' && Number.isInteger(pick.line) &&
+      !Number.isFinite(pick.pushProbability)) {
+    reasons.push('Whole-number spread needs a verified push probability')
+  }
+  if (!Number.isFinite(push) || push < 0 || push >= 1 ||
+      !Number.isFinite(prob) || prob / 100 + push > 1 + 1e-8) {
+    reasons.push('Push and win probabilities are inconsistent')
+  }
+  if (Number.isInteger(price) && price !== 0 &&
+      Number.isFinite(prob) && prob > 0 && prob < 100 &&
+      Number.isFinite(push) && push >= 0 && push < 1 &&
+      prob / 100 + push <= 1 + 1e-8) {
+    try {
+      const result = modelSettlement(prob / 100, push, price)
+      if (result.edgePercentagePoints < 3) {
+        reasons.push(`Calculated edge ${result.edgePercentagePoints.toFixed(1)}pp is below the 3pp floor`)
+      } else if (result.edgePercentagePoints > 8) {
+        reasons.push('Implausibly high calculated edge needs independent validation')
+      }
+      if (result.returnPerUnit <= 0) {
+        reasons.push('Expected return is not positive at these odds')
+      }
+    } catch {
+      reasons.push('Market probabilities or odds could not be validated')
+    }
+  }
+  // The classification must never silently claim that a blocked candidate qualifies.
+  if (reasons.length === 0 && !isEligibleForTopPicks(pick)) {
+    reasons.push('Fails another official model safety check')
+  }
+  return reasons
+}
+
+/**
  * Calculate Kelly Criterion fraction for a bet.
  * Kelly fraction = (b * p - q) / b
  * where b = decimal payout, p = win probability (0-1), q = 1-p
