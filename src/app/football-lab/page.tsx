@@ -83,7 +83,6 @@ export default async function FootballLab() {
   const settled=(data?.records||[]).filter(r=>r.result).sort((a,b)=>Date.parse(b.kickoff)-Date.parse(a.kickoff))
   const settledBets=settled.filter(r=>r.paperSelection)
   const selectedUpcoming=upcoming.filter(r=>r.paperSelection)
-  const paperRecord=data?.count
 
   return (
     <main className="min-h-screen bg-slate-950 text-white px-4 py-10">
@@ -126,7 +125,7 @@ export default async function FootballLab() {
               Actual execution, line movement, limits, and betting fees may differ.
               {settledBets.length<30&&' Sample too small to infer profitability.'}
             </div>
-            <h2 className="mt-10 text-xl font-semibold">Today's frozen paper selections</h2>
+            <h2 className="mt-10 text-xl font-semibold">Today&apos;s frozen paper selections</h2>
             <p className="text-sm text-slate-400 mt-1">Maximum three prospective selections per betting date. No retroactive replacements.</p>
             <div className="grid md:grid-cols-2 gap-3 mt-4">
               {selectedUpcoming.length ? selectedUpcoming.map(r=>(
