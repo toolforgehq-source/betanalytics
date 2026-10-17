@@ -267,6 +267,7 @@ export default function PicksPageClient() {
             </Link>
             <div className="hidden md:flex items-center gap-5">
               <Link href="/picks" className="text-sm text-cyan-400 font-semibold">Model Picks</Link>
+              <Link href="/football-lab" className="text-sm text-amber-300 hover:text-amber-100 transition-colors">Football Paper Lab</Link>
               <Link href="/performance" className="text-sm text-slate-300 hover:text-white transition-colors">Performance</Link>
               <Link href="/odds" className="text-sm text-slate-300 hover:text-white transition-colors">Odds</Link>
               <Link href="/chat" className="text-sm text-slate-300 hover:text-white transition-colors">Chat</Link>
@@ -291,6 +292,7 @@ export default function PicksPageClient() {
             Every pick is classified by confidence level. Locks and Strong Plays are tracked on our
             {' '}<Link href="/performance" className="text-cyan-400 hover:underline">performance page</Link> with verified results.
           </p>
+          <Link href="/football-lab" className="inline-block mt-4 text-sm font-semibold text-amber-300 hover:underline">Watch our independent NFL & college-football paper test →</Link>
         </div>
 
         {/* Tier Legend */}
