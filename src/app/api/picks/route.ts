@@ -25,6 +25,7 @@ import { getCachedBestBet, type RankedBet } from '@/lib/bet-ranking'
 import { simulateRecordedTopThree } from '@/lib/recorded-bankroll'
 import { dedupeAndEnforceCaps, dedupeToMap, FREEZE_WINDOW_MS, MAX_LOCKS, MAX_STRONG, type PickLike } from '@/lib/enforce-picks'
 import { kvGet, kvSet, isDbConfigured } from '@/lib/pg-kv'
+import { getTopPickRejectionReasons } from '@/lib/enforce-picks'
 
 
 // ============================================
@@ -382,9 +383,54 @@ export async function GET() {
     const frozenCount = finalPicks.filter(p => p.frozen).length
     console.log(`[API /picks] Final picks: ${finalPicks.length} total (${lockCount} locks, ${strongCount} strong, ${startedCount} started, ${frozenCount} frozen/pinned, ${finalPicks.length - frozenCount} fresh)`)
 
+    // Explain empty official-pick slates from the SAME cached model without
+    // relaxing any qualification or publishing unverified candidates.
+    const remainingCandidates = (cachedBestBet?.allEloBets || [])
+      .filter(b => {
+        const start = Date.parse(b.commenceTime)
+        return Number.isFinite(start) && start > Date.now() &&
+          new Date(start).toLocaleDateString('en-US', { timeZone: 'America/New_York' }) === todayStr
+      })
+      .sort((a, b) => b.score - a.score)
+    const distinctGames = new Set<string>()
+    const nearestCandidates = remainingCandidates
+      .filter(b => {
+        if (distinctGames.has(b.gameId)) return false
+        distinctGames.add(b.gameId)
+        return true
+      })
+      .slice(0, 3)
+      .map(b => ({
+        gameId: b.gameId,
+        game: `${b.awayTeam} @ ${b.homeTeam}`,
+        team: b.team,
+        betType: b.betType,
+        line: b.line,
+        odds: b.bestPrice,
+        probability: b.eloProbability,
+        edge: b.edge,
+        score: b.score,
+        confidence: b.eloConfidence,
+        reasonNotOfficial: getTopPickRejectionReasons(b)
+      }))
+    const pickDiagnostics = {
+      gamesAnalyzed: cachedBestBet?.gamesAnalyzed ?? null,
+      eloCandidates: remainingCandidates.length,
+      hasFreshModel: Boolean(cachedBestBet &&
+        Date.now() - Date.parse(cachedBestBet.calculatedAt) < 75 * 60 * 1000),
+      officialPickCount: finalPicks.length,
+      nearestCandidates: finalPicks.length === 0 ? nearestCandidates : [],
+      explanation: !cachedBestBet
+        ? 'Model calculation unavailable: no current odds/Elo cache'
+        : finalPicks.length === 0
+          ? 'Games were analyzed, but no candidate passed every official price, confidence, and edge safeguard'
+          : null
+    }
+
     return NextResponse.json({
       success: true,
       officialModelVersion: MODEL_VERSION,
+      pickDiagnostics,
       todaysPicks,
       todaysRecommendations,
       livePicks: finalPicks,  // ALWAYS deduped + tier-capped + pinned

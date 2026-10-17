@@ -4,6 +4,7 @@
  */
 import { NextResponse } from 'next/server'
 import { getCachedBestBet } from '@/lib/bet-ranking'
+import { getTopPickRejectionReasons } from '@/lib/enforce-picks'
 
 export const dynamic = 'force-dynamic'
 
@@ -50,9 +51,9 @@ export async function GET() {
       spreadSize: b.betType === 'spread' && b.line !== undefined ? Math.abs(b.line) : 0,
       eloGap: b.homeElo && b.awayElo ? Math.abs(b.homeElo - b.awayElo) : 0,
       // Why it's not Lock
-      lockFailReasons: getLockFailReasons(b),
+      lockFailReasons: getTopPickRejectionReasons(b),
       // Why it's not Strong
-      strongFailReasons: getStrongFailReasons(b),
+      strongFailReasons: getTopPickRejectionReasons(b),
     }))
     
     const topElo = allElo.slice(0, 10).map(b => ({
@@ -70,8 +71,8 @@ export async function GET() {
       line: b.line,
       spreadSize: b.betType === 'spread' && b.line !== undefined ? Math.abs(b.line) : 0,
       eloGap: b.homeElo && b.awayElo ? Math.abs(b.homeElo - b.awayElo) : 0,
-      lockFailReasons: getLockFailReasons(b),
-      strongFailReasons: getStrongFailReasons(b),
+      lockFailReasons: getTopPickRejectionReasons(b),
+      strongFailReasons: getTopPickRejectionReasons(b),
     }))
     
     return NextResponse.json({
@@ -95,34 +96,3 @@ export async function GET() {
   }
 }
 
-function getLockFailReasons(b: { eloProbability?: number; edge: number; eloConfidence?: string; situationalBreakdown?: { sharpMoney?: { adjustment?: number } }; situationalAdjustment?: number; betType: string; line?: number; homeElo?: number; awayElo?: number }): string[] {
-  const reasons: string[] = []
-  const prob = b.eloProbability !== undefined ? b.eloProbability : 0
-  if (prob < 62) reasons.push(`prob ${prob.toFixed(1)} < 62`)
-  if (b.edge < 5) reasons.push(`edge ${b.edge.toFixed(1)} < 5`)
-  const conf = b.eloConfidence || 'unknown'
-  if (conf !== 'high' && conf !== 'very_high') reasons.push(`confidence ${conf} not high/very_high`)
-  const sharpAdj = b.situationalBreakdown?.sharpMoney?.adjustment
-  if (sharpAdj !== undefined && sharpAdj < -0.01) reasons.push(`sharp against (${sharpAdj.toFixed(2)})`)
-  const sitAdj = b.situationalAdjustment || 0
-  if (sitAdj < -0.01) reasons.push(`negative sit adj (${sitAdj.toFixed(2)})`)
-  const spreadSize = b.betType === 'spread' && b.line !== undefined ? Math.abs(b.line) : 0
-  if (spreadSize > 10) reasons.push(`spread ${spreadSize} > 10`)
-  const eloGap = b.homeElo && b.awayElo ? Math.abs(b.homeElo - b.awayElo) : 0
-  if (eloGap > 300) reasons.push(`elo gap ${eloGap} > 300`)
-  return reasons
-}
-
-function getStrongFailReasons(b: { eloProbability?: number; edge: number; eloConfidence?: string; betType: string; line?: number; homeElo?: number; awayElo?: number }): string[] {
-  const reasons: string[] = []
-  const prob = b.eloProbability !== undefined ? b.eloProbability : 0
-  if (prob < 57) reasons.push(`prob ${prob.toFixed(1)} < 57`)
-  if (b.edge < 4) reasons.push(`edge ${b.edge.toFixed(1)} < 4`)
-  const conf = b.eloConfidence || 'unknown'
-  if (conf !== 'medium' && conf !== 'high' && conf !== 'very_high') reasons.push(`confidence ${conf}`)
-  const spreadSize = b.betType === 'spread' && b.line !== undefined ? Math.abs(b.line) : 0
-  if (spreadSize > 14) reasons.push(`spread ${spreadSize} > 14`)
-  const eloGap = b.homeElo && b.awayElo ? Math.abs(b.homeElo - b.awayElo) : 0
-  if (eloGap > 300) reasons.push(`elo gap ${eloGap} > 300`)
-  return reasons
-}
