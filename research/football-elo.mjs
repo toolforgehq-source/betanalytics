@@ -176,7 +176,7 @@ export function runBacktest(games, league) {
   const baselines={}
   for(const yr of [2024,2025,2026]){
     const gamesOfYear=best.computed.predictions.filter(p=>p.season===yr)
-    baselines[yr]=summarize(gamesOfYear.map(p=>({...p,p:p.neutral?.5:homeRate})))
+    baselines[yr]=summarize(gamesOfYear.map(p=>({...p,p: p.neutral ? .5 : homeRate})))
   }
   return {league,selectedOn:'2024 validation Brier only',winner:best.name,
     params:best.params,homeBaselineRate:+homeRate.toFixed(4),
