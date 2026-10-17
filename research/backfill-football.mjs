@@ -133,4 +133,5 @@ console.log(JSON.stringify({totalGames:games.length,cutoff:summary.cutoff,
     baseline2025:reports[k].baseline[2025],
     elo2025:reports[k].holdout2025,
     baseline2026:reports[k].baseline[2026],
-    elo2026:reports[k].holdout2026}))},null,2))
+    elo2026:reports[k].holdout2026,
+    variants:reports[k].results.map(v=>({name:v.name,validation2024:v.byYear[2024],holdout2025:v.byYear[2025],holdout2026:v.byYear[2026]}))}))},null,2))
