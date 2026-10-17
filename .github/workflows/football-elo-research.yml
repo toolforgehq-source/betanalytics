@@ -1,0 +1,41 @@
+name: Football Elo Research Backfill
+on:
+  pull_request:
+    paths:
+      - 'research/football-elo.mjs'
+      - 'research/football-elo.test.mjs'
+      - 'research/backfill-football.mjs'
+      - '.github/workflows/football-elo-research.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  football-elo-backtest:
+    name: Isolated multi-season football backtest
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out research code
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax validation
+        run: |
+          node --check research/football-elo.mjs
+          node --check research/backfill-football.mjs
+      - name: Football research unit tests
+        run: node --test research/football-elo.test.mjs
+      - name: Fetch genuine ESPN completed game history and compare models
+        run: node research/backfill-football.mjs --through=2026-10-17T12:00:00Z
+      - name: Upload provenance and holdout metrics (no production DB writes)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-elo-history-and-backtest
+          path: research-output/
+          retention-days: 21
+          if-no-files-found: warn
