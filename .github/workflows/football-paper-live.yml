@@ -1,0 +1,89 @@
+name: Football Live Paper Tracking
+on:
+  push:
+    branches:
+      - 'devin/1767740595-betanalytics-app'
+    paths:
+      - 'research/football-paper-live.mjs'
+      - '.github/workflows/football-paper-live.yml'
+  pull_request:
+    paths:
+      - 'research/football-paper-live.mjs'
+      - '.github/workflows/football-paper-live.yml'
+  schedule:
+    - cron: '0 * * * 0,6'
+    - cron: '10 */6 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: football-paper-ledger
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify research source and live-paper engine
+        run: |
+          node --check research/football-paper-live.mjs
+          node --test research/football-elo.test.mjs
+
+  publish:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Load historical reference and previous immutable ledger
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin paper-football-data >/dev/null 2>&1; then
+            git fetch origin paper-football-data:refs/remotes/origin/paper-football-data
+            git show origin/paper-football-data:history.json > /tmp/football-history.json
+            git show origin/paper-football-data:latest.json > /tmp/football-paper-previous.json
+          else
+            mkdir -p /tmp/football-bootstrap
+            gh run download 39046375947 --name football-elo-history-and-backtest --dir /tmp/football-bootstrap
+            cp /tmp/football-bootstrap/football-games-2022-2026.json /tmp/football-history.json
+          fi
+      - name: Capture timestamped PRE-GAME game-winner probabilities and true ESPN quotes
+        env:
+          PAPER_HISTORY: /tmp/football-history.json
+          PAPER_PREVIOUS: /tmp/football-paper-previous.json
+          PAPER_OUTPUT: /tmp/football-paper-latest.json
+        run: node research/football-paper-live.mjs
+      - name: Push separate immutable-history data branch
+        run: |
+          set -euo pipefail
+          git config user.name "betanalytics-paper-bot"
+          git config user.email "bot@users.noreply.github.com"
+          if git show-ref --verify --quiet refs/remotes/origin/paper-football-data; then
+            git switch -C paper-football-data origin/paper-football-data
+          else
+            git switch --orphan paper-football-data
+            git rm -r -f --cached . >/dev/null || true
+          fi
+          cp /tmp/football-history.json history.json
+          cp /tmp/football-paper-latest.json latest.json
+          git add history.json latest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Paper-only football snapshot $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push origin HEAD:paper-football-data
+          fi
