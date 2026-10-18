@@ -1,8 +1,9 @@
-import PicksPageClient from "./PicksPageClient"
+import DailyTopThreeClient from './DailyTopThreeClient'
 
-// Always render public model data without a login or paid subscription.
-export const dynamic = "force-dynamic"
+export const dynamic = 'force-dynamic'
 
-export default async function PicksPage() {
-  return <PicksPageClient />
+// One ranked list from immutable, timestamped football model selections.
+// It does not require the quota-blocked primary Neon database.
+export default function PicksPage() {
+  return <DailyTopThreeClient />
 }
