@@ -2,7 +2,7 @@
   "schema": 1,
   "mode": "PAPER_ONLY",
   "model": "football-multiseason-v1",
-  "generatedAt": "2026-10-19T04:32:06.138Z",
+  "generatedAt": "2026-10-19T13:00:14.748Z",
   "snapshotIsImmutable": true,
   "disclaimer": "Research only. Odds are captured from ESPN and are not guaranteed executable. Game-winner Elo is not a validated profitable betting model.",
   "source": "ESPN event scoreboard and ESPN DraftKings pickcenter",
@@ -16,7 +16,7 @@
     "paperWins": 0,
     "paperUnits": -6,
     "missingRatings": 0,
-    "quotesCaptured": 1,
+    "quotesCaptured": 0,
     "quoteFailures": 56,
     "newRecords": 0
   },
