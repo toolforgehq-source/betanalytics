@@ -2,22 +2,22 @@
   "schema": 1,
   "mode": "PAPER_ONLY",
   "model": "football-multiseason-v1",
-  "generatedAt": "2026-10-19T00:36:39.228Z",
+  "generatedAt": "2026-10-19T04:32:06.138Z",
   "snapshotIsImmutable": true,
   "disclaimer": "Research only. Odds are captured from ESPN and are not guaranteed executable. Game-winner Elo is not a validated profitable betting model.",
   "source": "ESPN event scoreboard and ESPN DraftKings pickcenter",
-  "backfillHistoryGames": 5404,
+  "backfillHistoryGames": 5405,
   "count": {
     "allForecasts": 176,
     "upcoming": 127,
-    "upcomingWithOdds": 70,
+    "upcomingWithOdds": 71,
     "selected": 16,
     "settledPaper": 6,
     "paperWins": 0,
     "paperUnits": -6,
     "missingRatings": 0,
-    "quotesCaptured": 31,
-    "quoteFailures": 57,
+    "quotesCaptured": 1,
+    "quoteFailures": 56,
     "newRecords": 0
   },
   "upcoming": [
@@ -1745,13 +1745,14 @@
       "effectiveGames": 46.48,
       "homeWin": 0.686487397786374,
       "capturedAt": "2026-10-17T16:28:47.200Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-10-19T04:32:06.138Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 180,
+      "awayPrice": -218,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873009"
     },
     {
       "gameId": "401871071",
@@ -4458,7 +4459,13 @@
       "homePrice": -118,
       "awayPrice": -102,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-10-19T04:32:06.138Z",
+        "homeScore": 23,
+        "awayScore": 13,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873007"
     },
@@ -6186,13 +6193,14 @@
       "effectiveGames": 46.48,
       "homeWin": 0.686487397786374,
       "capturedAt": "2026-10-17T16:28:47.200Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-10-19T04:32:06.138Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 180,
+      "awayPrice": -218,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873009"
     },
     {
       "gameId": "401871071",
