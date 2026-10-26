@@ -2,15 +2,15 @@
   "schema": 1,
   "mode": "PAPER_ONLY",
   "model": "football-multiseason-v1",
-  "generatedAt": "2026-10-25T22:55:35.779Z",
+  "generatedAt": "2026-10-26T00:52:38.078Z",
   "snapshotIsImmutable": true,
   "disclaimer": "Research only. Odds are captured from ESPN and are not guaranteed executable. Game-winner Elo is not a validated profitable betting model.",
   "source": "ESPN event scoreboard and ESPN DraftKings pickcenter",
-  "backfillHistoryGames": 5471,
+  "backfillHistoryGames": 5474,
   "count": {
     "allForecasts": 252,
-    "upcoming": 134,
-    "upcomingWithOdds": 72,
+    "upcoming": 133,
+    "upcomingWithOdds": 71,
     "selected": 25,
     "settledPaper": 15,
     "paperWins": 5,
@@ -21,39 +21,6 @@
     "newRecords": 0
   },
   "upcoming": [
-    {
-      "gameId": "401873022",
-      "league": "NFL",
-      "gameDate": "2026-10-25",
-      "kickoff": "2026-10-26T00:20Z",
-      "home": "Seattle Seahawks",
-      "away": "Kansas City Chiefs",
-      "homeTeamId": "26",
-      "awayTeamId": "12",
-      "homeRating": 1677,
-      "awayRating": 1601,
-      "effectiveGames": 48.96,
-      "homeWin": 0.6273941731152484,
-      "capturedAt": "2026-10-17T16:28:47.200Z",
-      "quoteCapturedAt": "2026-10-19T00:36:39.228Z",
-      "bookmaker": "DraftKings (via ESPN)",
-      "homePrice": -125,
-      "awayPrice": 105,
-      "paperSelection": {
-        "side": "home",
-        "team": "Seattle Seahawks",
-        "price": -125,
-        "probability": 0.6274,
-        "edgePct": 7.18,
-        "expectedReturn": 0.1293,
-        "selectedAt": "2026-10-19T00:36:39.228Z",
-        "stakeUnits": 1,
-        "label": "RESEARCH PAPER SELECTION — not an official bet"
-      },
-      "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo",
-      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873022"
-    },
     {
       "gameId": "401873009",
       "league": "NFL",
@@ -6647,7 +6614,13 @@
       "homePrice": 170,
       "awayPrice": -205,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-10-26T00:52:38.078Z",
+        "homeScore": 16,
+        "awayScore": 30,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873019"
     },
@@ -6670,7 +6643,13 @@
       "homePrice": -185,
       "awayPrice": 154,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-10-26T00:52:38.078Z",
+        "homeScore": 20,
+        "awayScore": 17,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873020"
     },
@@ -6693,7 +6672,13 @@
       "homePrice": 250,
       "awayPrice": -310,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-10-26T00:52:38.078Z",
+        "homeScore": 21,
+        "awayScore": 35,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873021"
     },
