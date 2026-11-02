@@ -2,48 +2,25 @@
   "schema": 1,
   "mode": "PAPER_ONLY",
   "model": "football-multiseason-v1",
-  "generatedAt": "2026-11-01T23:23:02.292Z",
+  "generatedAt": "2026-11-02T05:53:49.676Z",
   "snapshotIsImmutable": true,
   "disclaimer": "Research only. Odds are captured from ESPN and are not guaranteed executable. Game-winner Elo is not a validated profitable betting model.",
   "source": "ESPN event scoreboard and ESPN DraftKings pickcenter",
-  "backfillHistoryGames": 5489,
+  "backfillHistoryGames": 5493,
   "count": {
     "allForecasts": 334,
-    "upcoming": 146,
-    "upcomingWithOdds": 79,
+    "upcoming": 145,
+    "upcomingWithOdds": 78,
     "selected": 36,
-    "settledPaper": 22,
+    "settledPaper": 24,
     "paperWins": 10,
-    "paperUnits": 6.265,
+    "paperUnits": 4.265,
     "missingRatings": 1,
     "quotesCaptured": 0,
     "quoteFailures": 67,
     "newRecords": 0
   },
   "upcoming": [
-    {
-      "gameId": "401873035",
-      "league": "NFL",
-      "gameDate": "2026-11-01",
-      "kickoff": "2026-11-02T01:20Z",
-      "home": "Washington Commanders",
-      "away": "Philadelphia Eagles",
-      "homeTeamId": "28",
-      "awayTeamId": "21",
-      "homeRating": 1410,
-      "awayRating": 1550,
-      "effectiveGames": 48.07,
-      "homeWin": 0.4054434079928422,
-      "capturedAt": "2026-10-22T04:34:33.572Z",
-      "quoteCapturedAt": "2026-10-22T11:42:35.960Z",
-      "bookmaker": "DraftKings (via ESPN)",
-      "homePrice": -185,
-      "awayPrice": 154,
-      "paperSelection": null,
-      "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo",
-      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873035"
-    },
     {
       "gameId": "401873036",
       "league": "NFL",
@@ -3291,6 +3268,28 @@
       "awayRating": 1582,
       "effectiveGames": 24.13,
       "homeWin": 0.5069785220338872,
+      "capturedAt": "2026-10-31T15:55:26.188Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
+    },
+    {
+      "gameId": "401860914",
+      "league": "NCAAF",
+      "gameDate": "2026-11-14",
+      "kickoff": "2026-11-14T23:00Z",
+      "home": "Boise State Broncos",
+      "away": "Oregon State Beavers",
+      "homeTeamId": "68",
+      "awayTeamId": "204",
+      "homeRating": 1698,
+      "awayRating": 1413,
+      "effectiveGames": 22.24,
+      "homeWin": 0.7929911203778529,
       "capturedAt": "2026-10-31T15:55:26.188Z",
       "quoteCapturedAt": null,
       "bookmaker": null,
@@ -8916,7 +8915,13 @@
         "stakeUnits": 1,
         "label": "RESEARCH PAPER SELECTION — not an official bet"
       },
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-02T05:53:49.676Z",
+        "homeScore": 24,
+        "awayScore": 9,
+        "correctWinner": true,
+        "paperUnits": -1
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873032"
     },
@@ -8939,7 +8944,13 @@
       "homePrice": 102,
       "awayPrice": -122,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-02T05:53:49.676Z",
+        "homeScore": 28,
+        "awayScore": 24,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873033"
     },
@@ -8972,7 +8983,13 @@
         "stakeUnits": 1,
         "label": "RESEARCH PAPER SELECTION — not an official bet"
       },
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-02T05:53:49.676Z",
+        "homeScore": 19,
+        "awayScore": 24,
+        "correctWinner": true,
+        "paperUnits": -1
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873034"
     },
@@ -8995,7 +9012,13 @@
       "homePrice": -185,
       "awayPrice": 154,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-02T05:53:49.676Z",
+        "homeScore": 27,
+        "awayScore": 10,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873035"
     },
