@@ -2,140 +2,25 @@
   "schema": 1,
   "mode": "PAPER_ONLY",
   "model": "football-multiseason-v1",
-  "generatedAt": "2026-11-08T00:04:51.684Z",
+  "generatedAt": "2026-11-08T06:49:39.925Z",
   "snapshotIsImmutable": true,
   "disclaimer": "Research only. Odds are captured from ESPN and are not guaranteed executable. Game-winner Elo is not a validated profitable betting model.",
   "source": "ESPN event scoreboard and ESPN DraftKings pickcenter",
-  "backfillHistoryGames": 5460,
+  "backfillHistoryGames": 5487,
   "count": {
     "allForecasts": 414,
-    "upcoming": 166,
-    "upcomingWithOdds": 49,
-    "selected": 42,
-    "settledPaper": 32,
-    "paperWins": 14,
-    "paperUnits": 7.325,
+    "upcoming": 161,
+    "upcomingWithOdds": 56,
+    "selected": 44,
+    "settledPaper": 33,
+    "paperWins": 15,
+    "paperUnits": 8.425,
     "missingRatings": 4,
-    "quotesCaptured": 4,
-    "quoteFailures": 117,
+    "quotesCaptured": 12,
+    "quoteFailures": 105,
     "newRecords": 0
   },
   "upcoming": [
-    {
-      "gameId": "401858291",
-      "league": "NCAAF",
-      "gameDate": "2026-11-07",
-      "kickoff": "2026-11-08T00:30Z",
-      "home": "Notre Dame Fighting Irish",
-      "away": "Miami Hurricanes",
-      "homeTeamId": "87",
-      "awayTeamId": "2390",
-      "homeRating": 1780,
-      "awayRating": 1786,
-      "effectiveGames": 25.08,
-      "homeWin": 0.5560703332859761,
-      "capturedAt": "2026-10-24T12:20:44.539Z",
-      "quoteCapturedAt": "2026-10-29T05:38:55.948Z",
-      "bookmaker": "DraftKings (via ESPN)",
-      "homePrice": -155,
-      "awayPrice": 130,
-      "paperSelection": null,
-      "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo",
-      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858291"
-    },
-    {
-      "gameId": "401862823",
-      "league": "NCAAF",
-      "gameDate": "2026-11-07",
-      "kickoff": "2026-11-08T00:30Z",
-      "home": "Army Black Knights",
-      "away": "Air Force Falcons",
-      "homeTeamId": "349",
-      "awayTeamId": "2005",
-      "homeRating": 1597,
-      "awayRating": 1485,
-      "effectiveGames": 23.24,
-      "homeWin": 0.6632428197512855,
-      "capturedAt": "2026-10-24T12:20:44.539Z",
-      "quoteCapturedAt": "2026-10-29T05:38:55.948Z",
-      "bookmaker": "DraftKings (via ESPN)",
-      "homePrice": -218,
-      "awayPrice": 180,
-      "paperSelection": null,
-      "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo",
-      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401862823"
-    },
-    {
-      "gameId": "401860913",
-      "league": "NCAAF",
-      "gameDate": "2026-11-07",
-      "kickoff": "2026-11-08T02:30Z",
-      "home": "Utah State Aggies",
-      "away": "Fresno State Bulldogs",
-      "homeTeamId": "328",
-      "awayTeamId": "278",
-      "homeRating": 1438,
-      "awayRating": 1556,
-      "effectiveGames": 22.89,
-      "homeWin": 0.4495230204427385,
-      "capturedAt": "2026-10-24T12:20:44.539Z",
-      "quoteCapturedAt": "2026-11-01T19:58:10.882Z",
-      "bookmaker": "DraftKings (via ESPN)",
-      "homePrice": 110,
-      "awayPrice": -130,
-      "paperSelection": null,
-      "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo",
-      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401860913"
-    },
-    {
-      "gameId": "401860912",
-      "league": "NCAAF",
-      "gameDate": "2026-11-07",
-      "kickoff": "2026-11-08T03:30Z",
-      "home": "Oregon State Beavers",
-      "away": "Texas State Bobcats",
-      "homeTeamId": "204",
-      "awayTeamId": "326",
-      "homeRating": 1440,
-      "awayRating": 1508,
-      "effectiveGames": 23.13,
-      "homeWin": 0.4972596458522479,
-      "capturedAt": "2026-10-24T12:20:44.539Z",
-      "quoteCapturedAt": "2026-11-01T19:58:10.882Z",
-      "bookmaker": "DraftKings (via ESPN)",
-      "homePrice": -278,
-      "awayPrice": 225,
-      "paperSelection": null,
-      "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo",
-      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401860912"
-    },
-    {
-      "gameId": "401864535",
-      "league": "NCAAF",
-      "gameDate": "2026-11-07",
-      "kickoff": "2026-11-08T03:30Z",
-      "home": "UNLV Rebels",
-      "away": "Wyoming Cowboys",
-      "homeTeamId": "2439",
-      "awayTeamId": "2751",
-      "homeRating": 1587,
-      "awayRating": 1436,
-      "effectiveGames": 24.24,
-      "homeWin": 0.6955080854036619,
-      "capturedAt": "2026-10-24T12:20:44.539Z",
-      "quoteCapturedAt": "2026-11-01T19:58:10.882Z",
-      "bookmaker": "DraftKings (via ESPN)",
-      "homePrice": -250,
-      "awayPrice": 205,
-      "paperSelection": null,
-      "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo",
-      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401864535"
-    },
     {
       "gameId": "401873038",
       "league": "NFL",
@@ -604,13 +489,14 @@
       "effectiveGames": 7,
       "homeWin": 0.6220646266095201,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -750,
+      "awayPrice": 525,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401866462"
     },
     {
       "gameId": "401866463",
@@ -626,13 +512,14 @@
       "effectiveGames": 21.36,
       "homeWin": 0.7950037590900955,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -575,
+      "awayPrice": 425,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401866463"
     },
     {
       "gameId": "401862824",
@@ -648,13 +535,14 @@
       "effectiveGames": 23.13,
       "homeWin": 0.5185583065026865,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 205,
+      "awayPrice": -250,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401862824"
     },
     {
       "gameId": "401873052",
@@ -693,13 +581,14 @@
       "effectiveGames": 21.78,
       "homeWin": 0.3751070356486075,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 350,
+      "awayPrice": -455,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401869969"
     },
     {
       "gameId": "401858293",
@@ -715,13 +604,24 @@
       "effectiveGames": 22.51,
       "homeWin": 0.6679350619648337,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
-      "paperSelection": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -162,
+      "awayPrice": 136,
+      "paperSelection": {
+        "side": "home",
+        "team": "Pittsburgh Panthers",
+        "price": -162,
+        "probability": 0.6679,
+        "edgePct": 4.96,
+        "expectedReturn": 0.0802,
+        "selectedAt": "2026-11-08T06:49:39.925Z",
+        "stakeUnits": 1,
+        "label": "RESEARCH PAPER SELECTION — not an official bet"
+      },
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858293"
     },
     {
       "gameId": "401858526",
@@ -760,13 +660,14 @@
       "effectiveGames": 23.31,
       "homeWin": 0.3252331238461268,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 320,
+      "awayPrice": -410,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856860"
     },
     {
       "gameId": "401858296",
@@ -782,13 +683,14 @@
       "effectiveGames": 23.96,
       "homeWin": 0.6827520691057786,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -750,
+      "awayPrice": 525,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858296"
     },
     {
       "gameId": "401858522",
@@ -962,13 +864,14 @@
       "effectiveGames": 23.85,
       "homeWin": 0.35378252372401114,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 800,
+      "awayPrice": -1350,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856889"
     },
     {
       "gameId": "401856885",
@@ -1007,13 +910,14 @@
       "effectiveGames": 24.76,
       "homeWin": 0.5037277028020776,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 110,
+      "awayPrice": -130,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856887"
     },
     {
       "gameId": "401856863",
@@ -1075,13 +979,24 @@
       "effectiveGames": 24.31,
       "homeWin": 0.510660649628232,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
-      "paperSelection": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 130,
+      "awayPrice": -155,
+      "paperSelection": {
+        "side": "home",
+        "team": "Texas A&M Aggies",
+        "price": 130,
+        "probability": 0.5107,
+        "edgePct": 7.59,
+        "expectedReturn": 0.1745,
+        "selectedAt": "2026-11-08T06:49:39.925Z",
+        "stakeUnits": 1,
+        "label": "RESEARCH PAPER SELECTION — not an official bet"
+      },
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856888"
     },
     {
       "gameId": "401858520",
@@ -1207,13 +1122,14 @@
       "effectiveGames": 22.38,
       "homeWin": 0.4273536488217188,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 260,
+      "awayPrice": -325,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856882"
     },
     {
       "gameId": "401856886",
@@ -1429,13 +1345,14 @@
       "effectiveGames": 24.58,
       "homeWin": 0.5631803913481935,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -270,
+      "awayPrice": 220,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858524"
     },
     {
       "gameId": "401858525",
@@ -3231,6 +3148,116 @@
       "awayRating": 1507,
       "effectiveGames": 23.16,
       "homeWin": 0.39887372694079914,
+      "capturedAt": "2026-11-07T16:41:48.926Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
+    },
+    {
+      "gameId": "401862832",
+      "league": "NCAAF",
+      "gameDate": "2026-11-21",
+      "kickoff": "2026-11-21T05:00Z",
+      "home": "Tulsa Golden Hurricane",
+      "away": "Charlotte 49ers",
+      "homeTeamId": "202",
+      "awayTeamId": "2429",
+      "homeRating": 1340,
+      "awayRating": 1207,
+      "effectiveGames": 21.78,
+      "homeWin": 0.6806875023902991,
+      "capturedAt": "2026-11-07T16:41:48.926Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
+    },
+    {
+      "gameId": "401862833",
+      "league": "NCAAF",
+      "gameDate": "2026-11-21",
+      "kickoff": "2026-11-21T05:00Z",
+      "home": "Florida Atlantic Owls",
+      "away": "South Florida Bulls",
+      "homeTeamId": "2226",
+      "awayTeamId": "58",
+      "homeRating": 1460,
+      "awayRating": 1549,
+      "effectiveGames": 22.78,
+      "homeWin": 0.47676417315001685,
+      "capturedAt": "2026-11-07T16:41:48.926Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
+    },
+    {
+      "gameId": "401862835",
+      "league": "NCAAF",
+      "gameDate": "2026-11-21",
+      "kickoff": "2026-11-21T05:00Z",
+      "home": "Tulane Green Wave",
+      "away": "North Texas Mean Green",
+      "homeTeamId": "2655",
+      "awayTeamId": "249",
+      "homeRating": 1615,
+      "awayRating": 1608,
+      "effectiveGames": 24.86,
+      "homeWin": 0.5688793874600743,
+      "capturedAt": "2026-11-07T16:41:48.926Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
+    },
+    {
+      "gameId": "401862836",
+      "league": "NCAAF",
+      "gameDate": "2026-11-21",
+      "kickoff": "2026-11-21T05:00Z",
+      "home": "UAB Blazers",
+      "away": "UTSA Roadrunners",
+      "homeTeamId": "5",
+      "awayTeamId": "2636",
+      "homeRating": 1387,
+      "awayRating": 1558,
+      "effectiveGames": 23.96,
+      "homeWin": 0.3994837089606811,
+      "capturedAt": "2026-11-07T16:41:48.926Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
+    },
+    {
+      "gameId": "401864541",
+      "league": "NCAAF",
+      "gameDate": "2026-11-21",
+      "kickoff": "2026-11-21T05:00Z",
+      "home": "Nevada Wolf Pack",
+      "away": "Hawai'i Rainbow Warriors",
+      "homeTeamId": "2440",
+      "awayTeamId": "62",
+      "homeRating": 1330,
+      "awayRating": 1383,
+      "effectiveGames": 23.2,
+      "homeWin": 0.5111872435600452,
       "capturedAt": "2026-11-07T16:41:48.926Z",
       "quoteCapturedAt": null,
       "bookmaker": null,
@@ -9477,7 +9504,13 @@
       "homePrice": -600,
       "awayPrice": 440,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 28,
+        "awayScore": 41,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858514"
     },
@@ -9500,7 +9533,13 @@
       "homePrice": 124,
       "awayPrice": -148,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 7,
+        "awayScore": 42,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856741"
     },
@@ -9523,7 +9562,13 @@
       "homePrice": -650,
       "awayPrice": 470,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 53,
+        "awayScore": 48,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856856"
     },
@@ -9575,7 +9620,13 @@
       "homePrice": -205,
       "awayPrice": 170,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 34,
+        "awayScore": 6,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856745"
     },
@@ -9598,7 +9649,13 @@
       "homePrice": -175,
       "awayPrice": 145,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 13,
+        "awayScore": 31,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856740"
     },
@@ -9621,7 +9678,13 @@
       "homePrice": -410,
       "awayPrice": 320,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 31,
+        "awayScore": 24,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856851"
     },
@@ -9654,7 +9717,13 @@
         "stakeUnits": 1,
         "label": "RESEARCH PAPER SELECTION — not an official bet"
       },
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 10,
+        "awayScore": 24,
+        "correctWinner": true,
+        "paperUnits": 1.1
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858513"
     },
@@ -9716,7 +9785,13 @@
       "homePrice": -170,
       "awayPrice": 142,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 7,
+        "awayScore": 23,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856739"
     },
@@ -9768,7 +9843,13 @@
       "homePrice": -130,
       "awayPrice": 110,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 23,
+        "awayScore": 25,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856742"
     },
@@ -9820,7 +9901,13 @@
       "homePrice": -130,
       "awayPrice": 110,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 32,
+        "awayScore": 33,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856850"
     },
@@ -9843,7 +9930,13 @@
       "homePrice": -155,
       "awayPrice": 130,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 20,
+        "awayScore": 10,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856852"
     },
@@ -9982,7 +10075,13 @@
       "homePrice": 440,
       "awayPrice": -600,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 17,
+        "awayScore": 44,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858287"
     },
@@ -10034,7 +10133,13 @@
       "homePrice": -700,
       "awayPrice": 500,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 6,
+        "awayScore": 15,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858511"
     },
@@ -10125,7 +10230,13 @@
       "homePrice": -750,
       "awayPrice": 525,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 31,
+        "awayScore": 10,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858517"
     },
@@ -10177,7 +10288,13 @@
       "homePrice": -950,
       "awayPrice": 625,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 52,
+        "awayScore": 23,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401862821"
     },
@@ -10229,7 +10346,13 @@
       "homePrice": 260,
       "awayPrice": -325,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 14,
+        "awayScore": 17,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401864532"
     },
@@ -10252,7 +10375,13 @@
       "homePrice": -380,
       "awayPrice": 300,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 30,
+        "awayScore": 19,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401864534"
     },
@@ -10362,7 +10491,13 @@
       "homePrice": -265,
       "awayPrice": 215,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 28,
+        "awayScore": 26,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401869968"
     },
@@ -10385,7 +10520,13 @@
       "homePrice": 180,
       "awayPrice": -218,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 17,
+        "awayScore": 41,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401871098"
     },
@@ -10524,7 +10665,13 @@
       "homePrice": -118,
       "awayPrice": -102,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 51,
+        "awayScore": 42,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401871076"
     },
@@ -10547,7 +10694,13 @@
       "homePrice": -192,
       "awayPrice": 160,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 23,
+        "awayScore": 20,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401871074"
     },
@@ -10570,7 +10723,13 @@
       "homePrice": 525,
       "awayPrice": -750,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 14,
+        "awayScore": 30,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401870795"
     },
@@ -10593,7 +10752,13 @@
       "homePrice": 750,
       "awayPrice": -1200,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 38,
+        "awayScore": 64,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401860911"
     },
@@ -10616,7 +10781,13 @@
       "homePrice": -700,
       "awayPrice": 500,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 47,
+        "awayScore": 14,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401871075"
     },
@@ -10639,7 +10810,13 @@
       "homePrice": -155,
       "awayPrice": 130,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 31,
+        "awayScore": 24,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858291"
     },
@@ -10662,7 +10839,13 @@
       "homePrice": -218,
       "awayPrice": 180,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 21,
+        "awayScore": 24,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401862823"
     },
@@ -10685,7 +10868,13 @@
       "homePrice": 110,
       "awayPrice": -130,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-08T06:49:39.925Z",
+        "homeScore": 17,
+        "awayScore": 10,
+        "correctWinner": false,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401860913"
     },
@@ -11203,13 +11392,14 @@
       "effectiveGames": 7,
       "homeWin": 0.6220646266095201,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -750,
+      "awayPrice": 525,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401866462"
     },
     {
       "gameId": "401866463",
@@ -11225,13 +11415,14 @@
       "effectiveGames": 21.36,
       "homeWin": 0.7950037590900955,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -575,
+      "awayPrice": 425,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401866463"
     },
     {
       "gameId": "401862824",
@@ -11247,13 +11438,14 @@
       "effectiveGames": 23.13,
       "homeWin": 0.5185583065026865,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 205,
+      "awayPrice": -250,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401862824"
     },
     {
       "gameId": "401873052",
@@ -11292,13 +11484,14 @@
       "effectiveGames": 21.78,
       "homeWin": 0.3751070356486075,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 350,
+      "awayPrice": -455,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401869969"
     },
     {
       "gameId": "401858293",
@@ -11314,13 +11507,24 @@
       "effectiveGames": 22.51,
       "homeWin": 0.6679350619648337,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
-      "paperSelection": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -162,
+      "awayPrice": 136,
+      "paperSelection": {
+        "side": "home",
+        "team": "Pittsburgh Panthers",
+        "price": -162,
+        "probability": 0.6679,
+        "edgePct": 4.96,
+        "expectedReturn": 0.0802,
+        "selectedAt": "2026-11-08T06:49:39.925Z",
+        "stakeUnits": 1,
+        "label": "RESEARCH PAPER SELECTION — not an official bet"
+      },
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858293"
     },
     {
       "gameId": "401858526",
@@ -11359,13 +11563,14 @@
       "effectiveGames": 23.31,
       "homeWin": 0.3252331238461268,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 320,
+      "awayPrice": -410,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856860"
     },
     {
       "gameId": "401858296",
@@ -11381,13 +11586,14 @@
       "effectiveGames": 23.96,
       "homeWin": 0.6827520691057786,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -750,
+      "awayPrice": 525,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858296"
     },
     {
       "gameId": "401858522",
@@ -11561,13 +11767,14 @@
       "effectiveGames": 23.85,
       "homeWin": 0.35378252372401114,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 800,
+      "awayPrice": -1350,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856889"
     },
     {
       "gameId": "401856885",
@@ -11606,13 +11813,14 @@
       "effectiveGames": 24.76,
       "homeWin": 0.5037277028020776,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 110,
+      "awayPrice": -130,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856887"
     },
     {
       "gameId": "401856863",
@@ -11674,13 +11882,24 @@
       "effectiveGames": 24.31,
       "homeWin": 0.510660649628232,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
-      "paperSelection": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 130,
+      "awayPrice": -155,
+      "paperSelection": {
+        "side": "home",
+        "team": "Texas A&M Aggies",
+        "price": 130,
+        "probability": 0.5107,
+        "edgePct": 7.59,
+        "expectedReturn": 0.1745,
+        "selectedAt": "2026-11-08T06:49:39.925Z",
+        "stakeUnits": 1,
+        "label": "RESEARCH PAPER SELECTION — not an official bet"
+      },
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856888"
     },
     {
       "gameId": "401858520",
@@ -11806,13 +12025,14 @@
       "effectiveGames": 22.38,
       "homeWin": 0.4273536488217188,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": 260,
+      "awayPrice": -325,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856882"
     },
     {
       "gameId": "401856886",
@@ -12028,13 +12248,14 @@
       "effectiveGames": 24.58,
       "homeWin": 0.5631803913481935,
       "capturedAt": "2026-10-31T15:55:26.188Z",
-      "quoteCapturedAt": null,
-      "bookmaker": null,
-      "homePrice": null,
-      "awayPrice": null,
+      "quoteCapturedAt": "2026-11-08T06:49:39.925Z",
+      "bookmaker": "DraftKings (via ESPN)",
+      "homePrice": -270,
+      "awayPrice": 220,
       "paperSelection": null,
       "result": null,
-      "source": "ESPN schedule, independently replayed multi-season Elo"
+      "source": "ESPN schedule, independently replayed multi-season Elo",
+      "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401858524"
     },
     {
       "gameId": "401858525",
