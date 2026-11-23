@@ -2,19 +2,19 @@
   "schema": 1,
   "mode": "PAPER_ONLY",
   "model": "football-multiseason-v1",
-  "generatedAt": "2026-11-23T02:04:31.496Z",
+  "generatedAt": "2026-11-23T07:25:19.284Z",
   "snapshotIsImmutable": true,
   "disclaimer": "Research only. Odds are captured from ESPN and are not guaranteed executable. Game-winner Elo is not a validated profitable betting model.",
   "source": "ESPN event scoreboard and ESPN DraftKings pickcenter",
-  "backfillHistoryGames": 5518,
+  "backfillHistoryGames": 5519,
   "count": {
     "allForecasts": 515,
     "upcoming": 89,
     "upcomingWithOdds": 88,
     "selected": 62,
-    "settledPaper": 50,
+    "settledPaper": 51,
     "paperWins": 18,
-    "paperUnits": -1.882,
+    "paperUnits": -2.882,
     "missingRatings": 7,
     "quotesCaptured": 0,
     "quoteFailures": 1,
@@ -15033,7 +15033,13 @@
         "stakeUnits": 1,
         "label": "RESEARCH PAPER SELECTION — not an official bet"
       },
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-23T07:25:19.284Z",
+        "homeScore": 35,
+        "awayScore": 10,
+        "correctWinner": true,
+        "paperUnits": -1
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873077"
     },
