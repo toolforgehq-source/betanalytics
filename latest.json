@@ -2,23 +2,23 @@
   "schema": 1,
   "mode": "PAPER_ONLY",
   "model": "football-multiseason-v1",
-  "generatedAt": "2026-11-28T05:30:27.744Z",
+  "generatedAt": "2026-11-28T14:44:47.159Z",
   "snapshotIsImmutable": true,
   "disclaimer": "Research only. Odds are captured from ESPN and are not guaranteed executable. Game-winner Elo is not a validated profitable betting model.",
   "source": "ESPN event scoreboard and ESPN DraftKings pickcenter",
-  "backfillHistoryGames": 5525,
+  "backfillHistoryGames": 5459,
   "count": {
-    "allForecasts": 531,
-    "upcoming": 45,
+    "allForecasts": 533,
+    "upcoming": 47,
     "upcomingWithOdds": 43,
     "selected": 64,
     "settledPaper": 57,
     "paperWins": 21,
     "paperUnits": -1.165,
-    "missingRatings": 5,
+    "missingRatings": 4,
     "quotesCaptured": 0,
-    "quoteFailures": 2,
-    "newRecords": 1
+    "quoteFailures": 4,
+    "newRecords": 2
   },
   "upcoming": [
     {
@@ -796,6 +796,28 @@
       "source": "ESPN schedule, independently replayed multi-season Elo"
     },
     {
+      "gameId": "401869545",
+      "league": "NCAAF",
+      "gameDate": "2026-12-05",
+      "kickoff": "2026-12-05T21:00Z",
+      "home": "Georgia Bulldogs",
+      "away": "Texas Longhorns",
+      "homeTeamId": "61",
+      "awayTeamId": "251",
+      "homeRating": 1836,
+      "awayRating": 1771,
+      "effectiveGames": 26.01,
+      "homeWin": 0.5623152902899148,
+      "capturedAt": "2026-11-28T14:44:47.159Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
+    },
+    {
       "gameId": "401873098",
       "league": "NFL",
       "gameDate": "2026-12-06",
@@ -1103,6 +1125,28 @@
       "result": null,
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873108"
+    },
+    {
+      "gameId": "401862844",
+      "league": "NCAAF",
+      "gameDate": "2026-12-12",
+      "kickoff": "2026-12-12T20:00Z",
+      "home": "Army Black Knights",
+      "away": "Navy Midshipmen",
+      "homeTeamId": "349",
+      "awayTeamId": "2426",
+      "homeRating": 1531,
+      "awayRating": 1564,
+      "effectiveGames": 22.82,
+      "homeWin": 0.46821576514411245,
+      "capturedAt": "2026-11-28T14:44:47.159Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
     }
   ],
   "records": [
@@ -14658,7 +14702,13 @@
       "homePrice": -1450,
       "awayPrice": 850,
       "paperSelection": null,
-      "result": null,
+      "result": {
+        "finalizedAt": "2026-11-28T14:44:47.159Z",
+        "homeScore": 52,
+        "awayScore": 28,
+        "correctWinner": true,
+        "paperUnits": null
+      },
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/college-football/summary?event=401856880"
     },
@@ -16331,6 +16381,28 @@
       "source": "ESPN schedule, independently replayed multi-season Elo"
     },
     {
+      "gameId": "401869545",
+      "league": "NCAAF",
+      "gameDate": "2026-12-05",
+      "kickoff": "2026-12-05T21:00Z",
+      "home": "Georgia Bulldogs",
+      "away": "Texas Longhorns",
+      "homeTeamId": "61",
+      "awayTeamId": "251",
+      "homeRating": 1836,
+      "awayRating": 1771,
+      "effectiveGames": 26.01,
+      "homeWin": 0.5623152902899148,
+      "capturedAt": "2026-11-28T14:44:47.159Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
+    },
+    {
       "gameId": "401873098",
       "league": "NFL",
       "gameDate": "2026-12-06",
@@ -16638,6 +16710,28 @@
       "result": null,
       "source": "ESPN schedule, independently replayed multi-season Elo",
       "quoteSource": "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/summary?event=401873108"
+    },
+    {
+      "gameId": "401862844",
+      "league": "NCAAF",
+      "gameDate": "2026-12-12",
+      "kickoff": "2026-12-12T20:00Z",
+      "home": "Army Black Knights",
+      "away": "Navy Midshipmen",
+      "homeTeamId": "349",
+      "awayTeamId": "2426",
+      "homeRating": 1531,
+      "awayRating": 1564,
+      "effectiveGames": 22.82,
+      "homeWin": 0.46821576514411245,
+      "capturedAt": "2026-11-28T14:44:47.159Z",
+      "quoteCapturedAt": null,
+      "bookmaker": null,
+      "homePrice": null,
+      "awayPrice": null,
+      "paperSelection": null,
+      "result": null,
+      "source": "ESPN schedule, independently replayed multi-season Elo"
     }
   ]
 }
